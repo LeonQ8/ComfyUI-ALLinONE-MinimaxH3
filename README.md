@@ -1,12 +1,13 @@
 # ComfyUI ALL-in-ONE MiniMax H3
 
+![Status: Beta](https://img.shields.io/badge/status-beta-orange)
+![License: GPL-3.0](https://img.shields.io/badge/license-GPL--3.0-blue)
+
 One node. The whole MiniMax H3 video pipeline.
 
 No node graph to build, no wires to connect, no hunting through twelve custom node packs to figure out which workflow is the right one. Pick a mode, drop in your prompt or references, hit **Generate** — the node does the rest.
 
 ![ALL in ONE MiniMaxH3 — T2V tab](assets/t2v_main.png)
-
-> **Beta** — this node is in active development. If something breaks, please [open an issue](https://github.com/LeonQ8/ComfyUI-ALLinONE-MinimaxH3/issues) — it's the fastest way to get it fixed.
 
 ## Modes
 
@@ -79,6 +80,8 @@ I develop and test against a pinned stack (ComfyUI version, custom node commits,
 - Turbo preset: ComfyUI-MiniMax-H3-Turbo pack
 
 ## Support
+
+This node is in **beta** — if something breaks, please [open an issue](https://github.com/LeonQ8/ComfyUI-ALLinONE-MinimaxH3/issues), it's the fastest way to get it fixed.
 
 If you like this node and it saves you a few hours of graph surgery, a coffee is always appreciated.<3
 
