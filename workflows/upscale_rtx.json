@@ -1,0 +1,7 @@
+{
+  "1": { "class_type": "LoadVideo", "inputs": { "file": "", "video-preview": "" }, "_meta": { "title": "Load Video" } },
+  "2": { "class_type": "GetVideoComponents", "inputs": { "video": ["1", 0] }, "_meta": { "title": "Get Video Components" } },
+  "3": { "class_type": "RTXVideoSuperResolution", "inputs": { "images": ["2", 0], "resize_type": "scale by multiplier", "resize_type.scale": 2, "quality": "ULTRA" }, "_meta": { "title": "RTX Video Super Resolution" } },
+  "4": { "class_type": "CreateVideo", "inputs": { "images": ["3", 0], "fps": ["2", 2], "audio": ["2", 1], "bit_depth": 8 }, "_meta": { "title": "Create Video" } },
+  "5": { "class_type": "SaveVideo", "inputs": { "video": ["4", 0], "filename_prefix": "one-node-minimax-h3/h3_upscaled", "format": "auto", "codec": "auto" }, "_meta": { "title": "Save Video" } }
+}

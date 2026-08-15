@@ -1,0 +1,9 @@
+# Files to exclude from the published registry archive (Comfy Registry).
+.git
+.github
+references
+skills
+docs
+AGENTS.md
+__pycache__
+*.pyc

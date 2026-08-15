@@ -1,0 +1,9 @@
+{
+  "1": { "class_type": "LoadVideo", "inputs": { "file": "", "video-preview": "" }, "_meta": { "title": "Load Video" } },
+  "2": { "class_type": "GetVideoComponents", "inputs": { "video": ["1", 0] }, "_meta": { "title": "Get Video Components" } },
+  "3": { "class_type": "SeedVR2LoadDiTModel", "inputs": { "model": "seedvr2_ema_3b-Q8_0.gguf", "device": "cuda:0" }, "_meta": { "title": "SeedVR2 DiT" } },
+  "4": { "class_type": "SeedVR2LoadVAEModel", "inputs": { "model": "ema_vae_fp16.safetensors", "device": "cuda:0" }, "_meta": { "title": "SeedVR2 VAE" } },
+  "5": { "class_type": "SeedVR2VideoUpscaler", "inputs": { "image": ["2", 0], "dit": ["3", 0], "vae": ["4", 0], "seed": 42, "resolution": 1080, "max_resolution": 0, "batch_size": 5, "uniform_batch_size": true, "color_correction": "lab", "temporal_overlap": 2 }, "_meta": { "title": "SeedVR2 Upscaler" } },
+  "6": { "class_type": "CreateVideo", "inputs": { "images": ["5", 0], "fps": ["2", 2], "audio": ["2", 1], "bit_depth": 8 }, "_meta": { "title": "Create Video" } },
+  "7": { "class_type": "SaveVideo", "inputs": { "video": ["6", 0], "filename_prefix": "one-node-minimax-h3/h3_upscaled", "format": "auto", "codec": "auto" }, "_meta": { "title": "Save Video" } }
+}

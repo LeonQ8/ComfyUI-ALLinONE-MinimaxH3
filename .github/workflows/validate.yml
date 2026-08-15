@@ -1,0 +1,25 @@
+name: Validate
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  syntax:
+    name: Syntax check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Compile check
+        run: |
+          python -m py_compile nodes.py
+      - name: JSON check (workflow templates)
+        run: |
+          python -c "import json,glob,sys; [json.load(open(f,encoding='utf-8')) for f in glob.glob('workflows/*.json')]; print('all workflow JSON valid')"

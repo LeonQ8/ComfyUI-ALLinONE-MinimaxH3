@@ -1,0 +1,133 @@
+{
+  "resolution_presets": [
+    { "label": "608x352 (0.2MP Preview)", "width": 608, "height": 352 },
+    { "label": "736x416 (0.3MP Draft)", "width": 736, "height": 416 },
+    { "label": "864x480 (0.4MP Speed)", "width": 864, "height": 480 },
+    { "label": "960x544 (0.5MP Balanced)", "width": 960, "height": 544 },
+    { "label": "1152x640 (0.7MP Quality)", "width": 1152, "height": 640 },
+    { "label": "1344x768 (0.98MP Native Max)", "width": 1344, "height": 768 }
+  ],
+  "quality_presets": {
+    "balanced": { "label": "Balanced", "steps": 30, "sol_attn": false, "cache": false, "sage": false },
+    "speed": { "label": "Speed", "steps": 20, "sol_attn": true, "cache": true, "sage": false },
+    "high": { "label": "High Quality", "steps": 40, "sol_attn": false, "cache": false, "sage": true },
+    "turbo": { "label": "Turbo (Speed LoRA)", "steps": 6, "sol_attn": false, "cache": false, "sage": false }
+  },
+  "prompt_templates": {
+    "t2v": {
+      "name": "Text to Video",
+      "wrap": "integrated_multimodal_description:\n[Shot 1] [STATE THE STYLE: Cinematic, live-action, 2D-animated, 3D CG...] {USER}\n\noverall_soundscape:\n[1-4 sentences: ambient sound, physical action sounds, non-verbal human sounds.]\n\nnon_diegetic_music:\nN/A",
+      "presets": [
+        {
+          "name": "Cinematic single shot",
+          "prompt": "integrated_multimodal_description:\n[Shot 1] Cinematic live-action. [DESCRIBE SUBJECT, SETTING, KEY PROPS AND LIGHTING]. [DESCRIBE THE ACTION FROM START TO FINISH, WITH AN OBSERVABLE END STATE]. The camera pushes in with small amplitude at slow speed.\n\noverall_soundscape:\n[1-4 sentences: ambience and physical sounds evolving over the shot.]\n\nnon_diegetic_music:\nN/A"
+        },
+        {
+          "name": "Multi-shot scene",
+          "prompt": "integrated_multimodal_description:\n[Shot 1] [STATE THE STYLE] [OPENING BEAT].\nThe shot cuts to [Shot 2] At 00:02.000 [NEXT BEAT].\nThe shot cuts to [Shot 3] At 00:04.000 [FINAL BEAT, ENDING WITH AN OBSERVABLE END STATE].\n\noverall_soundscape:\n[1-4 sentences of ambience.]\n\nnon_diegetic_music:\nN/A"
+        },
+        {
+          "name": "With dialogue",
+          "prompt": "integrated_multimodal_description:\n[Shot 1] [STATE THE STYLE] (S1) [CHARACTER DESCRIPTION] speaks: <d>[Language] Your dialogue line.</d>\n\noverall_soundscape:\n[1-4 sentences of ambience.]\n\nnon_diegetic_music:\nN/A"
+        }
+      ]
+    },
+    "i2v": {
+      "name": "Image to Video",
+      "wrap": "For the target video, at 0.00 seconds into the target video, <Picture 1> (from [Shot 1]) is fully referenced.\n\nintegrated_multimodal_description:\n[Shot 1] The scene begins exactly as shown in the first frame and comes alive. {USER}\n\noverall_soundscape:\n[1-4 sentences: ambient sound, physical action sounds, non-verbal human sounds.]\n\nnon_diegetic_music:\nN/A",
+      "presets": [
+        {
+          "name": "Animate start frame",
+          "prompt": "For the target video, at 0.00 seconds into the target video, <Picture 1> (from [Shot 1]) is fully referenced.\n\nintegrated_multimodal_description:\n[Shot 1] [STATE THE STYLE] The scene begins exactly as shown in <Picture 1> and comes alive: [DESCRIBE THE MOTION THAT LEAVES THE FIRST FRAME]. The camera pushes in with small amplitude at slow speed.\n\noverall_soundscape:\n[1-4 sentences of ambience.]\n\nnon_diegetic_music:\nN/A"
+        },
+        {
+          "name": "First to last frame",
+          "prompt": "How the reference pictures align with the target video — Picture 1 (from [Shot 1]) aligns with the 0.00-second mark of the target video; Picture 2 (from the final shot) aligns with the end of the target video.\n\nintegrated_multimodal_description:\n[Shot 1] [STATE THE STYLE] The scene starts at the first frame and transitions continuously into the last frame: [DESCRIBE THE PATH - MOVEMENT, POSE CHANGES, COMPOSITION EVOLUTION].\n\noverall_soundscape:\n[1-4 sentences of ambience.]\n\nnon_diegetic_music:\nN/A"
+        }
+      ]
+    },
+    "r2v": {
+      "name": "Reference to Video",
+      "wrap": "subject_definitions:\n<Subject 1> is [DESCRIBE THE SUBJECT FROM <Picture 1>: age, hair, clothing, notable features].\n\nsummary:\n[reference generation] Generate a short video using the provided references: {USER}\n\nretention_analysis:\n<Subject 1> (appears in [Shot 1]): fully_preserved - [WHAT IS KEPT].\n\ndetailed_description:\n[STATE THE STYLE IN 1-2 SENTENCES BEFORE [Shot 1]]\n[Shot 1] [DESCRIBE THE SHOT IN DETAIL, USING <Subject N> / <Picture N> / <Video N> / <Audio N> LABELS].\n\noverall_soundscape:\n[1-4 sentences of ambience.]\n\nnon_diegetic_music:\nN/A",
+      "presets": [
+        {
+          "name": "Motion reference + your audio",
+          "prompt": "subject_definitions:\n<Subject 1> is the person whose appearance comes from <Picture 1> and whose movement and performance come from <Video 1>.\n\nsummary:\n[reference generation + audio reuse] Generate a video of <Subject 1> performing the movement shown in <Video 1>, speaking in sync with the provided audio <Audio 1>.\n\nretention_analysis:\n<Subject 1> (appears in [Shot 1]): fully_preserved - identity kept exactly as in <Picture 1>.\n<Video 1> (motion and performance): weak_reference - only the movement, gestures and pacing are imitated; the person shown in <Video 1> is NOT the subject.\n<Audio 1>: fully_copy - reused 1:1 as the target video's complete final audio track.\n\ndetailed_description:\nThe target video is in a cinematic, live-action style.\n[Shot 1] <Subject 1> (S1) speaks in sync with <Audio 1>, imitating the gestures, posture and head movement of <Video 1>, while keeping the exact face, hair and clothing of <Picture 1>. The face of the person in <Video 1> never appears. [DESCRIBE THE SETTING, MOOD AND CAMERA].\n\noverall_soundscape:\nThe copied audio track <Audio 1> is the complete soundtrack.\n\nnon_diegetic_music:\nN/A"
+        },
+        {
+          "name": "Reuse the video's audio",
+          "prompt": "subject_definitions:\n<Subject 1> is the person whose appearance comes from <Picture 1>; their movement and performance come from <Video 1>.\n\nsummary:\n[video editing + audio reuse] The target video is an edited version of <Video 1> where the original performer is replaced by <Subject 1>, keeping the original soundtrack <Audio 1>.\n\nretention_analysis:\n<Subject 1> (appears in [Shot 1]): fully_preserved - identity kept exactly as in <Picture 1>.\n<Video 1> (motion, framing and performance): partially_preserved - the performance is re-enacted by <Subject 1>; the original performer does not appear.\n<Audio 1>: fully_copy - reused 1:1 as the target video's complete final audio track.\n\ndetailed_description:\nThe target video is in a cinematic, live-action style.\n[Shot 1] <Subject 1> (S1) re-enacts the performance of <Video 1> - same gestures, posture, pacing and framing - with the exact face, hair and clothing of <Picture 1>; the soundtrack is the copied <Audio 1>. The face of the person in <Video 1> never appears. [DESCRIBE THE SETTING, MOOD AND CAMERA].\n\noverall_soundscape:\nThe copied audio track <Audio 1> is the complete soundtrack.\n\nnon_diegetic_music:\nN/A"
+        },
+        {
+          "name": "Character consistency",
+          "prompt": "subject_definitions:\n<Subject 1> is the character shown in <Picture 1>: [AGE, HAIR, CLOTHING, NOTABLE FEATURES].\n\nsummary:\n[reference generation] Generate a short video starring the referenced character.\n\nretention_analysis:\n<Subject 1> (appears in [Shot 1]): fully_preserved - identity, hair, and outfit kept exactly.\n\ndetailed_description:\nThe target video is in a cinematic, live-action style with soft lighting.\n[Shot 1] <Subject 1> [DESCRIBE THE ACTION AND SETTING IN DETAIL].\n\noverall_soundscape:\n[1-4 sentences of ambience.]\n\nnon_diegetic_music:\nN/A"
+        },
+        {
+          "name": "Reference style",
+          "prompt": "subject_definitions:\n<Subject 1> is the visual style of <Picture 1>: [DESCRIBE THE STYLE, PALETTE, MEDIUM].\n\nsummary:\n[reference generation] Generate a short video in the style of the referenced image.\n\nretention_analysis:\n<Subject 1>: partially_preserved - style and palette transferred to the new scene.\n\ndetailed_description:\n[STATE THE STYLE IN 1-2 SENTENCES]\n[Shot 1] [DESCRIBE THE SCENE, RENDERED IN THE STYLE OF <Subject 1>].\n\noverall_soundscape:\n[1-4 sentences of ambience.]\n\nnon_diegetic_music:\nN/A"
+        }
+      ]
+    },
+    "audio_drive": {
+      "name": "Audio Drive (Lip Sync)",
+      "wrap": "subject_definitions:\n<Subject 1> is the speaker shown in <Picture 1>: [DESCRIBE THE PERSON: age, hair, clothing, notable features].\n\nsummary:\n[audio reuse] Generate a video of <Subject 1> speaking in sync with the provided audio track <Audio 1>.\n\nretention_analysis:\n<Subject 1> (appears in [Shot 1]): fully_preserved - identity kept exactly as in <Picture 1>.\n<Audio 1>: fully_copy - reused 1:1 as the target video's complete final audio track.\n\ndetailed_description:\n[Shot 1] <Subject 1> (S1) speaks, mouth movements matching every word of <Audio 1>. {USER}\n\noverall_soundscape:\nThe copied audio track <Audio 1> is the complete soundtrack.\n\nnon_diegetic_music:\nN/A",
+      "presets": [
+        {
+          "name": "Speech lip sync",
+          "prompt": "subject_definitions:\n<Subject 1> is the speaker shown in <Picture 1>: [DESCRIBE THE PERSON: age, hair, clothing, notable features].\n\nsummary:\n[audio reuse] Generate a video of <Subject 1> speaking in sync with the provided speech <Audio 1>.\n\nretention_analysis:\n<Subject 1> (appears in [Shot 1]): fully_preserved - identity kept exactly as in <Picture 1>.\n<Audio 1>: fully_copy - reused 1:1 as the target video's complete final audio track.\n\ndetailed_description:\nThe target video is in a cinematic, live-action style.\n[Shot 1] <Subject 1> (S1) speaks, mouth movements matching every word of <Audio 1>. [DESCRIBE THE MOOD, SETTING AND CAMERA].\n\noverall_soundscape:\nThe copied audio track <Audio 1> is the complete soundtrack.\n\nnon_diegetic_music:\nN/A"
+        },
+        {
+          "name": "Speech lip sync + motion reference",
+          "prompt": "subject_definitions:\n<Subject 1> is the speaker whose appearance comes from <Picture 1> and whose movement and performance come from <Video 1>.\n\nsummary:\n[audio reuse] Generate a video of <Subject 1> performing the movement shown in <Video 1>, speaking in sync with the provided audio track <Audio 1>.\n\nretention_analysis:\n<Subject 1> (appears in [Shot 1]): fully_preserved - identity kept exactly as in <Picture 1>.\n<Video 1> (motion and performance): weak_reference - only the movement, gestures and pacing are imitated; the person shown in <Video 1> is NOT the subject.\n<Audio 1>: fully_copy - reused 1:1 as the target video's complete final audio track.\n\ndetailed_description:\nThe target video is in a cinematic, live-action style.\n[Shot 1] <Subject 1> (S1) speaks in sync with <Audio 1>, imitating the gestures, posture and head movement of <Video 1>, while keeping the exact face, hair and clothing of <Picture 1>. The face of the person in <Video 1> never appears. Close-up framing, the camera holds a static shot.\n\noverall_soundscape:\nThe copied audio track <Audio 1> is the complete soundtrack.\n\nnon_diegetic_music:\nN/A"
+        }
+      ]
+    },
+    "keyframes": {
+      "name": "Custom Keyframes",
+      "wrap": "integrated_multimodal_description:\nA single continuous cinematic shot with no cuts.\n\nAt the beginning, [DESCRIBE KEYFRAME 1 / STARTING SUBJECT AND ENVIRONMENT].\n\nAs the shot progresses, [DESCRIBE THE FIRST TRANSFORMATION LEADING TOWARD KEYFRAME 2]. Keep the subject visually continuous - same identity, same screen position, same approximate scale.\n\nAround the midpoint, [DESCRIBE KEYFRAME 2 / MIDDLE STATE].\n\nDuring the second half, [DESCRIBE THE SECOND TRANSFORMATION LEADING TOWARD KEYFRAME 3]. The change happens progressively, never as a sudden replacement.\n\nBy the final moments, [DESCRIBE KEYFRAME 3 / FINAL STATE].\n\n{USER}\n\noverall_soundscape:\n[1-4 sentences of ambience.]\n\nnon_diegetic_music:\nN/A",
+      "presets": [
+        {
+          "name": "Morph through keyframes",
+          "prompt": "integrated_multimodal_description:\nA single continuous cinematic shot with no cuts. The SAME subject in every keyframe - describe its identity once: type, color, shape, distinctive details. It never changes color or turns into a different subject.\n\nAt the beginning, the subject matches KEYFRAME 1 exactly: [DESCRIBE KEYFRAME 1 / STARTING STATE].\n\nAs the shot progresses, [DESCRIBE THE FIRST TRANSFORMATION OR ACTION LEADING TOWARD KEYFRAME 2]. Keep the subject visually continuous - same identity, same screen position, same approximate scale during the transition.\n\nAround the midpoint, the subject matches KEYFRAME 2: [DESCRIBE KEYFRAME 2 / MIDDLE STATE].\n\nDuring the second half, [DESCRIBE THE SECOND TRANSFORMATION OR ACTION LEADING TOWARD KEYFRAME 3]. The change happens progressively rather than as a sudden replacement.\n\nBy the final moments, the subject matches KEYFRAME 3: [DESCRIBE KEYFRAME 3 / FINAL STATE].\n\noverall_soundscape:\n[1-4 sentences of ambience.]\n\nnon_diegetic_music:\nN/A"
+        }
+      ]
+    },
+    "extend": {
+      "name": "Video Extend",
+      "wrap": "integrated_multimodal_description:\n[Shot 1] Hold the exact closing framing of the source video for about 2 seconds (the camera, subject position, lighting and motion continue as they were), then continue without any visible cut: {USER}\n\noverall_soundscape:\n[Describe how the diegetic sound continues seamlessly across the join.]\n\nnon_diegetic_music:\nN/A",
+      "presets": [
+        {
+          "name": "Continue the scene",
+          "prompt": "integrated_multimodal_description:\n[Shot 1] Hold the exact closing framing of the source video for about 2 seconds - same subject, same camera trajectory, same lighting - then continue seamlessly with no visible cut: [DESCRIBE ONLY WHAT HAPPENS NEXT].\n\noverall_soundscape:\nThe existing ambience and physical sounds continue uninterrupted across the join. [DESCRIBE NEW SOUND CHANGES CAUSED BY THE CONTINUING ACTION].\n\nnon_diegetic_music:\nN/A"
+        }
+      ]
+    },
+    "chain": {
+      "name": "Motion Context Chain",
+      "wrap": "integrated_multimodal_description:\n[Shot 1] Continue from the previous clip seamlessly with no visible cut. {USER}\n\noverall_soundscape:\n[Describe how the sound continues from the previous clip.]\n\nnon_diegetic_music:\nN/A",
+      "presets": [
+        {
+          "name": "Continuation (airlock hold)",
+          "prompt": "integrated_multimodal_description:\n[Shot 1] Hold the exact closing framing of the previous clip for about 2 seconds with subtle natural motion (a breath, a weight shift, an eyeline change), then continue seamlessly: [DESCRIBE WHAT HAPPENS NEXT].\n\noverall_soundscape:\n[Describe how the sound continues from the previous clip.]\n\nnon_diegetic_music:\nN/A"
+        }
+      ]
+    }
+  },
+  "model_defaults": {
+    "unet_t2v": "minimax_h3_fl2va_pruned_int8_convrot.safetensors",
+    "unet_r2v": "minimax_h3_ref2va_pruned_int8_convrot.safetensors",
+    "clip": "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+    "vae_video": "minimax_h3_video_vae_fp16.safetensors",
+    "vae_audio": "minimax_h3_audio_vae_fp32.safetensors",
+    "speed_lora": "",
+    "fps": 24,
+    "audio_on": true,
+    "motion_context_length": 22
+  },
+  "model_links": {
+    "diffusion": "https://huggingface.co/Comfy-Org/MiniMax-H3/tree/main/diffusion_models",
+    "text_encoders": "https://huggingface.co/Comfy-Org/MiniMax-H3/tree/main/text_encoders",
+    "vae": "https://huggingface.co/Comfy-Org/MiniMax-H3/tree/main/vae",
+    "motion_context_fork": "https://github.com/seitanism/ComfyUI-H3-Motion-Context-MultiRef"
+  }
+}
