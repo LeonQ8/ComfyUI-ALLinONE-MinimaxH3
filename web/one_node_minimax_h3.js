@@ -2472,6 +2472,7 @@ app.registerExtension({
         else tx(liveTxt,"Live preview");
       };
       self._h3_lpFrame=(d)=>{
+        console.log("[h3lp-frame]",d.step,d.total,(d.image||"").length);
         if(_cmpMode) _exitCompare();
         errorBox.style.display="none";
         vidEl.style.display="none";vidEl.pause();vidEl.src="";
@@ -3801,9 +3802,10 @@ app.registerExtension({
   });
 
   api.addEventListener("h3studio-preview",(evt)=>{
+    const d=evt.detail||{};
+    console.log("[h3lp]",JSON.stringify({nid:d.node_id,reset:!!d.reset,img:d.image?(d.image.length):0,err:d.error?1:0,active:!!_activeNode,lpOn:!!(_activeNode&&_activeNode._h3_lpOn),lpId:_activeNode&&_activeNode._h3_lpId}));
     const node=_activeNode;
     if(!node||!node._h3_lpOn) return;
-    const d=evt.detail||{};
     if(d.node_id!==node._h3_lpId) return;
     if(d.error){ if(node._h3_lpErr) node._h3_lpErr(String(d.error)); return; }
     if(d.reset){ if(node._h3_lpReset) node._h3_lpReset(); return; }
