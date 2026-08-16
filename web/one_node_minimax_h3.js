@@ -1707,6 +1707,15 @@ app.registerExtension({
         ["lightx_v01_ref2v_er_sde_4_pruned","LightX v0.1 - REF2V ER-SDE 4 steps"],
         ["lightx_v01_ref2v_sa_solver_4_pruned","LightX v0.1 - REF2V SA-Solver 4 steps"],
       ];
+      const IMG_PROFILE_LORAS={
+        "lightx_v1_fl2v_8":"minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors",
+        "lightx_v1_fl2v_8_pruned":"minimax_h3_fl2v_lightx2v_turbo_8step_v1.0_resized_avg_rank_24_bf16.safetensors",
+        "lightx_v1_fl2v_4_pruned":"minimax_h3_fl2v_lightx2v_turbo_4step_v1.0_768p_resized_avg_rank_31_bf16.safetensors",
+        "lightx_er_sde_4":"minimax_h3_fl2v_lightx2v_turbo_4step_v0.1_comfy_resized_avg_rank_21_bf16.safetensors",
+        "lightx_sa_solver_4":"minimax_h3_fl2v_lightx2v_turbo_4step_v0.1_comfy_resized_avg_rank_21_bf16.safetensors",
+        "lightx_v01_ref2v_er_sde_4_pruned":"minimax_h3_ref2v_lightx2v_turbo_4step_v0.1_resized_avg_rank_20_bf16.safetensors",
+        "lightx_v01_ref2v_sa_solver_4_pruned":"minimax_h3_ref2v_lightx2v_turbo_4step_v0.1_resized_avg_rank_20_bf16.safetensors",
+      };
       const _imgModeKey={t2i:"Text to Image",edit:"Image Edit",refmix:"Reference Mix"};
       const imgSubRow=mk("div",{display:"flex",flexDirection:"column",gap:"3px"});
       const imgSubCapRow=mk("div",{display:"flex",alignItems:"center",gap:"4px"});
@@ -3011,6 +3020,16 @@ app.registerExtension({
         const refs=(S.imgRefs||[]).slice(0,sub==="edit"?1:9);
         if(sub==="edit"&&!refs.length) throw new Error("Image Edit needs a source image. Drop one into the source slot, or switch to Text to Image.");
         if(sub==="refmix"&&!refs.length) throw new Error("Reference Mix needs at least one reference image. Add images to the slots, or switch to Text to Image.");
+        if(S.imgProfile!=="custom"&&IMG_PROFILE_LORAS[S.imgProfile]){
+          const need=IMG_PROFILE_LORAS[S.imgProfile];
+          if(!_M.loras.length){
+            try{ const r=await fetch("/h3one/models"); const d=await r.json(); _M.loras=d.loras||[]; }catch(e){}
+          }
+          const have=(_M.loras||[]).some(n=>String(n).replace(/\\/g,"/").split("/").pop()===need);
+          if(!have){
+            throw new Error("This profile needs the LightX LoRA "+need+" inside ComfyUI/models/loras. Download it from the link in the README (Image mode section), then refresh - or pick a Base profile, those need no extra files.");
+          }
+        }
         const wf=await _fetchTpl(TEMPLATES.image);
         wf["1"].inputs.fl2va_model=S.models.unetT2V;
         wf["1"].inputs.ref2va_model=S.models.unetR2V;

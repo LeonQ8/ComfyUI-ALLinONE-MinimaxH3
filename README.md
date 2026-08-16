@@ -84,6 +84,15 @@ Each accelerator also has an on/off chip under the Quality dropdown (SolAttn / H
 
 **Image mode prompts**: they follow the H3 Studio shape, a `summary:` line with the goal and a `detailed_description:` with the full scene. Name your references `@Image1`, `@Image2` and give each one a clear job (identity, pose, style, outfit). Edits are a semantic regeneration of the source image, not pixel inpainting, so describe what changes instead of expecting a perfect cutout. The Discover tab ships with Text to image, Image edit and Reference mix templates.
 
+**LightX LoRAs for Image mode** (only the LightX sampling profiles need them, Base profiles need nothing). Drop the file into `ComfyUI/models/loras/`, the node checks for it before generating:
+
+| Profile | LoRA file |
+|---------|-----------|
+| LightX v1.0 FL2VA 8 steps | [official full](https://huggingface.co/lightx2v/Minimax-h3-Turbo/resolve/main/minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors) or [Kijai rank 24](https://huggingface.co/Kijai/MiniMax-H3_comfy/resolve/main/loras/minimax_h3_fl2v_lightx2v_turbo_8step_v1.0_resized_avg_rank_24_bf16.safetensors) |
+| LightX v1.0 FL2VA 4 steps | [Kijai rank 31](https://huggingface.co/Kijai/MiniMax-H3_comfy/resolve/main/loras/minimax_h3_fl2v_lightx2v_turbo_4step_v1.0_768p_resized_avg_rank_31_bf16.safetensors) |
+| LightX v0.1 ER-SDE / SA-Solver | [Kijai rank 21](https://huggingface.co/Kijai/MiniMax-H3_comfy/resolve/main/loras/minimax_h3_fl2v_lightx2v_turbo_4step_v0.1_comfy_resized_avg_rank_21_bf16.safetensors) |
+| LightX v0.1 REF2V (Reference Mix) | [Kijai rank 20](https://huggingface.co/Kijai/MiniMax-H3_comfy/resolve/main/loras/minimax_h3_ref2v_lightx2v_turbo_4step_v0.1_resized_avg_rank_20_bf16.safetensors) |
+
 **Turbo LoRA** (for the Turbo preset): download `minimax_h3_turbo_v4_step600_ema.safetensors` from [larryvrh/MiniMax-H3-Turbo-Lora](https://huggingface.co/larryvrh/MiniMax-H3-Turbo-Lora) into `ComfyUI/models/loras/`.
 
 > **Seeing "Node not found"?** That's a missing pack from the tables above. The two most common:

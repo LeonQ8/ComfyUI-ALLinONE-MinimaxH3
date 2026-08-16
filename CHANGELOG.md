@@ -4,7 +4,7 @@ Newest first.
 
 ## Unreleased
 
-New Image mode built on ComfyUI-MiniMax-H3-Studio. Text to image, edit a source image, or mix up to 9 references with @Image1 style roles. Custom sampling settings for steps, sampler and scheduler. Generated images appear in the result view, gallery, library and history.
+New Image mode built on ComfyUI-MiniMax-H3-Studio. Text to image, edit a source image, or mix up to 9 references with @Image1 style roles.
 
 ## 0.2.0 (2026-08-16)
 
