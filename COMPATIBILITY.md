@@ -15,14 +15,17 @@ This node is developed and tested against a specific stack. When something break
 
 These are the commit SHAs the node was developed against. You don't need to pin them unless something breaks — this table is your fallback.
 
-| Pack | Tested commit | Used by |
-|------|---------------|---------|
-| ComfyUI-H3-Motion-Context-MultiRef | `0719855` | Chain / Keyframes / Extend modes |
-| comfyui-vrgamedevgirl | `3931613` | Audio Drive mode |
-| ComfyUI-MiniMax-H3-Turbo | `546b502` | Turbo preset |
-| ComfyUI-SolAttn_triton | `842c4ea` | Speed preset |
-| ComfyUI-MiniMaxH3-Cache | `8a45e09` | Speed preset |
-| comfyui-kjnodes | `6ab7e81` | High Quality preset (SageAttention) |
+| Pack | Link | Tested commit | Used by |
+|------|------|---------------|---------|
+| ComfyUI-H3-Motion-Context-MultiRef | [GitHub](https://github.com/seitanism/ComfyUI-H3-Motion-Context-MultiRef) | `0719855` | Chain / Keyframes / Extend modes |
+| comfyui-vrgamedevgirl | [GitHub](https://github.com/vrgamegirl19/comfyui-vrgamedevgirl) | `3931613` | Audio Drive mode |
+| ComfyUI-VideoHelperSuite | [GitHub](https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite) | `4ee72c0` | Preview without saving (auto-save off) |
+| ComfyUI-SeedVR2_VideoUpscaler | [GitHub](https://github.com/numz/ComfyUI-SeedVR2_VideoUpscaler) | `4490bd1` | Upscale mode (SeedVR2) |
+| Nvidia_RTX_Nodes_ComfyUI | [GitHub](https://github.com/Comfy-Org/Nvidia_RTX_Nodes_ComfyUI) | v0.1.3 | Upscale mode (RTX VSR) |
+| ComfyUI-MiniMax-H3-Turbo | [GitHub](https://github.com/Larryvrh/ComfyUI-MiniMax-H3-Turbo) | `546b502` | Turbo preset |
+| ComfyUI-SolAttn_triton | [GitHub](https://github.com/kijai/ComfyUI-SolAttn_triton) | `842c4ea` | Speed preset |
+| ComfyUI-MiniMaxH3-Cache | [GitHub](https://github.com/lihaoyun6/ComfyUI-MiniMaxH3-Cache) | `8a45e09` | Speed preset |
+| comfyui-kjnodes | [GitHub](https://github.com/kijai/ComfyUI-KJNodes) | `6ab7e81` | High Quality preset (SageAttention) |
 
 ## Models
 

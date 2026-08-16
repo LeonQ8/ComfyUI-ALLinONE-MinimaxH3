@@ -52,10 +52,38 @@ Official MiniMax H3 files from [Comfy-Org/MiniMax-H3](https://huggingface.co/Com
 
 ### Custom nodes
 
-- **Chain / Keyframes / Extend modes:** [ComfyUI-H3-Motion-Context-MultiRef](https://github.com/seitanism/ComfyUI-H3-Motion-Context-MultiRef)
-- **Audio Drive mode:** comfyui-vrgamedevgirl
-- **Turbo preset:** [ComfyUI-MiniMax-H3-Turbo](https://github.com/Larryvrh/ComfyUI-MiniMax-H3-Turbo) + a turbo LoRA from [larryvrh/MiniMax-H3-Turbo-Lora](https://huggingface.co/larryvrh/MiniMax-H3-Turbo-Lora) (recommended: `minimax_h3_turbo_v4_step600_ema.safetensors`)
-- **Optional (used by Speed / High Quality presets):** ComfyUI-SolAttn_triton, ComfyUI-MiniMaxH3-Cache, SageAttention
+**T2V, I2V and R2V need nothing extra** — every node they use (H3 conditioning, sigma shift, samplers, video/audio decode, video save) ships with a recent ComfyUI. The other modes and presets use a few community packs — install only the ones you use, via ComfyUI-Manager (search by pack name), then fully restart ComfyUI and hard-refresh the browser (`Ctrl+F5`).
+
+**Per mode**
+
+| Mode | Packs you need |
+|------|----------------|
+| T2V / I2V / R2V | — (ComfyUI core only) |
+| Audio Drive | [comfyui-vrgamedevgirl](https://github.com/vrgamegirl19/comfyui-vrgamedevgirl) |
+| Keyframes | [ComfyUI-H3-Motion-Context-MultiRef](https://github.com/seitanism/ComfyUI-H3-Motion-Context-MultiRef) |
+| Extend | [ComfyUI-H3-Motion-Context-MultiRef](https://github.com/seitanism/ComfyUI-H3-Motion-Context-MultiRef) |
+| Chain | [ComfyUI-H3-Motion-Context-MultiRef](https://github.com/seitanism/ComfyUI-H3-Motion-Context-MultiRef) |
+| Upscale — RTX VSR | [Nvidia_RTX_Nodes_ComfyUI](https://github.com/Comfy-Org/Nvidia_RTX_Nodes_ComfyUI) (NVIDIA RTX GPUs only) |
+| Upscale — SeedVR2 | [ComfyUI-SeedVR2_VideoUpscaler](https://github.com/numz/ComfyUI-SeedVR2_VideoUpscaler) |
+
+**Per quality preset** (Settings → Quality)
+
+| Preset | Packs you need |
+|--------|----------------|
+| Turbo | [ComfyUI-MiniMax-H3-Turbo](https://github.com/Larryvrh/ComfyUI-MiniMax-H3-Turbo) + a Turbo LoRA (below) |
+| Speed | [ComfyUI-SolAttn_triton](https://github.com/kijai/ComfyUI-SolAttn_triton) + [ComfyUI-MiniMaxH3-Cache](https://github.com/lihaoyun6/ComfyUI-MiniMaxH3-Cache) |
+| Balanced | [ComfyUI-SolAttn_triton](https://github.com/kijai/ComfyUI-SolAttn_triton) |
+| High | [ComfyUI-KJNodes](https://github.com/kijai/ComfyUI-KJNodes) (SageAttention) |
+
+**Preview without saving** (auto-save off): [ComfyUI-VideoHelperSuite](https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite)
+
+**Turbo LoRA** (for the Turbo preset): download `minimax_h3_turbo_v4_step600_ema.safetensors` from [larryvrh/MiniMax-H3-Turbo-Lora](https://huggingface.co/larryvrh/MiniMax-H3-Turbo-Lora) into `ComfyUI/models/loras/`.
+
+> **Seeing "Node not found"?** That's a missing pack from the tables above. The two most common:
+> - `Audio Drive` node → install **comfyui-vrgamedevgirl**
+> - Extend / Chain / Keyframes nodes → install **ComfyUI-H3-Motion-Context-MultiRef**
+>
+> Install via ComfyUI-Manager, restart ComfyUI completely, then hard-refresh the browser.
 
 Exact tested versions of everything are in **[COMPATIBILITY.md](COMPATIBILITY.md)** — check that file first if something breaks after you update ComfyUI or a pack.
 
