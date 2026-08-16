@@ -1833,8 +1833,8 @@ app.registerExtension({
         tx(capE,capLbl);
         imgRefsBox.appendChild(capE);
         const row=mk("div",{display:"flex",gap:"8px",flexWrap:"wrap"});
-        S.imgRefs.slice(0,maxRefs).forEach((name,idx)=>{
-          const slot=ImgSlot(false,n=>{ if(n===null){S.imgRefs.splice(idx,1);} else { S.imgRefs[idx]=n; persist(); } _renderImgRefs(); });
+        (sub==="edit"?[S.imgRefs[0]||""]:S.imgRefs.slice(0,maxRefs)).forEach((name,idx)=>{
+          const slot=ImgSlot(false,n=>{ if(n===null){S.imgRefs.splice(idx,1);persist();} else { S.imgRefs[idx]=n; persist(); } _renderImgRefs(); });
           row.appendChild(slot.el);
           if(name) slot._restorePreview(name);
         });
