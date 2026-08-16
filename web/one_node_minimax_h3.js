@@ -2687,7 +2687,7 @@ app.registerExtension({
         if(modelDDs.tae) modelDDs.tae.updateItems(files.length?files:["taeh3.safetensors"]);
         _syncLiveToggle();
       };
-      const liveTogWrap=mk("div",{display:"flex",gap:"4px",alignItems:"center",flexShrink:"0"});
+      const liveTogWrap=mk("div",{display:"flex",gap:"4px",alignItems:"center",flexShrink:"0",alignSelf:"center",marginLeft:"8px"});
       const liveTogBtn=mk("button",{}, {type:"button",className:"h3-actbtn"+(S.livePreview?" on":"")});
       liveTogBtn._lbl=mk("span",{}, {textContent:S.livePreview?"Preview On":"Preview Off"});
       liveTogBtn.appendChild(liveTogBtn._lbl);
@@ -2736,7 +2736,7 @@ app.registerExtension({
       galleryRefresh.style.boxShadow="inset 0 1px 0 rgba(255,255,255,.07), 0 1px 3px rgba(0,0,0,.45)";
       galleryRefresh.style.fontSize="9.5px";
       galleryRefresh.innerHTML=`<svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICON_REFRESH}</svg>`+`<span style="margin-left:5px;">Refresh</span>`;
-      galleryHdr.append(galleryTitle,saveTogBtn,liveTogWrap,galleryRefresh,galleryActs);
+      galleryHdr.append(galleryTitle,saveTogBtn,galleryRefresh,galleryActs);
       const galleryWrap=mk("div",{display:"flex",flexDirection:"column",gap:"7px"});
       galleryWrap.append(galleryHdr,galleryBox);
       rightPanel.append(previewBox,timeBar,galleryWrap);
@@ -2886,7 +2886,7 @@ app.registerExtension({
       tx(stopBtn,"Stop");
       stopBtn.onmouseenter=()=>{stopBtn.style.borderColor=C.err;stopBtn.style.color=C.err;};
       stopBtn.onmouseleave=()=>{stopBtn.style.borderColor=C.border;stopBtn.style.color=C.muted;};
-      genRow.append(genBtn,stopBtn);
+      genRow.append(genBtn,liveTogWrap,stopBtn);
 
       const resetBtn=()=>{
         S.generating=false;
