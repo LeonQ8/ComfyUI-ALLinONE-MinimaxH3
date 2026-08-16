@@ -44,6 +44,7 @@ const MODES = [
   { key:"keyframes",   label:"Keyframes" },
   { key:"extend",      label:"Extend" },
   { key:"chain",       label:"Chain" },
+  { key:"image",       label:"Image" },
 ];
 
 const MODE_HINTS = {
@@ -54,6 +55,7 @@ const MODE_HINTS = {
   keyframes:"Custom Keyframes - pin still images at chosen frames; the video morphs through them in order.",
   extend:"Extend - continue a source video seamlessly beyond its ending, keeping its look and sound.",
   chain:"Chain - multiple clips generated in sequence and stitched end-to-end with motion-context continuity.",
+  image:"Image - still image generation with MiniMax H3. Text to image, edit an image, or mix multiple references.",
 };
 
 const MODE_DESC = {
@@ -64,11 +66,13 @@ const MODE_DESC = {
   keyframes:"Pin still images at chosen frames; the video morphs through them in order.",
   extend:"Continue a source video seamlessly beyond its ending.",
   chain:"Clips generated in sequence, stitched with motion-context continuity.",
+  image:"Still images with MiniMax H3. Text to image, edit an image, or mix references.",
 };
 
 const TEMPLATES = {
   t2v:"t2v.json", i2v:"i2v.json", r2v:"r2v.json", audio_drive:"audio_drive.json",
   keyframes:"keyframes.json", extend:"video_extend.json", chain:"chain_section.json",
+  image:"image.json",
 };
 
 const DEFAULT_MODELS = {
@@ -721,6 +725,13 @@ app.registerExtension({
           generating:      false,
           playOnFinish:    saved.playOnFinish!==undefined?saved.playOnFinish:true,
           folded:          (saved.folded&&typeof saved.folded==="object")?saved.folded:{},
+          imgSub:          saved.imgSub||"t2i",
+          imgAspect:       saved.imgAspect||"1:1",
+          imgMP:           saved.imgMP!==undefined?saved.imgMP:1.0,
+          imgW:            saved.imgW||1024,
+          imgH:            saved.imgH||1024,
+          imgProfile:      saved.imgProfile||"base_quality_20",
+          imgRefs:         Array.isArray(saved.imgRefs)?saved.imgRefs:[],
         };
       }
       const S=self._h3_S;
@@ -759,6 +770,8 @@ app.registerExtension({
           modeSettings:S.modeSettings,
           autoSave:S.autoSave,customW:S.customW,customH:S.customH,
           playOnFinish:S.playOnFinish,folded:S.folded,
+          imgSub:S.imgSub,imgAspect:S.imgAspect,imgMP:S.imgMP,imgW:S.imgW,imgH:S.imgH,
+          imgProfile:S.imgProfile,imgRefs:S.imgRefs,
         });
       }
 
@@ -899,8 +912,9 @@ app.registerExtension({
         keyframes:'<path d="M12 4l7 8-7 8-7-8 7-8z"/>',
         extend:'<path d="M4 12h14M13 6l6 6-6 6"/>',
         chain:'<path d="M10.5 13.5a4 4 0 005.7 0l2.8-2.8a4 4 0 00-5.7-5.7l-1.4 1.4"/><path d="M13.5 10.5a4 4 0 00-5.7 0L5 13.3a4 4 0 005.7 5.7l1.4-1.4"/>',
+        image:'<rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="8.5" cy="10" r="1.5"/><path d="M6 17l4-4 3 3 2-2 3 3"/>',
       };
-      const MODE_SHORT={t2v:"T2V",i2v:"I2V",r2v:"R2V",audio_drive:"Audio",keyframes:"Keys",extend:"Extend",chain:"Chain"};
+      const MODE_SHORT={t2v:"T2V",i2v:"I2V",r2v:"R2V",audio_drive:"Audio",keyframes:"Keys",extend:"Extend",chain:"Chain",image:"Image"};
       const modesWrap=mk("div",{}, {className:"h3-modes"});
       const modeEls={};
       const _updateTabs=()=>{
@@ -1061,7 +1075,7 @@ app.registerExtension({
       let _histItems=[];
       let _histOpenId=null;
       // History row mode metadata: per-mode icon+color, upscale methods, turbo
-      const _HIST_MODE_COLORS={t2v:"#c0a996",i2v:"#5aa8ff",r2v:"#5fd08c",audio_drive:"#c07fff",keyframes:"#ffc266",extend:"#7ed491",chain:"#4dd0e1"};
+      const _HIST_MODE_COLORS={t2v:"#c0a996",i2v:"#5aa8ff",r2v:"#5fd08c",audio_drive:"#c07fff",keyframes:"#ffc266",extend:"#7ed491",chain:"#4dd0e1",image:"#f0a0c0"};
       const _HIST_UP_COLORS={rtx:"#5aa8ff",seedvr:"#c07fff"};
       const _histModeMeta=(mode)=>{
         const m=String(mode||"");
@@ -1127,8 +1141,13 @@ app.registerExtension({
         secResult.appendChild(srTitle);
         if(it.video){
           const vurl=api.apiURL(`/view?filename=${encodeURIComponent(it.video)}&type=output&subfolder=${encodeURIComponent(it.subfolder||"")}`);
-          const v=mk("video",{width:"100%",flex:"1 1 0",minHeight:"0",height:"0",borderRadius:"8px",background:"#000",objectFit:"contain",outline:"none"},{controls:true,src:vurl});
-          secResult.appendChild(v);
+          if(it.kind==="image"){
+            const v=mk("img",{width:"100%",maxHeight:"100%",borderRadius:"8px",background:"#000",objectFit:"contain",outline:"none",flex:"1 1 0",minHeight:"0"},{src:vurl});
+            secResult.appendChild(v);
+          } else {
+            const v=mk("video",{width:"100%",flex:"1 1 0",minHeight:"0",height:"0",borderRadius:"8px",background:"#000",objectFit:"contain",outline:"none"},{controls:true,src:vurl});
+            secResult.appendChild(v);
+          }
         } else {
           const none=mk("div",{fontSize:"10px",color:C.muted});tx(none,"No video recorded.");
           secResult.appendChild(none);
@@ -1206,7 +1225,7 @@ app.registerExtension({
         display:"none",flexDirection:"column",padding:"16px",boxSizing:"border-box",zIndex:"50",
         borderRadius:"8px",overflow:"hidden",opacity:"0",transition:"opacity .22s ease",transform:"translateY(6px)",
       });
-      const _LIB_MODE_LBL={t2v:"T2V",i2v:"I2V",r2v:"R2V",audio_drive:"Audio Drive",keyframes:"Keyframes",extend:"Extend",chain:"Chain"};
+      const _LIB_MODE_LBL={t2v:"T2V",i2v:"I2V",r2v:"R2V",audio_drive:"Audio Drive",keyframes:"Keyframes",extend:"Extend",chain:"Chain",image:"Image"};
       const libHdr=mk("div",{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:"12px"});
       const libTitle=mk("div",{fontSize:"13px",fontWeight:"700",letterSpacing:".06em",textTransform:"uppercase",color:C.text});
       tx(libTitle,"Library");
@@ -1243,7 +1262,7 @@ app.registerExtension({
       tx(lbDel,"Delete");
       const lbClose=mk("button",{background:"transparent",border:`1px solid ${C.borderH}`,borderRadius:"6px",padding:"4px 12px",fontSize:"10px",fontWeight:"700",color:C.muted,cursor:"pointer",outline:"none"});
       tx(lbClose,"Back");
-      lbClose.onclick=()=>{lbVideo.pause();lbVideo.src="";libLightbox.style.display="none";_renderLibrary();};
+      lbClose.onclick=()=>{lbVideo.pause();lbVideo.src="";lbImg.src="";libLightbox.style.display="none";_renderLibrary();};
       const lbSeedWrap=mk("div",{display:"flex",alignItems:"center",gap:"6px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"6px",padding:"2px 8px"});
       const lbSeedLbl=mk("span",{fontSize:"9px",color:C.muted});tx(lbSeedLbl,"seed -");
       const lbSeedVal=mk("span",{fontSize:"9px",color:C.text,fontWeight:"600"});tx(lbSeedVal,"?");
@@ -1289,7 +1308,8 @@ app.registerExtension({
       tx(lbPromptBox,"");
       lbPromptWrap.append(lbPromptHdr,lbPromptBox);
       const lbVideo=mk("video",{flex:"1",minHeight:"0",width:"100%",borderRadius:"8px",background:"#000",objectFit:"contain"},{controls:true});
-      libLightbox.append(lbHdr,lbPromptWrap,lbVideo);
+      const lbImg=mk("img",{flex:"1",minHeight:"0",width:"100%",borderRadius:"8px",background:"#000",objectFit:"contain",display:"none"});
+      libLightbox.append(lbHdr,lbPromptWrap,lbVideo,lbImg);
       libraryOverlay.appendChild(libLightbox);
       let _libFavOnly=false;
       let _libItems=[];
@@ -1333,8 +1353,11 @@ app.registerExtension({
         vis.forEach(item=>{
           const card=mk("div",{background:C.bg1,border:`1px solid ${C.border}`,borderRadius:"9px",overflow:"hidden",cursor:"pointer",display:"flex",flexDirection:"column",transition:"border-color .15s, background .15s"});
           const url=api.apiURL(`/view?filename=${encodeURIComponent(item.filename)}&type=output&subfolder=${encodeURIComponent(item.subfolder||"")}`);
-          const v=mk("video",{width:"100%",height:"78px",objectFit:"cover",display:"block",background:"#000",pointerEvents:"none"},{muted:true,preload:"metadata"});
-          v.src=url;
+          const isImg=item.kind==="image"||/\.(png|jpe?g|webp|bmp)$/i.test(item.filename||"");
+          const v=isImg
+            ? mk("img",{width:"100%",height:"78px",objectFit:"cover",display:"block",background:"#000",pointerEvents:"none"},{src:url})
+            : mk("video",{width:"100%",height:"78px",objectFit:"cover",display:"block",background:"#000",pointerEvents:"none"},{muted:true,preload:"metadata"});
+          if(!isImg) v.src=url;
           const name=mk("div",{fontSize:"8px",color:item.favorite?C.lime:C.muted,padding:"4px 6px",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"});
           tx(name,(item.favorite?"★ ":"")+item.filename);
           card.append(v,name);
@@ -1377,10 +1400,19 @@ app.registerExtension({
             tx(lbPromptBox,"No prompt recorded for this video.");
           }
         }catch(e){ tx(lbPromptBox,"No prompt recorded for this video."); }
-        lbVideo.src=api.apiURL(`/view?filename=${encodeURIComponent(item.filename)}&type=output&subfolder=${encodeURIComponent(item.subfolder||"")}`);
+        const lbUrl=api.apiURL(`/view?filename=${encodeURIComponent(item.filename)}&type=output&subfolder=${encodeURIComponent(item.subfolder||"")}`);
+        const isImg=item.kind==="image"||/\.(png|jpe?g|webp|bmp)$/i.test(item.filename||"");
+        if(isImg){
+          lbVideo.style.display="none";lbVideo.pause();lbVideo.src="";
+          lbImg.style.display="block";lbImg.src=lbUrl;
+        } else {
+          lbImg.style.display="none";lbImg.src="";
+          lbVideo.style.display="block";
+          lbVideo.src=lbUrl;
+          lbVideo.muted=false;
+          lbVideo.play().catch(()=>{lbVideo.muted=true;lbVideo.play().catch(()=>{});});
+        }
         libLightbox.style.display="flex";
-        lbVideo.muted=false;
-        lbVideo.play().catch(()=>{lbVideo.muted=true;lbVideo.play().catch(()=>{});});
       };
       lbFav.onclick=async()=>{
         if(!_libCur)return;
@@ -1657,10 +1689,112 @@ app.registerExtension({
       const chainArea=mk("div",{display:"flex",flexDirection:"column",gap:"6px"});
       const adArea=mk("div",{display:"flex",gap:"10px"});
       const exArea=mk("div",{display:"flex",gap:"10px"});
+      const imgArea=mk("div",{display:"flex",flexDirection:"column",gap:"8px"});
 
       const _clearSections=()=>{
-        [i2vArea,kfArea,refArea,chainArea,adArea,exArea].forEach(a=>a.style.display="none");
+        [i2vArea,kfArea,refArea,chainArea,adArea,exArea,imgArea].forEach(a=>a.style.display="none");
       };
+
+      // -- Image mode (H3 Studio still images) --------------------------------
+      const IMG_ASPECTS={"1:1":1,"16:9":16/9,"9:16":9/16,"4:3":4/3,"3:4":3/4,"3:2":3/2,"2:3":2/3,"21:9":21/9};
+      const IMG_PROFILES=[
+        ["base_quality_20","Base Quality - 20 steps"],
+        ["base_balanced_12","Base Balanced - 12 steps"],
+        ["lightx_v1_fl2v_8","LightX v1.0 - FL2VA 8 steps"],
+        ["lightx_v1_fl2v_4_pruned","LightX v1.0 - FL2VA 4 steps"],
+        ["lightx_er_sde_4","LightX v0.1 - ER-SDE 4 steps"],
+        ["lightx_sa_solver_4","LightX v0.1 - SA-Solver 4 steps"],
+        ["lightx_v01_ref2v_er_sde_4_pruned","LightX v0.1 - REF2V ER-SDE 4 steps"],
+        ["lightx_v01_ref2v_sa_solver_4_pruned","LightX v0.1 - REF2V SA-Solver 4 steps"],
+      ];
+      const _imgModeKey={t2i:"Text to Image",edit:"Image Edit",refmix:"Reference Mix"};
+      const imgSubRow=mk("div",{display:"flex",flexDirection:"column",gap:"3px"});
+      const imgSubCapRow=mk("div",{display:"flex",alignItems:"center",gap:"4px"});
+      const imgSubCap=mk("div",{fontSize:"9px",fontWeight:"700",color:C.muted,textTransform:"uppercase",letterSpacing:".07em"});
+      tx(imgSubCap,"Image mode");
+      imgSubCapRow.append(imgSubCap,infoIcon("Text to Image: prompt only, no references.\nImage Edit: one source image is the canvas, the prompt describes the edits.\nReference Mix: up to 9 reference images, each can own identity, pose, style, composition and more. Describe them in the prompt with @Image1, @Image2..."));
+      const imgSubDD=DD(["Text to Image","Image Edit","Reference Mix"],_imgModeKey[S.imgSub]||"Text to Image",v=>{
+        S.imgSub=Object.keys(_imgModeKey).find(k=>_imgModeKey[k]===v)||"t2i";
+        persist();_renderImgRefs();
+      });
+      imgSubRow.append(imgSubCapRow,imgSubDD.el);
+      const imgGeomRow=mk("div",{display:"flex",alignItems:"center",gap:"8px",flexWrap:"wrap"});
+      const imgAspectDD=DD(Object.keys(IMG_ASPECTS).concat(["Custom"]),S.imgAspect||"1:1",v=>{S.imgAspect=v;persist();_updImgCustom();});
+      const imgMPNI=NI("",S.imgMP,0.2,4,0.05,v=>{S.imgMP=v;persist();},"62px");
+      const imgMPLbl=mk("div",{fontSize:"9px",color:C.muted,flexShrink:"0"});tx(imgMPLbl,"MP");
+      const imgCustom=mk("div",{display:"none",alignItems:"center",gap:"6px",width:"100%"});
+      const imgCW=NI("",S.imgW,32,16384,32,v=>{S.imgW=Math.max(32,Math.round(v/32)*32);persist();},"62px");
+      const imgCH=NI("",S.imgH,32,16384,32,v=>{S.imgH=Math.max(32,Math.round(v/32)*32);persist();},"62px");
+      const imgX=mk("div",{fontSize:"10px",color:C.muted,flexShrink:"0"});tx(imgX,"x");
+      imgCustom.append(imgCW,imgX,imgCH,mk("div",{fontSize:"9px",color:C.muted}, {textContent:"px (custom)"}));
+      const _updImgCustom=()=>{ imgCustom.style.display=S.imgAspect==="Custom"?"flex":"none"; imgMPNI._inp.disabled=S.imgAspect==="Custom"; imgMPNI.style.opacity=S.imgAspect==="Custom"?"0.5":""; };
+      _updImgCustom();
+      imgGeomRow.append(imgAspectDD.el,imgMPNI,imgMPLbl);
+      imgSubRow.appendChild(imgGeomRow);
+      imgSubRow.appendChild(imgCustom);
+      const imgProfRow=mk("div",{display:"flex",flexDirection:"column",gap:"3px"});
+      const imgProfCapRow=mk("div",{display:"flex",alignItems:"center",gap:"4px"});
+      const imgProfCap=mk("div",{fontSize:"9px",fontWeight:"700",color:C.muted,textTransform:"uppercase",letterSpacing:".07em"});
+      tx(imgProfCap,"Sampling profile");
+      imgProfCapRow.append(imgProfCap,infoIcon("Base profiles run native H3 with no acceleration files.\nLightX profiles need the matching LoRA in your loras folder (see the H3 Studio docs) - FL2VA profiles for T2I/Edit, REF2V profiles for Reference Mix."));
+      const _imgProfLabel=()=>{ const p=IMG_PROFILES.find(x=>x[0]===S.imgProfile); return p?p[1]:"Base Quality - 20 steps"; };
+      const imgProfDD=DD(IMG_PROFILES.map(p=>p[1]),_imgProfLabel(),v=>{
+        const p=IMG_PROFILES.find(x=>x[1]===v);
+        S.imgProfile=p?p[0]:"base_quality_20";persist();
+      });
+      imgProfRow.append(imgProfCapRow,imgProfDD.el);
+      imgArea.append(imgSubRow,imgProfRow);
+      const imgRefsBox=mk("div",{display:"flex",flexDirection:"column",gap:"6px"});
+      imgArea.appendChild(imgRefsBox);
+      const _renderImgRefs=()=>{
+        imgRefsBox.innerHTML="";
+        const sub=S.imgSub;
+        if(sub==="t2i") return;
+        const maxRefs=sub==="edit"?1:9;
+        const capLbl=sub==="edit"?"Source image":"Reference images ("+S.imgRefs.length+"/"+maxRefs+")";
+        const capE=mk("div",{fontSize:"9px",fontWeight:"700",color:C.muted,textTransform:"uppercase",letterSpacing:".07em"});
+        tx(capE,capLbl);
+        imgRefsBox.appendChild(capE);
+        const row=mk("div",{display:"flex",gap:"8px",flexWrap:"wrap"});
+        S.imgRefs.slice(0,maxRefs).forEach((name,idx)=>{
+          const slot=ImgSlot(false,n=>{ if(n===null){S.imgRefs.splice(idx,1);} else { S.imgRefs[idx]=n; persist(); } _renderImgRefs(); });
+          row.appendChild(slot.el);
+          if(name) slot._restorePreview(name);
+        });
+        if(sub==="refmix"&&S.imgRefs.length<9){
+          const addImg=mk("div",{width:"72px",height:"72px",borderRadius:"12px",border:"1.5px dashed rgba(90,168,255,.4)",background:"rgba(90,168,255,.05)",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",color:"rgba(90,168,255,.8)",fontSize:"18px",fontWeight:"700",flexShrink:"0"});
+          tx(addImg,"+");
+          const upImg=mk("input",{display:"none"},{type:"file",accept:"image/*"});
+          row.append(addImg,upImg);
+          addImg.onclick=()=>{
+            if(S.imgRefs.length>=9) return;
+            upImg.value="";
+            upImg.onchange=async()=>{
+              if(!upImg.files[0]) return;
+              const fd=new FormData();fd.append("image",upImg.files[0]);fd.append("overwrite","true");
+              try{
+                const r=await api.fetchApi("/upload/image",{method:"POST",body:fd});
+                const d=await r.json();
+                S.imgRefs.push(d.name||upImg.files[0].name);
+                persist();
+              }catch(e){ console.warn(e); }
+              _renderImgRefs();
+            };
+            upImg.click();
+          };
+        }
+        imgRefsBox.appendChild(row);
+        if(sub==="refmix"){
+          const hint=mk("div",{fontSize:"8px",color:C.muted,lineHeight:"1.5"});
+          tx(hint,"Each image can own a part of the result - identity, pose, outfit, style, composition, lighting. Describe them in the prompt as @Image1, @Image2...");
+          imgRefsBox.appendChild(hint);
+        } else {
+          const hint=mk("div",{fontSize:"8px",color:C.muted,lineHeight:"1.5"});
+          tx(hint,"The source image is the canvas - the prompt describes what changes.");
+          imgRefsBox.appendChild(hint);
+        }
+      };
+      imgArea._render=_renderImgRefs;
 
       const _mkSlotCard=(labelTxt,slot)=>{
         const card=mk("div",{display:"flex",flexDirection:"column",gap:"3px",alignItems:"center"});
@@ -1915,12 +2049,15 @@ app.registerExtension({
         promptCard.style.display=S.mode==="chain"?"none":"";
         if(S.mode==="chain"){
           durRow.style.display="none";
+        } else if(S.mode==="image"){
+          durRow.style.display="none";
         } else {
           durRow.style.display="flex";
           tx(durCap,"Duration (s)");
           durNI._inp.disabled=false;
           durNI.style.opacity="";
         }
+        params.style.display=S.mode==="image"?"none":"grid";
         tx(modeDesc, MODE_DESC[S.mode]||"");
         if(S.mode==="i2v"){ modeHdr.style.display="flex"; modeTitle.textContent="Image to Video"; i2vArea.style.display="flex"; }
         else if(S.mode==="r2v"){ modeHdr.style.display="flex"; modeTitle.textContent="Reference to Video"; _renderRefs(); refArea.style.display="flex"; }
@@ -1928,6 +2065,7 @@ app.registerExtension({
         else if(S.mode==="keyframes"){ modeHdr.style.display="flex"; modeTitle.textContent="Custom Keyframes"; _renderKf(); kfArea.style.display="flex"; }
         else if(S.mode==="extend"){ modeHdr.style.display="flex"; modeTitle.textContent="Extend Video"; exArea.style.display="flex"; }
         else if(S.mode==="chain"){ modeHdr.style.display="flex"; modeTitle.textContent="Motion Context Chain"; _renderChain(); chainArea.style.display="flex"; }
+        else if(S.mode==="image"){ modeHdr.style.display="flex"; modeTitle.textContent="Image (H3 Studio)"; _renderImgRefs(); imgArea.style.display="flex"; }
         else { modeHdr.style.display="none"; modeTitle.textContent="Text to Video"; }
       };
 
@@ -2193,6 +2331,7 @@ app.registerExtension({
       const phLbl=mk("div",{fontSize:"11px",color:C.muted});tx(phLbl,"Generated videos appear here");
       placeholder.append(phIco,phLbl);
       const vidEl=mk("video",{position:"absolute",inset:"0",width:"100%",height:"100%",objectFit:"contain",display:"none",background:"#000"},{controls:true});
+      const imgEl=mk("img",{position:"absolute",inset:"0",width:"100%",height:"100%",objectFit:"contain",display:"none",background:"#000"});
       const errorBox=mk("div",{position:"absolute",inset:"0",display:"none",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:"16px",color:C.err,fontSize:"11px",lineHeight:"1.6",textAlign:"center",background:"rgba(0,0,0,.8)"});
       const progWrap=mk("div",{position:"absolute",bottom:"0",left:"0",right:"0",background:"linear-gradient(transparent,rgba(0,0,0,.88))",padding:"14px 14px 10px",display:"none",flexDirection:"column",gap:"4px",pointerEvents:"none"});
       const progTop=mk("div",{display:"flex",justifyContent:"space-between",alignItems:"center"});
@@ -2420,7 +2559,16 @@ app.registerExtension({
         }
         const vtype=item.type||"output";
         const url=api.apiURL(`/view?filename=${encodeURIComponent(item.filename)}&type=${vtype}&subfolder=${encodeURIComponent(item.subfolder||"")}`);
-        vidEl.src=url;vidEl.style.display="block";
+        if(item.kind==="image"||/\.(png|jpe?g|webp|bmp)$/i.test(item.filename||"")){
+          vidEl.style.display="none";vidEl.pause();vidEl.src="";
+          imgEl.src=url;imgEl.style.display="block";
+          placeholder.style.display="none";errorBox.style.display="none";
+          _updateSeedChip(item.filename);
+          if(_seedByFile[item.filename]===undefined) _showSeedFromHistory(item.filename);
+          _updateTimeBar(item.filename);
+          return;
+        }
+        vidEl.src=url;vidEl.style.display="block";imgEl.style.display="none";
         placeholder.style.display="none";errorBox.style.display="none";
         _updateSeedChip(item.filename);
         if(_seedByFile[item.filename]===undefined) _showSeedFromHistory(item.filename);
@@ -2450,7 +2598,7 @@ app.registerExtension({
         if(!_curItem) return;
         if(!confirm("Delete "+_curItem.filename+"?")) return;
         await fetch("/h3one/delete",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({filename:_curItem.filename,subfolder:_curItem.subfolder||""})}).catch(()=>{});
-        vidEl.src="";vidEl.style.display="none";placeholder.style.display="flex";
+        vidEl.src="";vidEl.style.display="none";imgEl.src="";imgEl.style.display="none";placeholder.style.display="flex";
         _curItem=null;
         _loadGallery();
       };
@@ -2511,8 +2659,11 @@ app.registerExtension({
         _galItems.slice(0,30).forEach(item=>{
           const card=mk("div",{width:"96px",flexShrink:"0",cursor:"pointer",background:C.bg1,border:`1px solid ${C.border}`,borderRadius:"7px",overflow:"hidden"});
           const url=api.apiURL(`/view?filename=${encodeURIComponent(item.filename)}&type=output&subfolder=${encodeURIComponent(item.subfolder||"")}`);
-          const v=mk("video",{width:"100%",height:"54px",objectFit:"cover",display:"block",background:"#000",pointerEvents:"none"},{muted:true,preload:"metadata"});
-          v.src=url;
+          const isImg=item.kind==="image"||/\.(png|jpe?g|webp|bmp)$/i.test(item.filename||"");
+          const v=isImg
+            ? mk("img",{width:"100%",height:"54px",objectFit:"cover",display:"block",background:"#000",pointerEvents:"none"},{src:url})
+            : mk("video",{width:"100%",height:"54px",objectFit:"cover",display:"block",background:"#000",pointerEvents:"none"},{muted:true,preload:"metadata"});
+          if(!isImg) v.src=url;
           const name=mk("div",{fontSize:"8px",color:C.muted,padding:"3px 5px",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"});
           tx(name,(item.favorite?"* ":"")+item.filename);
           if(item.favorite) name.style.color=C.lime;
@@ -2563,7 +2714,7 @@ app.registerExtension({
         const body=mk("div",{fontSize:"11px",color:C.text,lineHeight:"1.6",whiteSpace:"pre-wrap",wordBreak:"break-word",maxWidth:"100%"});
         tx(body,fmtErr(msg));
         errorBox.append(title,body);
-        vidEl.style.display="none";placeholder.style.display="none";
+        vidEl.style.display="none";imgEl.style.display="none";placeholder.style.display="none";
       };
       const showOutput=(item)=>{
         errorBox.style.display="none";
@@ -2585,11 +2736,12 @@ app.registerExtension({
           fetch("/h3one/set_output",{method:"POST",headers:{"Content-Type":"application/json"},
             body:JSON.stringify({node_id:self.id,info:{filename:item.filename,subfolder:item.subfolder||""}})}).catch(()=>{});
           const histMode=wasUpscale?("Upscale "+S.upscaleFactor+"x ("+(wasUpscale==="upscale-rtx"?"RTX VSR":"SeedVR2")+")"):S.mode;
-          const histRes=wasUpscale?(S.upscaleFactor+"x upscale"):S.resolution;
+          const histRes=wasUpscale?(S.upscaleFactor+"x upscale"):(S.mode==="image"?(S.imgLastW+"x"+S.imgLastH):S.resolution);
           fetch("/h3one/history",{method:"POST",headers:{"Content-Type":"application/json"},
             body:JSON.stringify({
               mode:histMode,quality:wasUpscale?"":S.quality,prompt:(S.prompt||"").slice(0,2000),duration:wasUpscale?0:S.duration,
               resolution:histRes,seed:S.seed,gen_time:genMs,video:item.filename,subfolder:item.subfolder||"",
+              kind:item.kind==="image"?"image":"video",
             })}).catch(()=>{});
         }
         _loadGallery();
@@ -2828,9 +2980,59 @@ app.registerExtension({
         return {frames,res};
       };
 
+      const _buildImage=async()=>{
+        const sub=S.imgSub;
+        const refs=(S.imgRefs||[]).slice(0,sub==="edit"?1:9);
+        if(sub==="edit"&&!refs.length) throw new Error("Image Edit needs a source image. Drop one into the source slot, or switch to Text to Image.");
+        if(sub==="refmix"&&!refs.length) throw new Error("Reference Mix needs at least one reference image. Add images to the slots, or switch to Text to Image.");
+        const wf=await _fetchTpl(TEMPLATES.image);
+        wf["1"].inputs.fl2va_model=S.models.unetT2V;
+        wf["1"].inputs.ref2va_model=S.models.unetR2V;
+        wf["1"].inputs.text_encoder=S.models.clip;
+        wf["1"].inputs.video_vae=S.models.vaeVideo;
+        const dir=wf["2"].inputs;
+        dir.prompt=S.prompt||"";
+        dir.mode=sub==="refmix"?"reference":"image";
+        let w,h;
+        if(S.imgAspect==="Custom"){
+          w=Math.max(32,Math.round((S.imgW||1024)/32)*32);
+          h=Math.max(32,Math.round((S.imgH||1024)/32)*32);
+        } else {
+          const r=(IMG_ASPECTS[S.imgAspect]||1);
+          const total=Math.max(0.2,Number(S.imgMP)||1)*1e6;
+          w=Math.round(Math.sqrt(total*r));h=Math.round(Math.sqrt(total/r));
+          w=Math.max(32,Math.round(w/32)*32);h=Math.max(32,Math.round(h/32)*32);
+        }
+        S.imgLastW=w;S.imgLastH=h;
+        dir.width=w;dir.height=h;
+        dir.aspect_ratio=S.imgAspect==="Custom"?"1:1":S.imgAspect;
+        dir.megapixels=Number(S.imgMP)||1;
+        dir.seed=S.seed||0;
+        dir.sampling_profile=S.imgProfile||"base_quality_20";
+        dir.frame_profile="recommended_5";
+        dir.enhance_mode="off";
+        dir.adherence=0.85;
+        dir.route="auto";
+        dir.studio_state="";
+        let nextId=200;
+        const newId=()=>String(nextId++);
+        refs.forEach((name,idx)=>{
+          const n=idx+1;
+          const id=newId();
+          wf[id]={class_type:"LoadImage",inputs:{image:name},_meta:{title:"Ref Image "+n}};
+          dir["media_"+n]=[id,0];
+          dir["media_type_"+n]="image";
+          dir["media_filename_"+n]=name;
+          dir["role_"+n]="auto";
+          dir["retention_"+n]="attribute_transfer";
+        });
+        return wf;
+      };
+
       const _buildWorkflow=async()=>{
         const mode=S.mode;
         if(mode==="chain") return _buildChain();
+        if(mode==="image") return _buildImage();
         const wf=await _fetchTpl(TEMPLATES[mode]);
         _patchCommon(wf);
         let nextId=200;
@@ -3203,13 +3405,22 @@ app.registerExtension({
         if(!recipeEl) return;
         recipeEl.innerHTML="";
         const _q=_QL[S.quality]||"Custom";
-        const r=_resolveRes();
         const chip=(label,value,media)=>{
           const c=mk("span",{}, {className:"h3-chip"+(media?" media":"")});
           if(label) c.appendChild(mk("span",{}, {className:"cl",textContent:label}));
           c.appendChild(mk("span",{}, {className:"cv",textContent:value}));
           recipeEl.appendChild(c);
         };
+        if(S.mode==="image"){
+          chip(null,_imgModeKey[S.imgSub]||"Text to Image",true);
+          chip(null,S.imgAspect==="Custom"?`${S.imgW}×${S.imgH}`:`${S.imgAspect} · ${S.imgMP}MP`,true);
+          recipeEl.appendChild(mk("span",{}, {className:"h3-gsep","aria-hidden":"true"}));
+          chip(null,_imgProfLabel());
+          chip("seed",S.randomizeSeed?"random":String(S.seed||0));
+          chip(null,`×${S.batch||1}`);
+          return;
+        }
+        const r=_resolveRes();
         chip(null,`${r.width}×${r.height}`,true);
         chip(null,S.mode==="chain"?`${S.chainClips.length} clips`:`${S.duration}s`,true);
         recipeEl.appendChild(mk("span",{}, {className:"h3-gsep","aria-hidden":"true"}));
@@ -3341,6 +3552,12 @@ app.registerExtension({
     const vids=out.videos||out.gifs||null;
     if(vids&&Array.isArray(vids)&&vids.length&&_activeShowOutput){
       _activeShowOutput(vids[vids.length-1]);
+      _activeSetStage?.("Done",97);
+    }
+    const imgs=out.images||null;
+    if(imgs&&Array.isArray(imgs)&&imgs.length&&_activeShowOutput){
+      const im=imgs[imgs.length-1];
+      _activeShowOutput({filename:im.filename,subfolder:im.subfolder||"",type:im.type||"output",kind:"image"});
       _activeSetStage?.("Done",97);
     }
   });

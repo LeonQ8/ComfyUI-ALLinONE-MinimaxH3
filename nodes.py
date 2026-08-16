@@ -55,10 +55,11 @@ USER_CONFIG_PATH = os.path.join(USER_CONFIG_DIR, "config.json")
 USER_HISTORY_PATH = os.path.join(USER_CONFIG_DIR, "history.json")
 
 _VIDEO_EXTS = (".mp4", ".webm", ".gif", ".mkv", ".mov", ".m4v", ".avi")
+_IMAGE_EXTS = (".png", ".jpg", ".jpeg", ".webp", ".bmp")
 _ALLOWED_TEMPLATES = (
     "t2v.json", "i2v.json", "r2v.json", "audio_drive.json",
     "keyframes.json", "video_extend.json", "chain_section.json", "upscale.json",
-    "upscale_rtx.json",
+    "upscale_rtx.json", "image.json",
 )
 
 
@@ -305,13 +306,17 @@ def _scan_output_videos():
     found = []
     for root, _dirs, files in os.walk(str(out_dir)):
         for fn in files:
-            if fn.lower().endswith(_VIDEO_EXTS):
-                full = os.path.join(root, fn)
-                found.append({
-                    "filename": fn,
-                    "subfolder": os.path.relpath(os.path.dirname(full), str(base)).replace("\\", "/"),
-                    "mtime": os.path.getmtime(full),
-                })
+            low = fn.lower()
+            kind = "video" if low.endswith(_VIDEO_EXTS) else ("image" if low.endswith(_IMAGE_EXTS) else None)
+            if kind is None:
+                continue
+            full = os.path.join(root, fn)
+            found.append({
+                "filename": fn,
+                "subfolder": os.path.relpath(os.path.dirname(full), str(base)).replace("\\", "/"),
+                "mtime": os.path.getmtime(full),
+                "kind": kind,
+            })
     found.sort(key=lambda x: x["mtime"], reverse=True)
     return found
 
@@ -518,6 +523,7 @@ async def add_history(request):
             "gen_time": data.get("gen_time", 0),
             "video": data.get("video", ""),
             "subfolder": data.get("subfolder", ""),
+            "kind": data.get("kind", "video"),
         }
         items = _load_history()
         items.insert(0, entry)

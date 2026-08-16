@@ -1,0 +1,12 @@
+{
+  "1": { "class_type": "H3StudioLoader", "inputs": { "fl2va_model": "minimax_h3_fl2va_pruned_int8_convrot.safetensors", "ref2va_model": "minimax_h3_ref2va_pruned_int8_convrot.safetensors", "text_encoder": "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors", "video_vae": "minimax_h3_video_vae_fp16.safetensors", "image_vae": "Disabled - original H3 video VAE only", "image_analyzer": "Fast · Qwen3.5 2B", "prompt_writer": "Auto · Qwen3.5 4B writer" }, "_meta": { "title": "H3 Studio Loader" } },
+  "2": { "class_type": "H3StudioDirector", "inputs": { "mode": "image", "prompt": "", "resolution": "Custom", "aspect_ratio": "1:1", "width": 1024, "height": 1024, "seconds": 5.0, "advanced": false, "fps": 24.0, "keyframe_role": "first", "ref_image_size": "2k", "reference_mention_mode": "index", "megapixels": 1.0, "seed": 0, "enhance_mode": "off", "adherence": 0.85, "route": "auto", "sampling_profile": "base_quality_20", "frame_profile": "recommended_5", "analyzer_model": "", "studio_state": "", "h3_bundle": ["1", 0] }, "_meta": { "title": "H3 Studio Director" } },
+  "3": { "class_type": "H3StudioCondition", "inputs": { "h3_bundle": ["1", 0], "studio_context": ["2", 0] }, "_meta": { "title": "H3 Condition & Route" } },
+  "4": { "class_type": "H3StudioContextSamplingPreset", "inputs": { "model": ["3", 0], "studio_context": ["2", 0] }, "_meta": { "title": "Director Sampling Preset" } },
+  "5": { "class_type": "RandomNoise", "inputs": { "noise_seed": 0 }, "_meta": { "title": "Noise" } },
+  "6": { "class_type": "BasicGuider", "inputs": { "model": ["3", 0], "conditioning": ["3", 2] }, "_meta": { "title": "Basic Guider" } },
+  "7": { "class_type": "SamplerCustomAdvanced", "inputs": { "noise": ["5", 0], "guider": ["6", 0], "sampler": ["4", 1], "sigmas": ["4", 2], "latent_image": ["3", 3] }, "_meta": { "title": "Sampler Custom Advanced" } },
+  "8": { "class_type": "H3StudioDecode", "inputs": { "samples": ["7", 0], "vae": ["3", 4] }, "_meta": { "title": "H3 VAE Decode" } },
+  "9": { "class_type": "H3StudioSaveImage", "inputs": { "images": ["8", 0], "filename_prefix": "one-node-minimax-h3/img", "studio_context": ["2", 0] }, "_meta": { "title": "Save PNG" } },
+  "10": { "class_type": "PreviewImage", "inputs": { "images": ["8", 0] }, "_meta": { "title": "Preview" } }
+}

@@ -21,6 +21,7 @@ No node graph to build, no wires to connect, no hunting through twelve custom no
 | **Extend** | Continue an existing video seamlessly |
 | **Chain** | Multi-clip continuation with H3 Motion Context (latent path, no re-encode) |
 | **Upscale** | RTX/Seed2VR Video Super Resolution hook |
+| **Image** | Still images with H3: text to image, image edit, or reference mix (up to 9 references) via H3 Studio |
 
 ## Screenshots
 
@@ -65,6 +66,7 @@ Official MiniMax H3 files from [Comfy-Org/MiniMax-H3](https://huggingface.co/Com
 | Chain | [ComfyUI-H3-Motion-Context-MultiRef](https://github.com/seitanism/ComfyUI-H3-Motion-Context-MultiRef) |
 | Upscale — RTX VSR | [Nvidia_RTX_Nodes_ComfyUI](https://github.com/Comfy-Org/Nvidia_RTX_Nodes_ComfyUI) (NVIDIA RTX GPUs only) |
 | Upscale — SeedVR2 | [ComfyUI-SeedVR2_VideoUpscaler](https://github.com/numz/ComfyUI-SeedVR2_VideoUpscaler) |
+| Image | [ComfyUI-MiniMax-H3-Studio](https://github.com/thaakeno/ComfyUI-MiniMax-H3-Studio) |
 
 **Per quality preset** (Settings → Quality)
 

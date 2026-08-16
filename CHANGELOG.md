@@ -2,6 +2,10 @@
 
 All notable changes to this project are documented here, newest first.
 
+## [Unreleased]
+
+- New **Image** mode powered by ComfyUI-MiniMax-H3-Studio: text to image, image edit from a source image, and reference mix with up to 9 ordered references (@Image1 to @Image9 for identity, pose, style and more). Sampling profiles: Base (20/12 steps) and LightX acceleration. Images appear in the result view, gallery, library and history like videos.
+
 ## [0.2.0] - 2026-08-16
 
 - New **Native** quality preset, runs the H3 pipeline as-is with no SolAttn, H3 cache or SageAttention.
