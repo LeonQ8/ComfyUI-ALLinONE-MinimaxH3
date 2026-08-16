@@ -27,6 +27,28 @@ These are the commit SHAs the node was developed against. You don't need to pin 
 | ComfyUI-MiniMaxH3-Cache | [GitHub](https://github.com/lihaoyun6/ComfyUI-MiniMaxH3-Cache) | `8a45e09` | Speed preset |
 | comfyui-kjnodes | [GitHub](https://github.com/kijai/ComfyUI-KJNodes) | `6ab7e81` | High Quality preset (SageAttention) |
 
+## Known issues on newer ComfyUI cores
+
+If your ComfyUI is newer than the tested pin and H3 breaks, update ComfyUI to the latest first — most of these are already fixed upstream.
+
+### `module 'comfy.ldm.minimax.model' has no attribute 'time_shift_slope'`
+
+ComfyUI core removed `time_shift_slope` on 2026-08-06 (commit `bdcb886`, PR #15243). `ComfyUI-MiniMaxH3-Cache` still calls it, so **every** H3 generation fails (even without the cache node in the graph — it patches the model at startup). Fix:
+
+1. Update `ComfyUI-MiniMaxH3-Cache` once [PR #6](https://github.com/lihaoyun6/ComfyUI-MiniMaxH3-Cache/pull/6) is merged, or
+2. Apply the one-line edit in `ComfyUI-MiniMaxH3-Cache/__init__.py`, `patched_forward`:
+   ```python
+   # replace:
+   slope_a = minimax_model.time_shift_slope(sigma_v, shift_v, shift_a).to(audio_out.dtype)
+   return [-video_out.to(video_x.dtype), (-slope_a) * audio_out.to(audio_x.dtype)]
+   # with:
+   return [-video_out.to(video_x.dtype), -audio_out.to(audio_x.dtype)]
+   ```
+
+### R2V: `shape mismatch: value tensor of shape [...] cannot be broadcast to indexing result of shape [...]`
+
+Core bug on builds between 2026-08-06 and 2026-08-13 (fails at `all_video_rows[~img_update] = cond_video_rows` in `comfy/ldm/minimax/model.py`). Fixed upstream on 2026-08-13 (commit `e01fb4c`). Fix: update ComfyUI to the latest. This is not caused by the reference image count.
+
 ## Models
 
 All official, from [Comfy-Org/MiniMax-H3](https://huggingface.co/Comfy-Org/MiniMax-H3):
