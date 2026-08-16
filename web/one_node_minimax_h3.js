@@ -2922,7 +2922,7 @@ app.registerExtension({
           const ts=newId();
           wf[ts]={class_type:"MiniMaxH3TurboSampler",inputs:{},_meta:{title:"Turbo Sampler"}};
           wf["10"]=wf[ts];delete wf[ts];
-          wf["9"].inputs.steps=6;
+          wf["9"].inputs.steps=S.steps||6;
         } else {
           const useSol=!!S.optSol, useCache=!!S.optCache, useSage=!!S.optSage;
           const insSol=()=>{
