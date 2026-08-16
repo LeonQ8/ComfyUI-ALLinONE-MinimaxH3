@@ -661,15 +661,35 @@ app.registerExtension({
     nodeType.prototype._buildUI=function(){
       const self=this;
       const saved=loadState();
+      const _QF={
+        turbo:{sol:false,cache:false,sage:false},
+        speed:{sol:true,cache:true,sage:false},
+        balanced:{sol:true,cache:false,sage:false},
+        high:{sol:false,cache:false,sage:true},
+        native:{sol:false,cache:false,sage:false},
+      };
+      const _QL={balanced:"Balanced",speed:"Speed",high:"High Quality",turbo:"Turbo (Speed LoRA)",native:"Native",custom:"Custom"};
+      const _matchQ=()=>{
+        for(const k of ["speed","balanced","high","native"]){
+          const p=_QF[k];
+          if(!!S.optSol===p.sol&&!!S.optCache===p.cache&&!!S.optSage===p.sage) return k;
+        }
+        return "custom";
+      };
 
       if(!self._h3_S){
+        const _sq=(saved.quality==="custom"||(saved.quality&&_QF[saved.quality]))?saved.quality:"balanced";
+        const _qf=_QF[_sq]||{sol:false,cache:false,sage:false};
         self._h3_S={
           mode:            saved.mode||"t2v",
           prompt:          saved.prompt!==undefined?saved.prompt:"",
           resolution:      saved.resolution!==undefined?saved.resolution:"960x544 (0.5MP Balanced)",
           duration:        saved.duration!==undefined?saved.duration:5,
           steps:           (saved.steps&&saved.steps!==30)?saved.steps:20,
-          quality:         saved.quality||"balanced",
+          quality:         _sq,
+          optSol:          (saved.quality==="custom")?(saved.optSol!==undefined?saved.optSol:false):_qf.sol,
+          optCache:        (saved.quality==="custom")?(saved.optCache!==undefined?saved.optCache:false):_qf.cache,
+          optSage:         (saved.quality==="custom")?(saved.optSage!==undefined?saved.optSage:false):_qf.sage,
           samplerName:     saved.samplerName||"res_multistep",
           schedulerName:   saved.schedulerName||"simple",
           seed:            (typeof saved.seed==="number")?saved.seed:0,
@@ -723,11 +743,11 @@ app.registerExtension({
         // quality/resolution/loras survive workflow-tab switches (they used to be
         // captured only when switching mode tabs, so a stale snapshot overwrote
         // the just-changed value on rebuild).
-        S.modeSettings[S.mode]={prompt:S.prompt,steps:S.steps,quality:S.quality,resolution:S.resolution,duration:S.duration,loras:JSON.parse(JSON.stringify(S.loras||[]))};
+        S.modeSettings[S.mode]={prompt:S.prompt,steps:S.steps,quality:S.quality,resolution:S.resolution,duration:S.duration,loras:JSON.parse(JSON.stringify(S.loras||[])),optSol:S.optSol,optCache:S.optCache,optSage:S.optSage};
         if(_updRecipeFn){ try{ _updRecipeFn(); }catch(e){} }
         saveState({
           mode:S.mode,prompt:S.prompt,resolution:S.resolution,duration:S.duration,
-          steps:S.steps,quality:S.quality,samplerName:S.samplerName,schedulerName:S.schedulerName,randomizeSeed:S.randomizeSeed,seed:S.seed,batch:S.batch,
+          steps:S.steps,quality:S.quality,optSol:S.optSol,optCache:S.optCache,optSage:S.optSage,samplerName:S.samplerName,schedulerName:S.schedulerName,randomizeSeed:S.randomizeSeed,seed:S.seed,batch:S.batch,
           loras:S.loras,chainClips:S.chainClips.map(c=>({prompt:c.prompt,duration:c.duration})),
           firstFrame:S.firstFrame,lastFrame:S.lastFrame,
           refImages:S.refImages,refVideos:S.refVideos,refAudios:S.refAudios,
@@ -1962,13 +1982,46 @@ app.registerExtension({
       const qualRow=mk("div",{display:"flex",flexDirection:"column",gap:"3px"});
       const qualCapRow=mk("div",{display:"flex",alignItems:"center",gap:"4px"});
       const qualCap=mk("div",{fontSize:"10px",color:C.text});tx(qualCap,"Quality");
-      qualCapRow.append(qualCap,infoIcon("The sampling pipeline, not the pixel size.\nBalanced: SolAttn sparse attention + your steps.\nSpeed: SolAttn + H3 block cache (fastest, tiny quality tradeoff).\nHigh Quality: full SageAttention - no sparse attention, no cache. Slowest, maximum fidelity.\nTurbo: Turbo LoRA + 6-step distilled sampler. Much faster, visibly lower quality - needs the Turbo LoRA set in Settings."));
-      const qualDD=DD(["Balanced","Speed","High Quality","Turbo (Speed LoRA)"],S.quality==="balanced"?"Balanced":S.quality==="speed"?"Speed":S.quality==="high"?"High Quality":"Turbo (Speed LoRA)",v=>{
-        S.quality= v==="Balanced"?"balanced": v==="Speed"?"speed": v==="High Quality"?"high":"turbo";
+      qualCapRow.append(qualCap,infoIcon("The sampling pipeline, not the pixel size. Use the chips below to switch each accelerator on or off - Quality follows, and any manual mix shows as Custom.\nTurbo: Turbo LoRA + 6-step distilled sampler. Fastest, visibly lower quality - needs the Turbo LoRA set in Settings.\nSpeed: SolAttn + H3 block cache. Fastest normal pipeline, tiny quality tradeoff.\nBalanced: SolAttn sparse attention only.\nHigh Quality: full SageAttention only - slowest, maximum fidelity.\nNative: core ComfyUI H3 pipeline, no accelerators - needs no extra packs."));
+      const qualDD=DD(["Turbo (Speed LoRA)","Speed","Balanced","High Quality","Native","Custom"],_QL[S.quality]||"Custom",v=>{
+        const key=Object.keys(_QL).find(k=>_QL[k]===v)||"custom";
+        if(key!=="custom"){
+          S.quality=key;
+          const f=_QF[key]||{sol:false,cache:false,sage:false};
+          S.optSol=f.sol;S.optCache=f.cache;S.optSage=f.sage;
+          _syncOptChips();
+        } else {
+          S.quality="custom";
+        }
         persist();
         if(S.quality==="turbo"){ stepsNI._inp.value="6"; S.steps=6; }
       });
       qualRow.append(qualCapRow,qualDD.el);
+      const optRow=mk("div",{display:"flex",gap:"5px",flexWrap:"wrap"});
+      const _optChipSyncs=[];
+      const _mkOptChip=(key,label)=>{
+        const chip=mk("button",{borderRadius:"6px",padding:"3px 9px",fontSize:"9px",fontWeight:"700",cursor:"pointer",outline:"none",transition:"background .15s,color .15s,border-color .15s"});
+        const _sync=()=>{
+          const on=!!S[key];
+          chip.style.background=on?C.lime:C.bg2;
+          chip.style.color=on?"#111":C.muted;
+          chip.style.border=`1px solid ${on?C.lime:C.border}`;
+          tx(chip,(on?"✓ ":"· ")+label);
+          chip.title=(on?"Enabled":"Disabled")+" - click to "+(on?"disable":"enable");
+        };
+        chip.onclick=()=>{
+          S[key]=!S[key];
+          S.quality=_matchQ();
+          qualDD.set(_QL[S.quality]);
+          _sync();persist();
+        };
+        _sync();
+        _optChipSyncs.push(_sync);
+        return chip;
+      };
+      const _syncOptChips=()=>_optChipSyncs.forEach(f=>f());
+      optRow.append(_mkOptChip("optSol","SolAttn"),_mkOptChip("optCache","H3 Cache"),_mkOptChip("optSage","SageAttn"));
+      qualRow.appendChild(optRow);
       const samplerRow=mk("div",{display:"flex",flexDirection:"column",gap:"3px"});
       const samplerCapRow=mk("div",{display:"flex",alignItems:"center",gap:"4px"});
       const samplerCap=mk("div",{fontSize:"10px",color:C.text});tx(samplerCap,"Sampler");
@@ -1986,6 +2039,7 @@ app.registerExtension({
         S.modeSettings[S.mode]={
           prompt:S.prompt,steps:S.steps,quality:S.quality,resolution:S.resolution,duration:S.duration,
           loras:JSON.parse(JSON.stringify(S.loras)),
+          optSol:S.optSol,optCache:S.optCache,optSage:S.optSage,
         };
       };
       const _restoreModeState=()=>{
@@ -1993,7 +2047,19 @@ app.registerExtension({
         if(!ms) return;
         if(ms.prompt!==undefined){ S.prompt=ms.prompt; promptTA.value=ms.prompt; _updChars(); }
         if(ms.steps!==undefined){ S.steps=ms.steps; stepsNI._inp.value=String(ms.steps); }
-        if(ms.quality!==undefined){ S.quality=ms.quality; qualDD.set(ms.quality==="balanced"?"Balanced":ms.quality==="speed"?"Speed":ms.quality==="high"?"High Quality":"Turbo (Speed LoRA)"); }
+        if(ms.quality!==undefined){
+          S.quality=ms.quality;
+          if(ms.quality==="custom"){
+            if(ms.optSol!==undefined) S.optSol=ms.optSol;
+            if(ms.optCache!==undefined) S.optCache=ms.optCache;
+            if(ms.optSage!==undefined) S.optSage=ms.optSage;
+          } else {
+            const f=_QF[ms.quality]||{sol:false,cache:false,sage:false};
+            S.optSol=f.sol;S.optCache=f.cache;S.optSage=f.sage;
+          }
+          _syncOptChips();
+          qualDD.set(_QL[ms.quality]||"Custom");
+        }
         if(ms.resolution!==undefined){ S.resolution=ms.resolution; resDD.set(ms.resolution); _updResCustom(); }
         if(ms.duration!==undefined){ S.duration=ms.duration; durNI._inp.value=String(ms.duration); _updateFramesLabel(); }
         if(Array.isArray(ms.loras)){ const named=ms.loras.filter(l=>l&&l.name); S.loras=named.concat([{name:"",strength:1}]); _renderLoras(); }
@@ -2671,7 +2737,8 @@ app.registerExtension({
           wf["10"]=wf[ts];delete wf[ts];
           wf["9"].inputs.steps=6;
         } else {
-          if(q==="speed"||q==="balanced"){
+          const useSol=!!S.optSol, useCache=!!S.optCache, useSage=!!S.optSage;
+          const insSol=()=>{
             const sol=newId();
             wf[sol]={class_type:"SolAttnPatch",inputs:{
               model:modelSrc,tau:1.3,start_percent:0.2,end_percent:0.9,min_tokens:4096,
@@ -2679,22 +2746,31 @@ app.registerExtension({
               morton_curve:"2d_frame",int8_pv:true,verbose:false,use_tma:false,dense_blocks:"",
             },_meta:{title:"Sol-Attn"}};
             modelSrc=[sol,0];
-          }
-          if(q==="speed"){
+          };
+          const insCache=()=>{
             const cache=newId();
             wf[cache]={class_type:"MiniMaxH3Cache",inputs:{
               model:modelSrc,resuse_threshold:0.1,start_percent:0.15,end_percent:0.9,
               max_steps:2,device:"auto",verbose:false,
             },_meta:{title:"H3 Cache"}};
             modelSrc=[cache,0];
-          }
-          if(q==="high"){
+          };
+          const insSage=()=>{
             const sage=newId();
             wf[sage]={class_type:"MiniMaxH3MemoryEfficientSageAttentionPatch",inputs:{model:modelSrc},_meta:{title:"SageAttn"}};
             modelSrc=[sage,0];
+          };
+          if(useSage&&useSol){
+            // Sol + Sage together: follow the tested ordering (cache -> sage -> sol)
+            if(useCache) insCache();
+            insSage();insSol();
+          } else {
+            // Preset combos keep their exact historical order (sol -> cache -> sage)
+            if(useSol) insSol();
+            if(useCache) insCache();
+            if(useSage) insSage();
           }
-          const stepsByQ={balanced:S.steps,speed:S.steps,high:S.steps};
-          wf["9"].inputs.steps=stepsByQ[q]||S.steps;
+          wf["9"].inputs.steps=S.steps;
         }
         wf["5"].inputs.model=modelSrc;
       };
@@ -2934,28 +3010,38 @@ app.registerExtension({
           wf[id]={class_type:"LoraLoaderModelOnly",inputs:{model:modelSrc,lora_name:lr.name,strength_model:lr.strength},_meta:{title:"LoRA"}};
           modelSrc=[id,0];
         });
-        const q=S.quality;
-        if(q==="speed"||q==="balanced"){
-          const sol=newId();
-          wf[sol]={class_type:"SolAttnPatch",inputs:{
-            model:modelSrc,tau:1.3,start_percent:0.2,end_percent:0.9,min_tokens:4096,
-            int8_qk:true,sink_conditioning:"exact_kv_and_rows",morton:false,
-            morton_curve:"2d_frame",int8_pv:true,verbose:false,use_tma:false,dense_blocks:"",
-          },_meta:{title:"Sol-Attn"}};
-          modelSrc=[sol,0];
-        }
-        if(q==="speed"){
-          const cache=newId();
-          wf[cache]={class_type:"MiniMaxH3Cache",inputs:{
-            model:modelSrc,resuse_threshold:0.1,start_percent:0.15,end_percent:0.9,
-            max_steps:2,device:"auto",verbose:false,
-          },_meta:{title:"H3 Cache"}};
-          modelSrc=[cache,0];
-        }
-        if(q==="high"){
-          const sage=newId();
-          wf[sage]={class_type:"MiniMaxH3MemoryEfficientSageAttentionPatch",inputs:{model:modelSrc},_meta:{title:"SageAttn"}};
-          modelSrc=[sage,0];
+        {
+          const useSol=!!S.optSol, useCache=!!S.optCache, useSage=!!S.optSage;
+          const insSol=()=>{
+            const sol=newId();
+            wf[sol]={class_type:"SolAttnPatch",inputs:{
+              model:modelSrc,tau:1.3,start_percent:0.2,end_percent:0.9,min_tokens:4096,
+              int8_qk:true,sink_conditioning:"exact_kv_and_rows",morton:false,
+              morton_curve:"2d_frame",int8_pv:true,verbose:false,use_tma:false,dense_blocks:"",
+            },_meta:{title:"Sol-Attn"}};
+            modelSrc=[sol,0];
+          };
+          const insCache=()=>{
+            const cache=newId();
+            wf[cache]={class_type:"MiniMaxH3Cache",inputs:{
+              model:modelSrc,resuse_threshold:0.1,start_percent:0.15,end_percent:0.9,
+              max_steps:2,device:"auto",verbose:false,
+            },_meta:{title:"H3 Cache"}};
+            modelSrc=[cache,0];
+          };
+          const insSage=()=>{
+            const sage=newId();
+            wf[sage]={class_type:"MiniMaxH3MemoryEfficientSageAttentionPatch",inputs:{model:modelSrc},_meta:{title:"SageAttn"}};
+            modelSrc=[sage,0];
+          };
+          if(useSage&&useSol){
+            if(useCache) insCache();
+            insSage();insSol();
+          } else {
+            if(useSol) insSol();
+            if(useCache) insCache();
+            if(useSage) insSage();
+          }
         }
         wf["s:5"].inputs.model=modelSrc;
         wf["s:1"].inputs.clip_name=S.models.clip;
@@ -3116,7 +3202,7 @@ app.registerExtension({
       const _updRecipe=()=>{
         if(!recipeEl) return;
         recipeEl.innerHTML="";
-        const _q=S.quality==="balanced"?"Balanced":S.quality==="speed"?"Speed":S.quality==="high"?"High Quality":"Turbo";
+        const _q=_QL[S.quality]||"Custom";
         const r=_resolveRes();
         const chip=(label,value,media)=>{
           const c=mk("span",{}, {className:"h3-chip"+(media?" media":"")});

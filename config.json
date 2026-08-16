@@ -8,10 +8,11 @@
     { "label": "1344x768 (0.98MP Native Max)", "width": 1344, "height": 768 }
   ],
   "quality_presets": {
-    "balanced": { "label": "Balanced", "steps": 30, "sol_attn": false, "cache": false, "sage": false },
+    "turbo": { "label": "Turbo (Speed LoRA)", "steps": 6, "sol_attn": false, "cache": false, "sage": false },
     "speed": { "label": "Speed", "steps": 20, "sol_attn": true, "cache": true, "sage": false },
+    "balanced": { "label": "Balanced", "steps": 30, "sol_attn": true, "cache": false, "sage": false },
     "high": { "label": "High Quality", "steps": 40, "sol_attn": false, "cache": false, "sage": true },
-    "turbo": { "label": "Turbo (Speed LoRA)", "steps": 6, "sol_attn": false, "cache": false, "sage": false }
+    "native": { "label": "Native", "steps": 30, "sol_attn": false, "cache": false, "sage": false }
   },
   "prompt_templates": {
     "t2v": {
