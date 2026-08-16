@@ -2,9 +2,11 @@
 
 Newest first.
 
-## Unreleased
+## 0.3.0 (2026-08-16)
 
-New Image mode built on ComfyUI-MiniMax-H3-Studio. Text to image, edit a source image, or mix up to 9 references with @Image1 style roles.
+New Image mode built on ComfyUI-MiniMax-H3-Studio. Text to image, edit a source image, or mix up to 9 references with @Image1 style roles. Base and LightX sampling profiles plus custom steps, sampler and scheduler. Needs the H3 Studio pack and the two Qwen3.5 prompt models, download links are in the README.
+
+Turbo now uses whatever steps you set, 6 is only the default.
 
 ## 0.2.0 (2026-08-16)
 

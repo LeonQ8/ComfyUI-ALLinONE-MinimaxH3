@@ -13,6 +13,7 @@ No node graph to build, no wires to connect, no hunting through twelve custom no
 
 | Mode | What it does |
 |------|--------------|
+| **Image** | Still images with H3: text to image, image edit, or reference mix (up to 9 references) via H3 Studio |
 | **T2V** | Text to video with native audio (fl2va model) |
 | **I2V** | Animate a start frame, optionally morph to an end frame |
 | **R2V** | Reference images / videos / audio drive the clip (ref2va model) |
@@ -21,7 +22,6 @@ No node graph to build, no wires to connect, no hunting through twelve custom no
 | **Extend** | Continue an existing video seamlessly |
 | **Chain** | Multi-clip continuation with H3 Motion Context (latent path, no re-encode) |
 | **Upscale** | RTX/Seed2VR Video Super Resolution hook |
-| **Image** | Still images with H3: text to image, image edit, or reference mix (up to 9 references) via H3 Studio |
 
 ## Screenshots
 
