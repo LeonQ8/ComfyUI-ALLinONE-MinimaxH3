@@ -2743,7 +2743,7 @@ app.registerExtension({
             wf[sol]={class_type:"SolAttnPatch",inputs:{
               model:modelSrc,tau:1.3,start_percent:0.2,end_percent:0.9,min_tokens:4096,
               int8_qk:true,sink_conditioning:"exact_kv_and_rows",morton:false,
-              morton_curve:"2d_frame",int8_pv:true,verbose:false,use_tma:false,dense_blocks:"",
+              morton_curve:"2d_frame",int8_pv:true,verbose:true,use_tma:false,dense_blocks:"",
             },_meta:{title:"Sol-Attn"}};
             modelSrc=[sol,0];
           };
@@ -3017,7 +3017,7 @@ app.registerExtension({
             wf[sol]={class_type:"SolAttnPatch",inputs:{
               model:modelSrc,tau:1.3,start_percent:0.2,end_percent:0.9,min_tokens:4096,
               int8_qk:true,sink_conditioning:"exact_kv_and_rows",morton:false,
-              morton_curve:"2d_frame",int8_pv:true,verbose:false,use_tma:false,dense_blocks:"",
+              morton_curve:"2d_frame",int8_pv:true,verbose:true,use_tma:false,dense_blocks:"",
             },_meta:{title:"Sol-Attn"}};
             modelSrc=[sol,0];
           };
