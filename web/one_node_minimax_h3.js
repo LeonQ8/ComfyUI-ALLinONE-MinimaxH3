@@ -2472,7 +2472,6 @@ app.registerExtension({
         else tx(liveTxt,"Live preview");
       };
       self._h3_lpFrame=(d)=>{
-        console.log("[h3lp-frame]",d.step,d.total,(d.image||"").length);
         if(_cmpMode) _exitCompare();
         errorBox.style.display="none";
         vidEl.style.display="none";vidEl.pause();vidEl.src="";
@@ -2488,7 +2487,7 @@ app.registerExtension({
       };
       self._h3_lpReset=()=>{ _showLiveChip(true,true); };
       self._h3_lpErr=(msg)=>{ _showLiveChip(false); showError(msg); };
-      previewBox.append(placeholder,vidEl,errorBox,progWrap,seedChip,liveChip);
+      previewBox.append(placeholder,vidEl,imgEl,errorBox,progWrap,seedChip,liveChip);
       const comparerWrap=mk("div",{position:"absolute",inset:"0",display:"none",cursor:"col-resize",userSelect:"none",borderRadius:"10px",overflow:"hidden",zIndex:"3"});
       const cmpBase=mk("video",{position:"absolute",inset:"0",width:"100%",height:"100%",objectFit:"contain",background:"#000"},{muted:true,loop:true,preload:"auto"});
       const cmpGen=mk("div",{position:"absolute",top:"0",left:"0",bottom:"0",overflow:"hidden",width:"50%"});
@@ -3802,10 +3801,9 @@ app.registerExtension({
   });
 
   api.addEventListener("h3studio-preview",(evt)=>{
-    const d=evt.detail||{};
-    console.log("[h3lp]",JSON.stringify({nid:d.node_id,reset:!!d.reset,img:d.image?(d.image.length):0,err:d.error?1:0,active:!!_activeNode,lpOn:!!(_activeNode&&_activeNode._h3_lpOn),lpId:_activeNode&&_activeNode._h3_lpId}));
     const node=_activeNode;
     if(!node||!node._h3_lpOn) return;
+    const d=evt.detail||{};
     if(d.node_id!==node._h3_lpId) return;
     if(d.error){ if(node._h3_lpErr) node._h3_lpErr(String(d.error)); return; }
     if(d.reset){ if(node._h3_lpReset) node._h3_lpReset(); return; }
@@ -3826,7 +3824,8 @@ app.registerExtension({
     const imgs=out.images||null;
     if(imgs&&Array.isArray(imgs)&&imgs.length&&_activeShowOutput){
       const im=imgs[imgs.length-1];
-      _activeShowOutput({filename:im.filename,subfolder:im.subfolder||"",type:im.type||"output",kind:"image"});
+      const animated=!!(out.animated&&out.animated.length);
+      _activeShowOutput({filename:im.filename,subfolder:im.subfolder||"",type:im.type||"output",kind:animated?"video":"image"});
       _activeSetStage?.("Done",97);
     }
   });
