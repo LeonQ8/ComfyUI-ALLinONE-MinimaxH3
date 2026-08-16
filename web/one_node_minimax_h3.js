@@ -81,6 +81,7 @@ const DEFAULT_MODELS = {
   clip:"qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
   vaeVideo:"minimax_h3_video_vae_fp16.safetensors",
   vaeAudio:"minimax_h3_audio_vae_fp32.safetensors",
+  tae:"taeh3.safetensors",
   upscaleDit:"none",
   upscaleVae:"none",
 };
@@ -985,6 +986,8 @@ app.registerExtension({
       const clipRow=_mkModelRow("clip","Text encoder (CLIP)");
       const vaeVRow=_mkModelRow("vaeVideo","Video VAE");
       const vaeARow=_mkModelRow("vaeAudio","Audio VAE");
+      const taeRow=_mkModelRow("tae","Live Preview decoder (TAEH3)");
+      taeRow.firstChild.appendChild(infoIcon("The tiny decoder used by the Live Preview toggle under the video. Every taeh3.safetensors found in a ComfyUI models/vae_approx folder is listed here. The node auto-picks one when your selection goes missing; change it here if you want a specific copy."));
       const upMethodWrap=mk("div",{marginBottom:"12px"});
       const upMethodCapRow=mk("div",{display:"flex",alignItems:"center",gap:"4px"});
       const upMethodCap=mk("div",{fontSize:"9px",fontWeight:"700",letterSpacing:".1em",textTransform:"uppercase",color:C.muted});
@@ -1045,7 +1048,7 @@ app.registerExtension({
       tx(supBtn,"Buy me a coffee");
       supBtn.onclick=()=>window.open(SUPPORT_URL,"_blank");
       supWrap.append(supCap,supBtn);
-      settingsOverlay.append(settHdr,unetT2VRow,unetR2VRow,clipRow,vaeVRow,vaeARow,upMethodWrap,upDitRow,upVaeRow,upHint,speedLoraWrap,audioToggle.el,soundToggle.el,playOnFinishToggle.el,sndWrap,accWrap,supWrap);
+      settingsOverlay.append(settHdr,unetT2VRow,unetR2VRow,clipRow,vaeVRow,vaeARow,taeRow,upMethodWrap,upDitRow,upVaeRow,upHint,speedLoraWrap,audioToggle.el,soundToggle.el,playOnFinishToggle.el,sndWrap,accWrap,supWrap);
 
       // -- HISTORY OVERLAY ---------------------------------------------------
       const historyOverlay=mk("div",{
@@ -2612,20 +2615,30 @@ app.registerExtension({
       };
       let _taeFound=false;
       let _taeChecked=false;
+      let _taeFiles=[];
       const _checkTae=async()=>{
+        let files=[];
         try{
           const r=await fetch("/h3one/tae_status");
           const d=await r.json();
-          _taeFound=!!d.found;
-        }catch(e){ _taeFound=false; }
+          files=Array.isArray(d.files)?d.files:[];
+        }catch(e){ files=[]; }
+        _taeFiles=files;
+        if(files.length&&!files.includes(S.models.tae)){
+          S.models.tae=files.includes("taeh3.safetensors")?"taeh3.safetensors":files[0];
+          persist();
+          if(modelDDs.tae) modelDDs.tae.set(S.models.tae);
+        }
+        _taeFound=files.includes(S.models.tae);
         _taeChecked=true;
+        if(modelDDs.tae) modelDDs.tae.updateItems(files.length?files:["taeh3.safetensors"]);
         _syncLiveToggle();
       };
       const liveTogWrap=mk("div",{display:"flex",gap:"4px",alignItems:"center",flexShrink:"0"});
       const liveTogBtn=mk("button",{}, {type:"button",className:"h3-actbtn"+(S.livePreview?" on":"")});
-      liveTogBtn._lbl=mk("span",{}, {textContent:S.livePreview?"Live On":"Live Off"});
+      liveTogBtn._lbl=mk("span",{}, {textContent:S.livePreview?"Preview On":"Preview Off"});
       liveTogBtn.appendChild(liveTogBtn._lbl);
-      const liveInfo=infoIcon("Live Preview: watch the video appear while it samples. Each step is decoded with a tiny TAEH3 model on the CPU, so generation takes a little longer.\nNeeds taeh3.safetensors inside ComfyUI/models/vae_approx - download it from huggingface.co/Kijai/MiniMax-H3-TAE.\nNot available with the Turbo preset or in Image mode.");
+      const liveInfo=infoIcon("Live Preview: watch the video appear while it samples. Each step is decoded with a tiny TAEH3 model on the CPU, so generation takes a little longer.\nNeeds taeh3.safetensors in a ComfyUI models/vae_approx folder - download it from huggingface.co/Kijai/MiniMax-H3-TAE. If your copy lives in a subfolder, pick it under Settings: Live Preview decoder.\nNot available with the Turbo preset or in Image mode.");
       const _syncLiveToggle=()=>{
         const hidden=S.mode==="image";
         liveTogWrap.style.display=hidden?"none":"flex";
@@ -2638,12 +2651,12 @@ app.registerExtension({
         }
         liveTogBtn.style.opacity="";liveTogBtn.style.pointerEvents="";
         liveTogBtn.classList.toggle("on",!!S.livePreview);
-        tx(liveTogBtn._lbl,S.livePreview?"Live On":"Live Off");
+        tx(liveTogBtn._lbl,S.livePreview?"Preview On":"Preview Off");
         if(S.livePreview){
-          if(!_taeChecked) liveTogBtn.title="Live Preview is on. Checking for taeh3.safetensors...";
+          if(!_taeChecked) liveTogBtn.title="Live Preview is on. Checking for the TAEH3 decoder...";
           else if(!_taeFound){
             liveTogBtn.classList.add("warn");
-            liveTogBtn.title="Live Preview is on but taeh3.safetensors is missing from ComfyUI/models/vae_approx. Download it from huggingface.co/Kijai/MiniMax-H3-TAE (vae_approx folder) or turn Live Preview off.";
+            liveTogBtn.title=`Live Preview is on but the decoder "${S.models.tae}" was not found in a ComfyUI models/vae_approx folder. Open Settings to pick a Live Preview decoder, download taeh3.safetensors from huggingface.co/Kijai/MiniMax-H3-TAE, or turn Live Preview off.`;
           } else {
             liveTogBtn.classList.remove("warn");
             liveTogBtn.title="Live Preview is on. Generation takes a little longer but you see the video while it samples.";
@@ -3107,7 +3120,7 @@ app.registerExtension({
           wf["lp"]={class_type:"H3StudioTAEH3Preview",inputs:{
             model:wf["5"].inputs.model,
             enabled:true,
-            tiny_vae:"taeh3.safetensors",
+            tiny_vae:S.models.tae||"taeh3.safetensors",
             max_resolution:768,
             jpeg_quality:85,
             preview_every_n_steps:1,
@@ -3417,7 +3430,7 @@ app.registerExtension({
           wf["s:lp"]={class_type:"H3StudioTAEH3Preview",inputs:{
             model:modelSrc,
             enabled:true,
-            tiny_vae:"taeh3.safetensors",
+            tiny_vae:S.models.tae||"taeh3.safetensors",
             max_resolution:768,
             jpeg_quality:85,
             preview_every_n_steps:1,
@@ -3473,7 +3486,7 @@ app.registerExtension({
         self._h3_lpId=S.mode==="chain"?"s:lp":"lp";
         if(self._h3_lpOn&&_taeChecked&&!_taeFound){
           resetBtn();
-          showError("Live Preview is on but taeh3.safetensors was not found in ComfyUI/models/vae_approx.\nDownload it from huggingface.co/Kijai/MiniMax-H3-TAE (vae_approx folder) or turn Live Preview off.");
+          showError(`Live Preview is on but the decoder "${S.models.tae}" was not found in a ComfyUI models/vae_approx folder.\nOpen Settings to pick the Live Preview decoder, download taeh3.safetensors from huggingface.co/Kijai/MiniMax-H3-TAE, or turn Live Preview off.`);
           return;
         }
         try{
@@ -3536,6 +3549,7 @@ app.registerExtension({
           speedLoraDD.updateItems(["none"].concat(_M.loras));
           const loraItems=_M.loras.length?_M.loras:["none"];
           _renderLoras();
+          _checkTae();
           try{
             const sr=await fetch("/h3one/seedvr2_models");
             const sd=await sr.json();
