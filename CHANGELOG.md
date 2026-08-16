@@ -2,6 +2,10 @@
 
 Newest first.
 
+## 0.4.2 (2026-08-17)
+
+Minor fixes.
+
 ## 0.4.1 (2026-08-17)
 
 Live Preview is new: a toggle under the video that shows the clip while it samples with the tiny TAEH3 decoder. Needs the H3 Studio pack plus taeh3.safetensors in a models/vae_approx folder. Works in every video mode, but not with the Turbo preset or Image mode.
