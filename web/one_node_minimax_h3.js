@@ -629,6 +629,59 @@ let _activeShownFiles=[];
 let _batchIds=[];
 let _batchDone=0;
 let _listenersRegistered=false;
+let _finishWatchTimer=null;
+let _finishDone=false;
+
+// -- Finish watch: polls prompt history so the end-of-run UI never depends
+// on websocket events alone. The executed / execution_success listeners stay
+// as the fast path; this covers the rest.
+const _stopFinishWatch=()=>{
+  if(_finishWatchTimer!==null){ clearInterval(_finishWatchTimer); _finishWatchTimer=null; }
+};
+const _armFinishWatch=()=>{
+  _finishDone=false;
+  _stopFinishWatch();
+  _finishWatchTimer=setInterval(async()=>{
+    const node=_activeNode;
+    if(!node||!node._h3_S||node._h3_S.generating!==true||!_activePromptId){ _stopFinishWatch(); return; }
+    try{
+      const r=await api.fetchApi(`/history/${encodeURIComponent(_activePromptId)}`);
+      const h=await r.json();
+      if(h&&h[_activePromptId]){
+        _stopFinishWatch();
+        _batchDone=_batchIds.length;
+        _finishRun();
+      }
+    }catch(e){}
+  },2500);
+};
+const _finishRun=async()=>{
+  if(_finishDone) return;
+  if(!_activeNode) return;
+  if(_activeNode._h3_S && _activeNode._h3_S.generating!==true) return;
+  if(_batchIds.length){
+    _batchDone++;
+    if(_batchDone<_batchIds.length){
+      _activeSetStage?.(`Done ${_batchDone}/${_batchIds.length}`,Math.round(_batchDone/_batchIds.length*100));
+      return;
+    }
+  }
+  _finishDone=true;
+  _stopFinishWatch();
+  _activeSetStage?.("Done",100);
+  const _elapsed=Date.now()-_activeGenStartTs;
+  _activeShowTime?.(_elapsed);
+  let tries=0;
+  while(tries<12&&!_activeShownFiles.length){
+    await _activeShowLatest?.();
+    if(_activeShownFiles.length) break;
+    tries++;
+    await new Promise(res=>setTimeout(res,1500));
+  }
+  _activeResetBtn?.();
+  const S=_activeNode?._h3_S;
+  if(S && S.soundEnabled!==false && S.sound!=="off") playDone(S.sound||"chime");
+};
 
 app.registerExtension({
   name:"OneNode.MinimaxH3",
@@ -2778,6 +2831,7 @@ app.registerExtension({
           const data=await res.json();
           if(data.error||!data.prompt_id) throw new Error(data.error?.message||"Unknown error");
           _batchIds=[data.prompt_id];_batchDone=0;_activePromptId=data.prompt_id;
+          _armFinishWatch();
           setStage(rtx?("Upscaling "+S.upscaleFactor+"x with RTX VSR..."):("Upscaling "+S.upscaleFactor+"x with SeedVR2 ("+S.models.upscaleDit+")..."),8);
         }catch(e){
           resetBtn();showError(fmtErr(e));
@@ -2837,6 +2891,7 @@ app.registerExtension({
       const resetBtn=()=>{
         S.generating=false;
         _batchIds=[];_batchDone=0;
+        _stopFinishWatch();
         _upscaleRun="";
         self._h3_lpOn=false;
         _showLiveChip(false);
@@ -3506,6 +3561,7 @@ app.registerExtension({
           _batchIds=ids;
           _batchDone=0;
           _activePromptId=ids[ids.length-1];
+          _armFinishWatch();
           setStage(n>1?`Queued ${n} runs...`:"In queue...",6);
         }catch(e){
           resetBtn();showError(fmtErr(e));
@@ -3774,24 +3830,7 @@ app.registerExtension({
   });
 
   api.addEventListener("execution_success",()=>{
-    if(!_activeNode) return;
-    if(_activeNode._h3_S && _activeNode._h3_S.generating!==true) return;
-    if(_batchIds.length){
-      _batchDone++;
-      if(_batchDone<_batchIds.length){
-        _activeSetStage?.(`Done ${_batchDone}/${_batchIds.length}`,Math.round(_batchDone/_batchIds.length*100));
-        return;
-      }
-    }
-    _activeSetStage?.("Done",100);
-    const _elapsed=Date.now()-_activeGenStartTs;
-    _activeShowTime?.(_elapsed);
-    setTimeout(async()=>{
-      await _activeShowLatest?.();
-      _activeResetBtn?.();
-      const S=_activeNode?._h3_S;
-      if(S && S.soundEnabled!==false && S.sound!=="off") playDone(S.sound||"chime");
-    },600);
+    _finishRun();
   });
 
   api.addEventListener("execution_error",(evt)=>{

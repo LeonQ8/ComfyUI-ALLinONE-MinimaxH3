@@ -2,6 +2,12 @@
 
 Newest first.
 
+## 0.4.1 (2026-08-17)
+
+Fixed Live Preview staying black on ComfyUI 0.32. The node now patches the H3 Studio preview for the new nested latents at runtime, no update to the pack needed.
+
+The finished video now shows up in the gallery even when the completion events get lost. The node polls for completion as a fallback.
+
 ## 0.4.0 (2026-08-17)
 
 New Live Preview toggle under the video in every video mode. Watch the clip appear while it samples using the TAEH3 tiny decoder. Slows generation a little and needs taeh3.safetensors in ComfyUI/models/vae_approx plus the H3 Studio pack. Not available with the Turbo preset or Image mode.

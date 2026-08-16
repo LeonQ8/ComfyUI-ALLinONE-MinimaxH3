@@ -81,6 +81,43 @@ def _ensure_h3_keyframe_ref_merge():
 
 _ensure_h3_keyframe_ref_merge()
 
+_H3STUDIO_PREVIEW_PATCHED = False
+
+
+def _ensure_h3studio_preview_nested_fix():
+    """ComfyUI 0.32+ hands the sampler callback a NestedTensor (video and audio
+    latents); the H3 Studio pack's TAEH3 preview only understands plain tensors,
+    so every frame snapshot raises and the live preview stays black. Wrap the
+    pack's latent picker to unbind the nested tensor first. Idempotent and
+    dormant once the pack handles it natively."""
+    global _H3STUDIO_PREVIEW_PATCHED
+    if _H3STUDIO_PREVIEW_PATCHED:
+        return
+    try:
+        import h3studio.nodes.preview as _preview_mod
+    except Exception:
+        return
+    try:
+        _orig = _preview_mod._first_h3_latent
+        if getattr(_orig, "_h3one_nested_guard", False):
+            _H3STUDIO_PREVIEW_PATCHED = True
+            return
+
+        def _guarded_first_h3_latent(torch_mod, value, latent_shapes):
+            if getattr(value, "is_nested", False):
+                value = value.unbind()[0]
+            return _orig(torch_mod, value, latent_shapes)
+
+        _guarded_first_h3_latent._h3one_nested_guard = True
+        _preview_mod._first_h3_latent = _guarded_first_h3_latent
+        _H3STUDIO_PREVIEW_PATCHED = True
+        print("[H3One] H3 Studio live preview nested-latent fix: enabled")
+    except Exception as e:
+        print("[H3One] H3 Studio live preview nested-latent fix failed: %s" % e)
+
+
+_ensure_h3studio_preview_nested_fix()
+
 # User config and history live OUTSIDE the node folder so they survive
 # reinstalls / git pulls. Built-in presets ship in the repo's config.json
 # (read-only defaults); user edits are stored here and merged in at read time.
@@ -363,6 +400,7 @@ async def serve_template(request):
     name = request.match_info.get("name", "")
     if name not in _ALLOWED_TEMPLATES:
         return web.Response(status=404, text="template not found")
+    _ensure_h3studio_preview_nested_fix()
     path = os.path.join(NODE_DIR, "workflows", name)
     with open(path, "r", encoding="utf-8-sig") as f:
         return web.json_response(json.load(f))
