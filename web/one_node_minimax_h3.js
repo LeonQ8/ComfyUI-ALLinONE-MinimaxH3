@@ -722,6 +722,7 @@ app.registerExtension({
           upscaleMethod:   saved.upscaleMethod||"seedvr",
           modeSettings:    (saved.modeSettings&&typeof saved.modeSettings==="object")?saved.modeSettings:{},
           autoSave:        saved.autoSave!==undefined?saved.autoSave:true,
+          livePreview:     saved.livePreview===true,
           generating:      false,
           playOnFinish:    saved.playOnFinish!==undefined?saved.playOnFinish:true,
           folded:          (saved.folded&&typeof saved.folded==="object")?saved.folded:{},
@@ -769,7 +770,7 @@ app.registerExtension({
           upscaleFactor:S.upscaleFactor,upscaleMethod:S.upscaleMethod,
           modeSettings:S.modeSettings,
           autoSave:S.autoSave,customW:S.customW,customH:S.customH,
-          playOnFinish:S.playOnFinish,folded:S.folded,
+          playOnFinish:S.playOnFinish,folded:S.folded,livePreview:S.livePreview,
           imgSub:S.imgSub,imgAspect:S.imgAspect,imgMP:S.imgMP,imgW:S.imgW,imgH:S.imgH,
           imgProfile:S.imgProfile,imgRefs:S.imgRefs,
         });
@@ -859,6 +860,14 @@ app.registerExtension({
           .h3-seedbtn:focus-visible{outline:none;box-shadow:0 0 0 3px rgba(192,169,150,.35);}
           .h3-seedbtn.ok{border-color:var(--h3-ok);color:var(--h3-ok);}
           .h3-seedbtn.err{border-color:var(--h3-err);color:var(--h3-err);}
+          /* live preview chip over the preview */
+          @keyframes h3-livepulse {0%,100%{opacity:1;}50%{opacity:.25;}}
+          .h3-livechip{position:absolute;top:8px;left:8px;display:none;align-items:center;gap:6px;background:rgba(12,12,12,.82);backdrop-filter:blur(6px);border:1px solid var(--h3-line2);border-radius:9px;padding:4px 9px 4px 7px;z-index:4;cursor:default;pointer-events:none;box-shadow:inset 0 1px 0 rgba(255,255,255,.06),0 2px 8px rgba(0,0,0,.5);}
+          .h3-livechip .lcdot{width:7px;height:7px;border-radius:50%;background:var(--h3accent);animation:h3-livepulse 1.6s ease-in-out infinite;}
+          .h3-livechip .lctxt{font-size:8px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--h3accent);}
+          .h3-livechip.dim{border-color:rgba(255,194,102,.4);}
+          .h3-livechip.dim .lcdot{background:var(--h3-warn);}
+          .h3-livechip.dim .lctxt{color:var(--h3-warn);}
           /* seed pill row (Tune card) */
           .h3-seedrow{display:flex;align-items:center;gap:8px;background:var(--h3-field);border:1px solid var(--h3-line);border-radius:10px;padding:7px 10px;}
           .h3-slbl{font-size:10px;font-weight:600;color:var(--h3-tx2);flex-shrink:0;}
@@ -867,7 +876,7 @@ app.registerExtension({
           .h3-tgl.on{background:var(--h3accent);}
           .h3-tgl.on .thumb{left:19px;background:#141414;}
           .h3-tgl:focus-visible{outline:none;box-shadow:0 0 0 3px rgba(192,169,150,.35);}
-          @media (prefers-reduced-motion:reduce){ .h3-mode,.h3-topbtn,.h3-rmbtn,.h3-tgl,.h3-actbtn,.h3-seedbtn{transition:none;} }
+          @media (prefers-reduced-motion:reduce){ .h3-mode,.h3-topbtn,.h3-rmbtn,.h3-tgl,.h3-actbtn,.h3-seedbtn{transition:none;} .h3-livechip .lcdot{animation:none;} }
         `;
         document.head.appendChild(styleEl);
       }
@@ -2079,6 +2088,7 @@ app.registerExtension({
         else if(S.mode==="chain"){ modeHdr.style.display="flex"; modeTitle.textContent="Motion Context Chain"; _renderChain(); chainArea.style.display="flex"; }
         else if(S.mode==="image"){ modeHdr.style.display="flex"; modeTitle.textContent="Image (H3 Studio)"; _renderImgRefs(); imgArea.style.display="flex"; if(_syncImgAdvRef) _syncImgAdvRef(); }
         else { modeHdr.style.display="none"; modeTitle.textContent="Text to Video"; }
+        if(typeof _syncLiveToggle==="function") _syncLiveToggle();
       };
 
       // -- PARAMS ------------------------------------------------------------
@@ -2145,6 +2155,7 @@ app.registerExtension({
         }
         persist();
         if(S.quality==="turbo"){ stepsNI._inp.value="6"; S.steps=6; }
+        if(typeof _syncLiveToggle==="function") _syncLiveToggle();
       });
       qualRow.append(qualCapRow,qualDD.el);
       const optRow=mk("div",{display:"flex",gap:"5px",flexWrap:"wrap"});
@@ -2164,6 +2175,7 @@ app.registerExtension({
           S.quality=_matchQ();
           qualDD.set(_QL[S.quality]);
           _sync();persist();
+          if(typeof _syncLiveToggle==="function") _syncLiveToggle();
         };
         _sync();
         _optChipSyncs.push(_sync);
@@ -2233,6 +2245,7 @@ app.registerExtension({
           _syncOptChips();
           qualDD.set(_QL[ms.quality]||"Custom");
         }
+        if(typeof _syncLiveToggle==="function") _syncLiveToggle();
         if(ms.resolution!==undefined){ S.resolution=ms.resolution; resDD.set(ms.resolution); _updResCustom(); }
         if(ms.duration!==undefined){ S.duration=ms.duration; durNI._inp.value=String(ms.duration); _updateFramesLabel(); }
         if(Array.isArray(ms.loras)){ const named=ms.loras.filter(l=>l&&l.name); S.loras=named.concat([{name:"",strength:1}]); _renderLoras(); }
@@ -2392,7 +2405,33 @@ app.registerExtension({
         setTimeout(()=>{ tx(seedChipCopy._lbl,"Copy"); seedChipCopy.classList.remove("ok","err"); },1300);
       };
       seedChip.append(seedChipLbl,seedChipVal,seedChipCopy);
-      previewBox.append(placeholder,vidEl,errorBox,progWrap,seedChip);
+      const liveChip=mk("div",{}, {className:"h3-livechip"});
+      const liveDot=mk("span",{}, {className:"lcdot"});
+      const liveTxt=mk("span",{}, {className:"lctxt",textContent:"Live preview"});
+      liveChip.append(liveDot,liveTxt);
+      const _showLiveChip=(show,dim=false)=>{
+        liveChip.classList.toggle("dim",!!dim);
+        liveChip.style.display=show?"flex":"none";
+        if(dim) tx(liveTxt,"Waiting for frame");
+        else tx(liveTxt,"Live preview");
+      };
+      self._h3_lpFrame=(d)=>{
+        if(_cmpMode) _exitCompare();
+        errorBox.style.display="none";
+        vidEl.style.display="none";vidEl.pause();vidEl.src="";
+        placeholder.style.display="none";
+        imgEl.src=d.image||"";imgEl.style.display="block";
+        const step=Number(d.step)||0, total=Number(d.total)||0;
+        if(total>0){
+          const pct=Math.min(97,Math.max(8,Math.round(step/total*90)));
+          const eta=Number(d.eta_seconds)||0;
+          setStage(`Sampling · step ${step}/${total}${eta>0?` · ETA ~${Math.round(eta)}s`:""}`,pct);
+        }
+        _showLiveChip(true,false);
+      };
+      self._h3_lpReset=()=>{ _showLiveChip(true,true); };
+      self._h3_lpErr=(msg)=>{ _showLiveChip(false); showError(msg); };
+      previewBox.append(placeholder,vidEl,errorBox,progWrap,seedChip,liveChip);
       const comparerWrap=mk("div",{position:"absolute",inset:"0",display:"none",cursor:"col-resize",userSelect:"none",borderRadius:"10px",overflow:"hidden",zIndex:"3"});
       const cmpBase=mk("video",{position:"absolute",inset:"0",width:"100%",height:"100%",objectFit:"contain",background:"#000"},{muted:true,loop:true,preload:"auto"});
       const cmpGen=mk("div",{position:"absolute",top:"0",left:"0",bottom:"0",overflow:"hidden",width:"50%"});
@@ -2571,6 +2610,58 @@ app.registerExtension({
         saveTogBtn.classList.toggle("on",S.autoSave);
         tx(saveTogBtn._lbl,S.autoSave?"Save On":"Save Off");
       };
+      let _taeFound=false;
+      let _taeChecked=false;
+      const _checkTae=async()=>{
+        try{
+          const r=await fetch("/h3one/tae_status");
+          const d=await r.json();
+          _taeFound=!!d.found;
+        }catch(e){ _taeFound=false; }
+        _taeChecked=true;
+        _syncLiveToggle();
+      };
+      const liveTogWrap=mk("div",{display:"flex",gap:"4px",alignItems:"center",flexShrink:"0"});
+      const liveTogBtn=mk("button",{}, {type:"button",className:"h3-actbtn"+(S.livePreview?" on":"")});
+      liveTogBtn._lbl=mk("span",{}, {textContent:S.livePreview?"Live On":"Live Off"});
+      liveTogBtn.appendChild(liveTogBtn._lbl);
+      const liveInfo=infoIcon("Live Preview: watch the video appear while it samples. Each step is decoded with a tiny TAEH3 model on the CPU, so generation takes a little longer.\nNeeds taeh3.safetensors inside ComfyUI/models/vae_approx - download it from huggingface.co/Kijai/MiniMax-H3-TAE.\nNot available with the Turbo preset or in Image mode.");
+      const _syncLiveToggle=()=>{
+        const hidden=S.mode==="image";
+        liveTogWrap.style.display=hidden?"none":"flex";
+        const blocked=(S.quality==="turbo"&&S.mode!=="chain"&&S.mode!=="image");
+        if(blocked){
+          liveTogBtn.classList.remove("on");
+          liveTogBtn.style.opacity=".45";liveTogBtn.style.pointerEvents="none";
+          liveTogBtn.title="Live Preview is not available with the Turbo preset. Pick another quality preset first.";
+          return;
+        }
+        liveTogBtn.style.opacity="";liveTogBtn.style.pointerEvents="";
+        liveTogBtn.classList.toggle("on",!!S.livePreview);
+        tx(liveTogBtn._lbl,S.livePreview?"Live On":"Live Off");
+        if(S.livePreview){
+          if(!_taeChecked) liveTogBtn.title="Live Preview is on. Checking for taeh3.safetensors...";
+          else if(!_taeFound){
+            liveTogBtn.classList.add("warn");
+            liveTogBtn.title="Live Preview is on but taeh3.safetensors is missing from ComfyUI/models/vae_approx. Download it from huggingface.co/Kijai/MiniMax-H3-TAE (vae_approx folder) or turn Live Preview off.";
+          } else {
+            liveTogBtn.classList.remove("warn");
+            liveTogBtn.title="Live Preview is on. Generation takes a little longer but you see the video while it samples.";
+          }
+        } else {
+          liveTogBtn.classList.remove("warn");
+          liveTogBtn.title="Approximate live preview while sampling. Slows generation a little. Needs taeh3.safetensors in models/vae_approx.";
+        }
+      };
+      liveTogBtn.onclick=async()=>{
+        if(!_taeChecked) await _checkTae();
+        S.livePreview=!S.livePreview;
+        persist();
+        _syncLiveToggle();
+      };
+      liveTogWrap.append(liveTogBtn,liveInfo);
+      _syncLiveToggle();
+      _checkTae();
       galleryRefresh.style.height="26px";
       galleryRefresh.style.borderRadius="8px";
       galleryRefresh.style.background="linear-gradient(180deg,#2b2b2b,#1e1e1e)";
@@ -2579,7 +2670,7 @@ app.registerExtension({
       galleryRefresh.style.boxShadow="inset 0 1px 0 rgba(255,255,255,.07), 0 1px 3px rgba(0,0,0,.45)";
       galleryRefresh.style.fontSize="9.5px";
       galleryRefresh.innerHTML=`<svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICON_REFRESH}</svg>`+`<span style="margin-left:5px;">Refresh</span>`;
-      galleryHdr.append(galleryTitle,saveTogBtn,galleryRefresh,galleryActs);
+      galleryHdr.append(galleryTitle,saveTogBtn,liveTogWrap,galleryRefresh,galleryActs);
       const galleryWrap=mk("div",{display:"flex",flexDirection:"column",gap:"7px"});
       galleryWrap.append(galleryHdr,galleryBox);
       rightPanel.append(previewBox,timeBar,galleryWrap);
@@ -2734,6 +2825,8 @@ app.registerExtension({
         S.generating=false;
         _batchIds=[];_batchDone=0;
         _upscaleRun="";
+        self._h3_lpOn=false;
+        _showLiveChip(false);
         genBtn.disabled=false;
         tx(genBtnLbl,"Generate");
         genBtn.style.background="linear-gradient(120deg,var(--h3accent),#e8d5c0)";genBtn.style.backgroundSize="";
@@ -3010,6 +3103,17 @@ app.registerExtension({
           delete wf["14"].inputs.audio;
         }
         _insertModelPatches(wf);
+        if(S.livePreview){
+          wf["lp"]={class_type:"H3StudioTAEH3Preview",inputs:{
+            model:wf["5"].inputs.model,
+            enabled:true,
+            tiny_vae:"taeh3.safetensors",
+            max_resolution:768,
+            jpeg_quality:85,
+            preview_every_n_steps:1,
+          },_meta:{title:"Live Preview (TAEH3)"}};
+          wf["5"].inputs.model=["lp",0];
+        }
         _applyAutoSave(wf);
         _insertCacheBust(wf);
         return {frames,res};
@@ -3309,6 +3413,17 @@ app.registerExtension({
           }
         }
         wf["s:5"].inputs.model=modelSrc;
+        if(S.livePreview){
+          wf["s:lp"]={class_type:"H3StudioTAEH3Preview",inputs:{
+            model:modelSrc,
+            enabled:true,
+            tiny_vae:"taeh3.safetensors",
+            max_resolution:768,
+            jpeg_quality:85,
+            preview_every_n_steps:1,
+          },_meta:{title:"Live Preview (TAEH3)"}};
+          wf["s:5"].inputs.model=["s:lp",0];
+        }
         wf["s:1"].inputs.clip_name=S.models.clip;
         wf["s:2"].inputs.unet_name=S.models.unetT2V;
         wf["s:3"].inputs.vae_name=S.models.vaeVideo;
@@ -3353,6 +3468,14 @@ app.registerExtension({
         stopBtn.style.maxWidth="120px";stopBtn.style.minWidth="";stopBtn.style.width="";stopBtn.style.opacity="1";stopBtn.style.padding="0 14px";stopBtn.style.marginLeft="6px";
         progWrap.style.display="flex";setStage("Building workflow...",3);
         errorBox.style.display="none";
+        _showLiveChip(false);
+        self._h3_lpOn=!!S.livePreview&&S.mode!=="image";
+        self._h3_lpId=S.mode==="chain"?"s:lp":"lp";
+        if(self._h3_lpOn&&_taeChecked&&!_taeFound){
+          resetBtn();
+          showError("Live Preview is on but taeh3.safetensors was not found in ComfyUI/models/vae_approx.\nDownload it from huggingface.co/Kijai/MiniMax-H3-TAE (vae_approx folder) or turn Live Preview off.");
+          return;
+        }
         try{
           const n=Math.max(1,Math.min(4,S.batch||1));
           const ids=[];
@@ -3602,8 +3725,19 @@ app.registerExtension({
 
   api.addEventListener("progress",(evt)=>{
     if(!_activeNode) return;
+    if(_activeNode._h3_lpOn) return;
     const {value,max}=evt.detail||{};
     if(max>0&&_activeSetStage) _activeSetStage("Sampling...",8+Math.round(value/max*86));
+  });
+
+  api.addEventListener("h3studio-preview",(evt)=>{
+    const node=_activeNode;
+    if(!node||!node._h3_lpOn) return;
+    const d=evt.detail||{};
+    if(d.node_id!==node._h3_lpId) return;
+    if(d.error){ if(node._h3_lpErr) node._h3_lpErr(String(d.error)); return; }
+    if(d.reset){ if(node._h3_lpReset) node._h3_lpReset(); return; }
+    if(d.image){ if(node._h3_lpFrame) node._h3_lpFrame(d); }
   });
 
   api.addEventListener("executed",(evt)=>{

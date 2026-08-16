@@ -2,6 +2,10 @@
 
 Newest first.
 
+## 0.4.0 (2026-08-17)
+
+New Live Preview toggle under the video in every video mode. Watch the clip appear while it samples using the TAEH3 tiny decoder. Slows generation a little and needs taeh3.safetensors in ComfyUI/models/vae_approx plus the H3 Studio pack. Not available with the Turbo preset or Image mode.
+
 ## 0.3.0 (2026-08-16)
 
 New Image mode built on ComfyUI-MiniMax-H3-Studio. Text to image, edit a source image, or mix up to 9 references with @Image1 style roles. Base and LightX sampling profiles plus custom steps, sampler and scheduler. Needs the H3 Studio pack and the two Qwen3.5 prompt models, download links are in the README.

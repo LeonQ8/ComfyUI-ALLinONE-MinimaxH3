@@ -20,29 +20,63 @@ MAX_HISTORY = 50
 
 
 def _ensure_h3_keyframe_ref_merge():
-    """ComfyUI 0.32 core bug: a conditioning carrying BOTH minimax_keyframes and
-    minimax_refs crashes the sampler - model_base.extra_conds lets the refs
+    """ComfyUI 0.32/0.33 core bug: a conditioning carrying BOTH minimax_keyframes
+    and minimax_refs crashes the sampler - model_base.extra_conds lets the refs
     branch overwrite cond_video_latents, so the fixed-row count no longer
-    matches the packed layout (RuntimeError: shape mismatch). The H3 Motion
-    Context MultiRef pack ships a standalone, capability-aware repair
-    (patch_payload). Apply ONLY that part - not its layout patch, whose
-    self-test fails against 0.32 - so our identity anchor and any keyframe+ref
-    graph run crash-free. Idempotent and dormant once ComfyUI fixes it natively."""
+    matches the packed layout (RuntimeError: shape mismatch). Preferred repair:
+    the H3 Motion Context MultiRef pack's standalone patch_payload. Fallback:
+    a built-in merge wrapper so the identity anchor works even without that
+    pack. Both are idempotent and dormant once ComfyUI fixes it natively."""
+    repaired = False
     try:
         import importlib.util as _ilu
         pack_name = "ComfyUI-H3-Motion-Context-MultiRef"
         root = os.path.dirname(NODE_DIR)
         path = os.path.join(root, pack_name, "patch_payload.py")
-        if not os.path.isfile(path):
-            print("[H3One] %s not found - keyframe+ref payload repair unavailable." % pack_name)
-            return
-        spec = _ilu.spec_from_file_location("_h3one_patch_payload", path)
-        mod = _ilu.module_from_spec(spec)
-        spec.loader.exec_module(mod)
-        ok = mod.apply_patch(require_merge=True, require_av_masks=False)
-        print("[H3One] H3 keyframe+ref payload repair: %s" % ("enabled" if ok else "native or unavailable"))
+        if os.path.isfile(path):
+            spec = _ilu.spec_from_file_location("_h3one_patch_payload", path)
+            mod = _ilu.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            repaired = bool(mod.apply_patch(require_merge=True, require_av_masks=False))
     except Exception as e:
         print("[H3One] H3 keyframe+ref payload repair failed: %s" % e)
+    if repaired:
+        print("[H3One] H3 keyframe+ref payload repair: enabled")
+        return
+    try:
+        import comfy.model_base as _cmb
+        _orig = _cmb.MiniMaxH3.extra_conds
+        if getattr(_orig, "_h3one_merge_repair", False):
+            return
+
+        def _latent_rows(latents):
+            total = 0
+            for z in latents:
+                total += int(z.shape[0]) * int(z.shape[2]) * (int(z.shape[3]) // 2) * (int(z.shape[4]) // 2)
+            return total
+
+        def _extra_conds(self, **kwargs):
+            out = _orig(self, **kwargs)
+            payload = getattr(out.get("minimax_payload") if isinstance(out, dict) else None, "cond", None)
+            if not isinstance(payload, dict):
+                return out
+            kfs = payload.get("keyframes")
+            refs = payload.get("refs")
+            if not kfs or not refs:
+                return out
+            kf_lats = [kf.get("latent") for kf in kfs if kf.get("latent") is not None]
+            ref_lats = [r["latent"] for r in refs if "latent" in r]
+            have = payload.get("cond_video_latents") or []
+            if _latent_rows(have) == _latent_rows(kf_lats) + _latent_rows(ref_lats):
+                return out
+            payload["cond_video_latents"] = kf_lats + ref_lats
+            return out
+
+        _extra_conds._h3one_merge_repair = True
+        _cmb.MiniMaxH3.extra_conds = _extra_conds
+        print("[H3One] H3 keyframe+ref payload repair: enabled (built-in merge)")
+    except Exception as e:
+        print("[H3One] H3 keyframe+ref payload repair (built-in) failed: %s" % e)
 
 
 _ensure_h3_keyframe_ref_merge()
@@ -428,6 +462,25 @@ async def upload_file(request):
     except Exception as e:
         print(f"[H3One] upload error: {e}")
         return web.json_response({"ok": False, "error": str(e)}, status=500)
+
+
+@PromptServer.instance.routes.get("/h3one/tae_status")
+async def get_tae_status(request):
+    """Reports whether the taeh3 tiny decoder is present in models/vae_approx
+    (live preview depends on it; the H3 Studio preview node needs the file)."""
+    try:
+        bases = folder_paths.get_folder_paths("vae_approx")
+    except Exception:
+        bases = []
+    found = []
+    for base in bases:
+        if not os.path.isdir(base):
+            continue
+        for root, _dirs, files in os.walk(base):
+            for fn in files:
+                if fn.lower() == "taeh3.safetensors":
+                    found.append(os.path.relpath(os.path.join(root, fn), base))
+    return web.json_response({"ok": True, "found": bool(found), "files": sorted(found)})
 
 
 @PromptServer.instance.routes.get("/h3one/config")

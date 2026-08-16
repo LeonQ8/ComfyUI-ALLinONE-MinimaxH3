@@ -26,6 +26,7 @@ These are the commit SHAs the node was developed against. You don't need to pin 
 | ComfyUI-SolAttn_triton | [GitHub](https://github.com/kijai/ComfyUI-SolAttn_triton) | `842c4ea` | Speed preset |
 | ComfyUI-MiniMaxH3-Cache | [GitHub](https://github.com/lihaoyun6/ComfyUI-MiniMaxH3-Cache) | `8a45e09` | Speed preset |
 | comfyui-kjnodes | [GitHub](https://github.com/kijai/ComfyUI-KJNodes) | `6ab7e81` | High Quality preset (SageAttention) |
+| ComfyUI-MiniMax-H3-Studio | [GitHub](https://github.com/thaakeno/ComfyUI-MiniMax-H3-Studio) | `c2bcbec` | Image mode / Live Preview |
 
 ## Known issues on newer ComfyUI cores
 

@@ -82,6 +82,8 @@ Each accelerator also has an on/off chip under the Quality dropdown (SolAttn / H
 
 **Preview without saving** (auto-save off): [ComfyUI-VideoHelperSuite](https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite)
 
+**Live Preview** (the toggle under the video): [ComfyUI-MiniMax-H3-Studio](https://github.com/thaakeno/ComfyUI-MiniMax-H3-Studio) plus `taeh3.safetensors` in `ComfyUI/models/vae_approx/` ([Kijai/MiniMax-H3-TAE](https://huggingface.co/Kijai/MiniMax-H3-TAE)). Shows the video while it samples; slows generation a little. Works in every video mode, not with the Turbo preset or Image mode.
+
 **Image mode prompts**: they follow the H3 Studio shape, a `summary:` line with the goal and a `detailed_description:` with the full scene. Name your references `@Image1`, `@Image2` and give each one a clear job (identity, pose, style, outfit). Edits are a semantic regeneration of the source image, not pixel inpainting, so describe what changes instead of expecting a perfect cutout. The Discover tab ships with Text to image, Image edit and Reference mix templates.
 
 **Image mode models**: besides your usual H3 files, H3 Studio's prompt machinery wants two small Qwen3.5 models in `ComfyUI/models/text_encoders/`:
