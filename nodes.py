@@ -452,7 +452,7 @@ async def save_config_route(request):
 async def save_preset(request):
     """Upsert a custom prompt preset for a mode. Stored in the user config
     (survives reinstalls); merged with the built-in presets at read time."""
-    _VALID_MODES = ("t2v", "i2v", "r2v", "audio_drive", "keyframes", "extend", "chain")
+    _VALID_MODES = ("t2v", "i2v", "r2v", "audio_drive", "keyframes", "extend", "chain", "image")
     try:
         data = await request.json()
         mode = str(data.get("mode", "")).strip()
@@ -482,7 +482,7 @@ async def save_preset(request):
 
 @PromptServer.instance.routes.delete("/h3one/presets")
 async def delete_preset(request):
-    _VALID_MODES = ("t2v", "i2v", "r2v", "audio_drive", "keyframes", "extend", "chain")
+    _VALID_MODES = ("t2v", "i2v", "r2v", "audio_drive", "keyframes", "extend", "chain", "image")
     try:
         data = await request.json()
         mode = str(data.get("mode", "")).strip()

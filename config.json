@@ -112,6 +112,24 @@
           "prompt": "integrated_multimodal_description:\n[Shot 1] Hold the exact closing framing of the previous clip for about 2 seconds with subtle natural motion (a breath, a weight shift, an eyeline change), then continue seamlessly: [DESCRIBE WHAT HAPPENS NEXT].\n\noverall_soundscape:\n[Describe how the sound continues from the previous clip.]\n\nnon_diegetic_music:\nN/A"
         }
       ]
+    },
+    "image": {
+      "name": "Image (H3 Studio)",
+      "wrap": "summary:\n[image generation] {USER}\n\ndetailed_description:\n[STATE THE STYLE, THEN DESCRIBE THE SUBJECT, SETTING, COMPOSITION AND LIGHTING IN DETAIL.]",
+      "presets": [
+        {
+          "name": "Text to image",
+          "prompt": "summary:\n[image generation] [STATE THE STYLE: cinematic photo, 2D anime, 3D CG, painterly...] [SUBJECT] in [SETTING].\n\ndetailed_description:\nThe target image shows [DESCRIBE THE SUBJECT IN DETAIL]. The camera [COMPOSITION AND ANGLE]. [LIGHTING AND MOOD]. [FINISH: film grain, sharp focus, soft bokeh...]."
+        },
+        {
+          "name": "Image edit",
+          "prompt": "summary:\n[image edit] Start from @Image1 as the source canvas and change [WHAT CHANGES].\n\ndetailed_description:\nThe target image keeps the subject, pose and framing of @Image1. [DESCRIBE ONLY THE CHANGES: outfit, background, lighting, expression...]."
+        },
+        {
+          "name": "Reference mix",
+          "prompt": "summary:\n[reference generation] Combine the provided references into one image: [DESCRIBE THE RESULT].\n\ndetailed_description:\n@Image1 provides [ROLE: identity, pose, style, composition...]. @Image2 provides [ROLE]. [DESCRIBE THE FINAL IMAGE: SETTING, LIGHTING, CAMERA]."
+        }
+      ]
     }
   },
   "model_defaults": {

@@ -1736,11 +1736,14 @@ app.registerExtension({
       const imgProfCapRow=mk("div",{display:"flex",alignItems:"center",gap:"4px"});
       const imgProfCap=mk("div",{fontSize:"9px",fontWeight:"700",color:C.muted,textTransform:"uppercase",letterSpacing:".07em"});
       tx(imgProfCap,"Sampling profile");
-      imgProfCapRow.append(imgProfCap,infoIcon("Base profiles run native H3 with no acceleration files.\nLightX profiles need the matching LoRA in your loras folder (see the H3 Studio docs) - FL2VA profiles for T2I/Edit, REF2V profiles for Reference Mix."));
-      const _imgProfLabel=()=>{ const p=IMG_PROFILES.find(x=>x[0]===S.imgProfile); return p?p[1]:"Base Quality - 20 steps"; };
-      const imgProfDD=DD(IMG_PROFILES.map(p=>p[1]),_imgProfLabel(),v=>{
-        const p=IMG_PROFILES.find(x=>x[1]===v);
-        S.imgProfile=p?p[0]:"base_quality_20";persist();
+      imgProfCapRow.append(imgProfCap,infoIcon("Base profiles run native H3 with no acceleration files.\nLightX profiles need the matching LoRA in your loras folder (see the H3 Studio docs) - FL2VA profiles for T2I/Edit, REF2V profiles for Reference Mix.\nCustom settings lets you pick your own steps, sampler and scheduler."));
+      let _syncImgAdvRef=null;
+      const _imgProfLabel=()=>{ if(S.imgProfile==="custom") return "Custom settings"; const p=IMG_PROFILES.find(x=>x[0]===S.imgProfile); return p?p[1]:"Base Quality - 20 steps"; };
+      const imgProfDD=DD(IMG_PROFILES.map(p=>p[1]).concat(["Custom settings"]),_imgProfLabel(),v=>{
+        if(v==="Custom settings"){ S.imgProfile="custom"; }
+        else { const p=IMG_PROFILES.find(x=>x[1]===v); S.imgProfile=p?p[0]:"base_quality_20"; }
+        persist();
+        if(_syncImgAdvRef) _syncImgAdvRef();
       });
       imgProfRow.append(imgProfCapRow,imgProfDD.el);
       imgArea.append(imgSubRow,imgProfRow);
@@ -2065,7 +2068,7 @@ app.registerExtension({
         else if(S.mode==="keyframes"){ modeHdr.style.display="flex"; modeTitle.textContent="Custom Keyframes"; _renderKf(); kfArea.style.display="flex"; }
         else if(S.mode==="extend"){ modeHdr.style.display="flex"; modeTitle.textContent="Extend Video"; exArea.style.display="flex"; }
         else if(S.mode==="chain"){ modeHdr.style.display="flex"; modeTitle.textContent="Motion Context Chain"; _renderChain(); chainArea.style.display="flex"; }
-        else if(S.mode==="image"){ modeHdr.style.display="flex"; modeTitle.textContent="Image (H3 Studio)"; _renderImgRefs(); imgArea.style.display="flex"; }
+        else if(S.mode==="image"){ modeHdr.style.display="flex"; modeTitle.textContent="Image (H3 Studio)"; _renderImgRefs(); imgArea.style.display="flex"; if(_syncImgAdvRef) _syncImgAdvRef(); }
         else { modeHdr.style.display="none"; modeTitle.textContent="Text to Video"; }
       };
 
@@ -2160,19 +2163,42 @@ app.registerExtension({
       const _syncOptChips=()=>_optChipSyncs.forEach(f=>f());
       optRow.append(_mkOptChip("optSol","SolAttn"),_mkOptChip("optCache","H3 Cache"),_mkOptChip("optSage","SageAttn"));
       qualRow.appendChild(optRow);
+      const SAMPLERS=["euler","euler_cfg_pp","euler_ancestral","euler_ancestral_cfg_pp","heun","heunpp2","exp_heun_2_x0","exp_heun_2_x0_sde","dpm_2","dpm_2_ancestral","lms","dpm_fast","dpm_adaptive","dpmpp_2s_ancestral","dpmpp_2s_ancestral_cfg_pp","dpmpp_sde","dpmpp_sde_gpu","dpmpp_2m","dpmpp_2m_cfg_pp","dpmpp_2m_sde","dpmpp_2m_sde_gpu","dpmpp_2m_sde_heun","dpmpp_2m_sde_heun_gpu","dpmpp_3m_sde","dpmpp_3m_sde_gpu","ddpm","lcm","ipndm","ipndm_v","deis","res_multistep","res_multistep_cfg_pp","res_multistep_ancestral","res_multistep_ancestral_cfg_pp","gradient_estimation","gradient_estimation_cfg_pp","er_sde","seeds_2","seeds_3","sa_solver","sa_solver_pece","ddim","uni_pc","uni_pc_bh2","legacy_rk","rk","rk_beta","deis_3m_ode","deis_2m_ode","deis_3m","deis_2m","res_6s_ode","res_5s_ode","res_3s_ode","res_2s_ode","res_3m_ode","res_2m_ode","res_6s","res_5s","res_3s","res_2s","res_3m","res_2m"];
+      const SCHEDULERS=["simple","sgm_uniform","karras","exponential","ddim_uniform","beta","normal","linear_quadratic","kl_optimal","bong_tangent","beta57"];
       const samplerRow=mk("div",{display:"flex",flexDirection:"column",gap:"3px"});
       const samplerCapRow=mk("div",{display:"flex",alignItems:"center",gap:"4px"});
       const samplerCap=mk("div",{fontSize:"10px",color:C.text});tx(samplerCap,"Sampler");
       samplerCapRow.append(samplerCap,infoIcon("The sampling algorithm. MiniMax H3's native workflows use res_multistep - keep it unless you know why you're changing it."));
-      const samplerDD=DD(["euler","euler_cfg_pp","euler_ancestral","euler_ancestral_cfg_pp","heun","heunpp2","exp_heun_2_x0","exp_heun_2_x0_sde","dpm_2","dpm_2_ancestral","lms","dpm_fast","dpm_adaptive","dpmpp_2s_ancestral","dpmpp_2s_ancestral_cfg_pp","dpmpp_sde","dpmpp_sde_gpu","dpmpp_2m","dpmpp_2m_cfg_pp","dpmpp_2m_sde","dpmpp_2m_sde_gpu","dpmpp_2m_sde_heun","dpmpp_2m_sde_heun_gpu","dpmpp_3m_sde","dpmpp_3m_sde_gpu","ddpm","lcm","ipndm","ipndm_v","deis","res_multistep","res_multistep_cfg_pp","res_multistep_ancestral","res_multistep_ancestral_cfg_pp","gradient_estimation","gradient_estimation_cfg_pp","er_sde","seeds_2","seeds_3","sa_solver","sa_solver_pece","ddim","uni_pc","uni_pc_bh2","legacy_rk","rk","rk_beta","deis_3m_ode","deis_2m_ode","deis_3m","deis_2m","res_6s_ode","res_5s_ode","res_3s_ode","res_2s_ode","res_3m_ode","res_2m_ode","res_6s","res_5s","res_3s","res_2s","res_3m","res_2m"],S.samplerName||"res_multistep",v=>{S.samplerName=v;persist();});
+      const samplerDD=DD(SAMPLERS,S.samplerName||"res_multistep",v=>{S.samplerName=v;persist();});
       samplerRow.append(samplerCapRow,samplerDD.el);
       const schedRow=mk("div",{display:"flex",flexDirection:"column",gap:"3px"});
       const schedCapRow=mk("div",{display:"flex",alignItems:"center",gap:"4px"});
       const schedCap=mk("div",{fontSize:"10px",color:C.text});tx(schedCap,"Scheduler");
       schedCapRow.append(schedCap,infoIcon("The noise schedule. MiniMax H3's native workflows use simple - keep it unless you know why you're changing it."));
-      const schedDD=DD(["simple","sgm_uniform","karras","exponential","ddim_uniform","beta","normal","linear_quadratic","kl_optimal","bong_tangent","beta57"],S.schedulerName||"simple",v=>{S.schedulerName=v;persist();});
+      const schedDD=DD(SCHEDULERS,S.schedulerName||"simple",v=>{S.schedulerName=v;persist();});
       schedRow.append(schedCapRow,schedDD.el);
       params.append(resRow,durRow,stepsRow,qualRow,samplerRow,schedRow);
+
+      // Custom sampling controls for Image mode (shown when the profile is Custom)
+      const imgAdvRow=mk("div",{display:"none",flexDirection:"column",gap:"7px"});
+      const imgAdvCap=mk("div",{fontSize:"9px",fontWeight:"700",color:C.muted,textTransform:"uppercase",letterSpacing:".07em"});
+      tx(imgAdvCap,"Custom sampling");
+      const _imgAdvField=(labelTxt,el)=>{
+        const f=mk("div",{display:"flex",alignItems:"center",gap:"8px"});
+        const l=mk("div",{fontSize:"10px",color:C.text,width:"62px",flexShrink:"0"});tx(l,labelTxt);
+        f.append(l,el);
+        return f;
+      };
+      const imgAdvSteps=NI("",S.steps,1,10000,1,v=>{S.steps=Math.round(v);persist();},"60px");
+      const imgAdvSampler=DD(SAMPLERS,S.samplerName||"res_multistep",v=>{S.samplerName=v;persist();});
+      const imgAdvSched=DD(SCHEDULERS,S.schedulerName||"simple",v=>{S.schedulerName=v;persist();});
+      imgAdvRow.append(imgAdvCap,_imgAdvField("Steps",imgAdvSteps),_imgAdvField("Sampler",imgAdvSampler.el),_imgAdvField("Scheduler",imgAdvSched.el));
+      imgArea.appendChild(imgAdvRow);
+      const _syncImgAdv=()=>{
+        imgAdvRow.style.display=(S.mode==="image"&&S.imgProfile==="custom")?"flex":"none";
+        imgAdvSteps.setVal(S.steps);
+      };
+      _syncImgAdvRef=_syncImgAdv;
       const _saveModeState=()=>{
         S.modeSettings[S.mode]={
           prompt:S.prompt,steps:S.steps,quality:S.quality,resolution:S.resolution,duration:S.duration,
@@ -3008,12 +3034,18 @@ app.registerExtension({
         dir.aspect_ratio=S.imgAspect==="Custom"?"1:1":S.imgAspect;
         dir.megapixels=Number(S.imgMP)||1;
         dir.seed=S.seed||0;
-        dir.sampling_profile=S.imgProfile||"base_quality_20";
+        dir.sampling_profile=S.imgProfile==="custom"?"base_quality_20":(S.imgProfile||"base_quality_20");
         dir.frame_profile="recommended_5";
         dir.enhance_mode="off";
         dir.adherence=0.85;
         dir.route="auto";
         dir.studio_state="";
+        if(S.imgProfile==="custom"){
+          wf["4"]={class_type:"H3StudioSamplingSettings",inputs:{
+            model:["3",0],sampler_name:S.samplerName||"res_multistep",scheduler:S.schedulerName||"simple",
+            steps:S.steps||20,denoise:1.0,shift_video:12.0,shift_audio:3.0,beta_alpha:0.6,beta_beta:0.6,
+          },_meta:{title:"Custom Sampling"}};
+        }
         let nextId=200;
         const newId=()=>String(nextId++);
         refs.forEach((name,idx)=>{
@@ -3390,7 +3422,7 @@ app.registerExtension({
       // -- Assemble ----------------------------------------------------------
       const mainRow=mk("div",{display:"flex",gap:"12px",alignItems:"stretch",flex:"1",minHeight:"0"});
       const leftPanel=mk("div",{display:"flex",flexDirection:"column",gap:"9px",width:"420px",flexShrink:"0",overflowY:"auto",minHeight:"0",paddingRight:"4px",boxSizing:"border-box",scrollbarWidth:"thin",scrollbarColor:`${C.border} transparent`});
-      modeArea.append(i2vArea,refArea,kfArea,adArea,exArea,chainArea);
+      modeArea.append(i2vArea,refArea,kfArea,adArea,exArea,chainArea,imgArea);
       // -- Card assembly -----------------------------------------------------
       const promptCard=mk("div",{}, {className:"h3-card"});
       promptCard.append(promptHdr,promptWrap);

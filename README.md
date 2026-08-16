@@ -82,6 +82,8 @@ Each accelerator also has an on/off chip under the Quality dropdown (SolAttn / H
 
 **Preview without saving** (auto-save off): [ComfyUI-VideoHelperSuite](https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite)
 
+**Image mode prompts**: they follow the H3 Studio shape, a `summary:` line with the goal and a `detailed_description:` with the full scene. Name your references `@Image1`, `@Image2` and give each one a clear job (identity, pose, style, outfit). Edits are a semantic regeneration of the source image, not pixel inpainting, so describe what changes instead of expecting a perfect cutout. The Discover tab ships with Text to image, Image edit and Reference mix templates.
+
 **Turbo LoRA** (for the Turbo preset): download `minimax_h3_turbo_v4_step600_ema.safetensors` from [larryvrh/MiniMax-H3-Turbo-Lora](https://huggingface.co/larryvrh/MiniMax-H3-Turbo-Lora) into `ComfyUI/models/loras/`.
 
 > **Seeing "Node not found"?** That's a missing pack from the tables above. The two most common:
@@ -111,6 +113,7 @@ I develop and test against a pinned stack (ComfyUI version, custom node commits,
 - Chain / Keyframes / Extend wiring: [ComfyUI-H3-Motion-Context-MultiRef](https://github.com/seitanism/ComfyUI-H3-Motion-Context-MultiRef) by seitanism
 - Base graphs: the official MiniMax H3 native workflows from Comfy-Org
 - Turbo preset: ComfyUI-MiniMax-H3-Turbo pack
+- Image mode: [ComfyUI-MiniMax-H3-Studio](https://github.com/thaakeno/ComfyUI-MiniMax-H3-Studio) by thaakeno
 
 ## Support
 
