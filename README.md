@@ -84,6 +84,13 @@ Each accelerator also has an on/off chip under the Quality dropdown (SolAttn / H
 
 **Image mode prompts**: they follow the H3 Studio shape, a `summary:` line with the goal and a `detailed_description:` with the full scene. Name your references `@Image1`, `@Image2` and give each one a clear job (identity, pose, style, outfit). Edits are a semantic regeneration of the source image, not pixel inpainting, so describe what changes instead of expecting a perfect cutout. The Discover tab ships with Text to image, Image edit and Reference mix templates.
 
+**Image mode models**: besides your usual H3 files, H3 Studio's prompt machinery wants two small Qwen3.5 models in `ComfyUI/models/text_encoders/`:
+
+| Model | Download |
+|-------|----------|
+| `qwen3.5_2b_bf16.safetensors` | [Comfy-Org/Qwen3.5](https://huggingface.co/Comfy-Org/Qwen3.5/resolve/main/text_encoders/qwen3.5_2b_bf16.safetensors) |
+| `qwen3.5_4b_bf16.safetensors` | [Comfy-Org/Qwen3.5](https://huggingface.co/Comfy-Org/Qwen3.5/resolve/main/text_encoders/qwen3.5_4b_bf16.safetensors) |
+
 **LightX LoRAs for Image mode** (only the LightX sampling profiles need them, Base profiles need nothing). Drop the file into `ComfyUI/models/loras/`, the node checks for it before generating:
 
 | Profile | LoRA file |

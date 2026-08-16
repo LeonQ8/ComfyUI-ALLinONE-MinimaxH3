@@ -3030,6 +3030,17 @@ app.registerExtension({
             throw new Error("This profile needs the LightX LoRA "+need+" inside ComfyUI/models/loras. Download it from the link in the README (Image mode section), then refresh - or pick a Base profile, those need no extra files.");
           }
         }
+        if(!_M.text_encoders.length){
+          try{ const r=await fetch("/h3one/models"); const d=await r.json(); _M.text_encoders=d.text_encoders||[]; }catch(e){}
+        }
+        const _imgNeedModels=[];
+        for(const need of ["qwen3.5_2b_bf16.safetensors","qwen3.5_4b_bf16.safetensors"]){
+          const have=(_M.text_encoders||[]).some(n=>String(n).replace(/\\/g,"/").split("/").pop()===need);
+          if(!have) _imgNeedModels.push(need);
+        }
+        if(_imgNeedModels.length){
+          throw new Error("Image mode needs the Qwen3.5 prompt models in ComfyUI/models/text_encoders: "+_imgNeedModels.join(" and ")+". Download links are in the README (Image mode section).");
+        }
         const wf=await _fetchTpl(TEMPLATES.image);
         const _slash=s=>String(s||"").replace(/\\/g,"/");
         wf["1"].inputs.fl2va_model=_slash(S.models.unetT2V);
