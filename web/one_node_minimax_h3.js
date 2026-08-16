@@ -3031,10 +3031,11 @@ app.registerExtension({
           }
         }
         const wf=await _fetchTpl(TEMPLATES.image);
-        wf["1"].inputs.fl2va_model=S.models.unetT2V;
-        wf["1"].inputs.ref2va_model=S.models.unetR2V;
-        wf["1"].inputs.text_encoder=S.models.clip;
-        wf["1"].inputs.video_vae=S.models.vaeVideo;
+        const _slash=s=>String(s||"").replace(/\\/g,"/");
+        wf["1"].inputs.fl2va_model=_slash(S.models.unetT2V);
+        wf["1"].inputs.ref2va_model=_slash(S.models.unetR2V);
+        wf["1"].inputs.text_encoder=_slash(S.models.clip);
+        wf["1"].inputs.video_vae=_slash(S.models.vaeVideo);
         const dir=wf["2"].inputs;
         dir.prompt=S.prompt||"";
         dir.mode=sub==="refmix"?"reference":"image";
