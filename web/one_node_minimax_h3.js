@@ -240,18 +240,18 @@ function Toggle(labelTxt,checked,onChange,infoTxt){
 }
 
 function MiniToggle(checked,onChange,label){
-  const track=mk("div",{width:"26px",height:"14px",borderRadius:"7px",
-    background:checked?C.lime:C.bg3,cursor:"pointer",position:"relative",
+  const track=mk("button",{width:"26px",height:"14px",borderRadius:"7px",
+    background:checked?C.lime:C.bg3,cursor:"pointer",position:"relative",padding:"0",
     border:`1px solid ${checked?"transparent":C.borderH}`,boxSizing:"border-box",
-    transition:"background .2s,border-color .2s",flexShrink:"0",outline:"none"});
-  const thumb=mk("div",{position:"absolute",top:"2px",left:checked?"14px":"2px",
+    transition:"background .2s,border-color .2s",flexShrink:"0",outline:"none",display:"block"},
+    {type:"button",className:"h3-mtgl",title:label||"Toggle"});
+  const thumb=mk("span",{position:"absolute",top:"2px",left:checked?"14px":"2px",
     width:"10px",height:"10px",borderRadius:"50%",
     background:checked?"#111":"#aaa",transition:"left .2s,background .2s",pointerEvents:"none"});
   track.appendChild(thumb);
   track.setAttribute("role","switch");
   track.setAttribute("aria-checked",String(!!checked));
   if(label) track.setAttribute("aria-label",label);
-  track.tabIndex=0;
   let val=!!checked;
   const _render=()=>{
     track.style.background=val?C.lime:C.bg3;
@@ -262,7 +262,6 @@ function MiniToggle(checked,onChange,label){
   };
   const _toggle=()=>{ val=!val; _render(); onChange(val); };
   track.onclick=_toggle;
-  track.onkeydown=e=>{ if(e.key===" "||e.key==="Enter"){ e.preventDefault(); _toggle(); } };
   track.onfocus=()=>{ track.style.boxShadow=`0 0 0 2px rgba(var(--h3accent-rgb),.35)`; };
   track.onblur=()=>{ track.style.boxShadow="none"; };
   track.onmouseenter=()=>{ track.style.boxShadow=`0 0 0 2px rgba(var(--h3accent-rgb),.2)`; };
@@ -986,7 +985,7 @@ app.registerExtension({
           .h3-tgl.on{background:var(--h3accent);}
           .h3-tgl.on .thumb{left:19px;background:#141414;}
           .h3-tgl:focus-visible{outline:none;box-shadow:0 0 0 3px rgba(192,169,150,.35);}
-          @media (prefers-reduced-motion:reduce){ .h3-mode,.h3-topbtn,.h3-rmbtn,.h3-tgl,.h3-actbtn,.h3-seedbtn{transition:none;} .h3-livechip .lcdot{animation:none;} }
+          @media (prefers-reduced-motion:reduce){ .h3-mode,.h3-topbtn,.h3-rmbtn,.h3-tgl,.h3-mtgl,.h3-actbtn,.h3-seedbtn{transition:none;} .h3-livechip .lcdot{animation:none;} }
         `;
         document.head.appendChild(styleEl);
       }
@@ -2404,18 +2403,22 @@ app.registerExtension({
       const loraTitle=mk("div",{fontSize:"9px",fontWeight:"700",letterSpacing:".1em",textTransform:"uppercase",color:C.muted});
       tx(loraTitle,"Advanced");
       const loraSub=mk("div",{fontSize:"10px",color:C.muted,marginLeft:"auto",marginRight:"6px"});tx(loraSub,"LoRAs — none loaded");
-      const loraGlob=mk("button",{fontSize:"9px",fontWeight:"700",color:C.muted,border:`1px solid ${C.border}`,background:"transparent",borderRadius:"6px",padding:"2px 8px",cursor:"pointer",marginRight:"6px",outline:"none",transition:"color .15s,border-color .15s,opacity .15s"},{type:"button"});
+      const loraGlob=mk("button",{fontSize:"9px",fontWeight:"700",color:C.muted,border:`1px solid ${C.border}`,background:"transparent",borderRadius:"6px",padding:"2px 8px",cursor:"pointer",marginRight:"6px",outline:"none",transition:"color .15s,border-color .15s,opacity .15s"},{type:"button",title:"Toggle all LoRAs in the current mode"});
       tx(loraGlob,"Enable all");
       loraGlob.onmouseenter=()=>{ if(!loraGlob.disabled){ loraGlob.style.borderColor=C.lime; loraGlob.style.color=C.lime; } };
       loraGlob.onmouseleave=()=>{ loraGlob.style.borderColor=C.border; loraGlob.style.color=C.muted; };
+      loraGlob.onfocus=()=>{ loraGlob.style.boxShadow=`0 0 0 2px rgba(var(--h3accent-rgb),.35)`; };
+      loraGlob.onblur=()=>{ loraGlob.style.boxShadow="none"; };
       const loraChev=mk("span",{color:C.dim,fontSize:"10px",flexShrink:"0"});
       tx(loraChev,"▾");
       loraHdr.append(loraTitle,loraSub,loraGlob,loraChev);
       const loraBody=mk("div",{display:"flex",flexDirection:"column",gap:"5px"});
       const loraRowsWrap=mk("div",{display:"flex",flexDirection:"column",gap:"5px"});
       loraBody.appendChild(loraRowsWrap);
-      const addLoraBtn=mk("button",{background:"transparent",border:`1px dashed rgba(var(--h3accent-rgb),.4)`,borderRadius:"6px",padding:"4px 12px",fontSize:"9px",fontWeight:"700",color:"rgba(var(--h3accent-rgb),.7)",cursor:"pointer",outline:"none",alignSelf:"flex-start"});
+      const addLoraBtn=mk("button",{background:"transparent",border:`1px dashed rgba(var(--h3accent-rgb),.4)`,borderRadius:"6px",padding:"4px 12px",fontSize:"9px",fontWeight:"700",color:"rgba(var(--h3accent-rgb),.7)",cursor:"pointer",outline:"none",alignSelf:"flex-start",transition:"border-color .15s,color .15s,box-shadow .15s"},{type:"button",title:"Add a LoRA row"});
       tx(addLoraBtn,"+ Add LoRA");
+      addLoraBtn.onfocus=()=>{ addLoraBtn.style.boxShadow=`0 0 0 2px rgba(var(--h3accent-rgb),.3)`; addLoraBtn.style.borderColor=C.lime; addLoraBtn.style.color=C.lime; };
+      addLoraBtn.onblur=()=>{ addLoraBtn.style.boxShadow="none"; addLoraBtn.style.borderColor="rgba(var(--h3accent-rgb),.4)"; addLoraBtn.style.color="rgba(var(--h3accent-rgb),.7)"; };
       addLoraBtn.onmouseenter=()=>{addLoraBtn.style.borderColor=C.lime;addLoraBtn.style.color=C.lime;};
       addLoraBtn.onmouseleave=()=>{addLoraBtn.style.borderColor="rgba(var(--h3accent-rgb),.4)";addLoraBtn.style.color="rgba(var(--h3accent-rgb),.7)";};
       addLoraBtn.onclick=()=>{
@@ -2503,6 +2506,7 @@ app.registerExtension({
             _renderLoras();
           };
           if(!lr.name && S.loras.length<=1) rm.style.display="none";
+          if(lr.name&&lr.enabled===false){ dd.el.style.opacity=".45"; stNI.style.opacity=".45"; }
           row.append(dd.el,stNI,tgl.el,rm);
           loraRowsWrap.appendChild(row);
           loraRows.push(row);
@@ -2518,7 +2522,8 @@ app.registerExtension({
         loraGlob.style.cursor=named.length?"pointer":"default";
         loraGlob.style.borderColor=C.border;loraGlob.style.color=C.muted;
       };
-      loraGlob.onclick=()=>{
+      loraGlob.onclick=e=>{
+        e.stopPropagation();
         const named=S.loras.filter(l=>l&&l.name);
         if(!named.length) return;
         const allOn=named.every(l=>l.enabled!==false);
