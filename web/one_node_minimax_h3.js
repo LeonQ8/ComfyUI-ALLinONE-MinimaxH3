@@ -3123,6 +3123,19 @@ app.registerExtension({
         wf["5"].inputs.model=modelSrc;
       };
 
+      const _insertImageModelPatches=(wf)=>{
+        let modelSrc=["3",0];
+        let nextId=100;
+        const newId=()=>String(nextId++);
+        S.loras.filter(l=>l.name).forEach(lr=>{
+          const id=newId();
+          wf[id]={class_type:"LoraLoaderModelOnly",inputs:{model:modelSrc,lora_name:lr.name,strength_model:lr.strength},_meta:{title:"LoRA"}};
+          modelSrc=[id,0];
+        });
+        wf["4"].inputs.model=modelSrc;
+        wf["6"].inputs.model=["4",0];
+      };
+
       const _applyAutoSave=(wf)=>{
         if(S.autoSave!==false) return;
         Object.keys(wf).forEach(id=>{
@@ -3249,6 +3262,7 @@ app.registerExtension({
             steps:S.steps||20,denoise:1.0,shift_video:12.0,shift_audio:3.0,beta_alpha:0.6,beta_beta:0.6,
           },_meta:{title:"Custom Sampling"}};
         }
+        _insertImageModelPatches(wf);
         let nextId=200;
         const newId=()=>String(nextId++);
         refs.forEach((name,idx)=>{
