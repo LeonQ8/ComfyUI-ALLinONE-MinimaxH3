@@ -2,6 +2,10 @@
 
 Newest first.
 
+## 0.6.1 (2026-08-18)
+
+Live Preview now plays the whole clip while it samples instead of showing one still frame. A quality dropdown next to the Live Preview toggle picks Fast, Balanced or Detailed previews, which trade preview smoothness against generation speed. The preview no longer needs the H3 Studio pack, only taeh3.safetensors in a models/vae_approx folder.
+
 ## 0.6.0 (2026-08-18)
 
 - The Text Encoder list now only shows the model H3 actually uses.

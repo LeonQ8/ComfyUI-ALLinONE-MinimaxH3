@@ -90,6 +90,12 @@ const DEFAULT_MODELS = {
   upscaleVae:"none",
 };
 
+const LP_PRESETS = {
+  fast:{res:384,frames:6,label:"Fast"},
+  balanced:{res:512,frames:10,label:"Balanced"},
+  detailed:{res:768,frames:10,label:"Detailed"},
+};
+
 function snapFrames(seconds, fps=24){
   const base = Math.max(5, Math.round(seconds * fps));
   return base + ((5 - (base % 17)) + 17) % 17;
@@ -863,6 +869,7 @@ app.registerExtension({
           modeSettings:    (saved.modeSettings&&typeof saved.modeSettings==="object")?saved.modeSettings:{},
           autoSave:        saved.autoSave!==undefined?saved.autoSave:true,
           livePreview:     saved.livePreview===true,
+          livePreviewMode: (saved.livePreviewMode==="fast"||saved.livePreviewMode==="detailed")?saved.livePreviewMode:"balanced",
           generating:      false,
           playOnFinish:    saved.playOnFinish!==undefined?saved.playOnFinish:true,
           folded:          (saved.folded&&typeof saved.folded==="object")?saved.folded:{},
@@ -911,6 +918,7 @@ app.registerExtension({
           modeSettings:S.modeSettings,
           autoSave:S.autoSave,customW:S.customW,customH:S.customH,
           playOnFinish:S.playOnFinish,folded:S.folded,livePreview:S.livePreview,
+          livePreviewMode:S.livePreviewMode,
           imgSub:S.imgSub,imgAspect:S.imgAspect,imgMP:S.imgMP,imgW:S.imgW,imgH:S.imgH,
           imgProfile:S.imgProfile,imgRefs:S.imgRefs,
         });
@@ -2913,7 +2921,15 @@ app.registerExtension({
       const liveTogBtn=mk("button",{}, {type:"button",className:"h3-actbtn"+(S.livePreview?" on":"")});
       liveTogBtn._lbl=mk("span",{}, {textContent:S.livePreview?"Preview On":"Preview Off"});
       liveTogBtn.appendChild(liveTogBtn._lbl);
-      const liveInfo=infoIcon("Live Preview: watch the video appear while it samples. Each step is decoded with a tiny TAEH3 model on the CPU, so generation takes a little longer.\nNeeds taeh3.safetensors in a ComfyUI models/vae_approx folder - download it from huggingface.co/Kijai/MiniMax-H3-TAE. If your copy lives in a subfolder, pick it under Settings: Live Preview decoder.\nNot available with the Turbo preset or in Image mode.");
+      const liveInfo=infoIcon("Live Preview: the clip plays in the preview box while it samples, decoded each step with the tiny TAEH3 model.\nNeeds taeh3.safetensors in a ComfyUI models/vae_approx folder - download it from huggingface.co/Kijai/MiniMax-H3-TAE. If your copy lives in a subfolder, pick it under Settings: Live Preview decoder.\nThe dropdown picks preview size and frame count. Fast is the lightest, Detailed looks best but slows generation the most.\nNot available with the Turbo preset or in Image mode.");
+      const lpModeSel=mk("select",{height:"20px",borderRadius:"8px",background:"#1a1a1a",color:"#c9c9c9",border:"1px solid var(--h3-line2)",fontSize:"9px",padding:"0 4px",cursor:"pointer",outline:"none"});
+      Object.keys(LP_PRESETS).forEach(k=>{
+        const o=mk("option",{}, {value:k,textContent:LP_PRESETS[k].label});
+        lpModeSel.appendChild(o);
+      });
+      lpModeSel.value=(S.livePreviewMode&&LP_PRESETS[S.livePreviewMode])?S.livePreviewMode:"balanced";
+      lpModeSel.title="Live Preview quality. Fast: 384px, 6 frames, lightest. Balanced: 512px, 10 frames. Detailed: 768px, 10 frames, heaviest.";
+      lpModeSel.onchange=()=>{ S.livePreviewMode=lpModeSel.value; persist(); };
       const _syncLiveToggle=()=>{
         const hidden=S.mode==="image";
         liveTogWrap.style.display=hidden?"none":"flex";
@@ -2947,7 +2963,7 @@ app.registerExtension({
         persist();
         _syncLiveToggle();
       };
-      liveTogWrap.append(liveTogBtn,liveInfo);
+      liveTogWrap.append(liveTogBtn,lpModeSel,liveInfo);
       _syncLiveToggle();
       _checkTae();
       galleryRefresh.style.height="26px";
@@ -3438,12 +3454,15 @@ app.registerExtension({
         }
         _insertModelPatches(wf);
         if(S.livePreview){
-          wf["lp"]={class_type:"H3StudioTAEH3Preview",inputs:{
+          const lpSet=(S.livePreviewMode&&LP_PRESETS[S.livePreviewMode])?LP_PRESETS[S.livePreviewMode]:LP_PRESETS.balanced;
+          wf["lp"]={class_type:"H3OneTAELivePreview",inputs:{
             model:wf["5"].inputs.model,
             enabled:true,
             tiny_vae:S.models.tae||"taeh3.safetensors",
-            max_resolution:768,
-            jpeg_quality:85,
+            max_resolution:lpSet.res,
+            preview_frames:lpSet.frames,
+            fps:S.fps||24,
+            quality:80,
             preview_every_n_steps:1,
           },_meta:{title:"Live Preview (TAEH3)"}};
           wf["5"].inputs.model=["lp",0];
@@ -3751,12 +3770,15 @@ app.registerExtension({
         }
         wf["s:5"].inputs.model=modelSrc;
         if(S.livePreview){
-          wf["s:lp"]={class_type:"H3StudioTAEH3Preview",inputs:{
+          const lpSet=(S.livePreviewMode&&LP_PRESETS[S.livePreviewMode])?LP_PRESETS[S.livePreviewMode]:LP_PRESETS.balanced;
+          wf["s:lp"]={class_type:"H3OneTAELivePreview",inputs:{
             model:modelSrc,
             enabled:true,
             tiny_vae:S.models.tae||"taeh3.safetensors",
-            max_resolution:768,
-            jpeg_quality:85,
+            max_resolution:lpSet.res,
+            preview_frames:lpSet.frames,
+            fps:S.fps||24,
+            quality:80,
             preview_every_n_steps:1,
           },_meta:{title:"Live Preview (TAEH3)"}};
           wf["s:5"].inputs.model=["s:lp",0];
@@ -4076,7 +4098,7 @@ app.registerExtension({
     if(max>0&&_activeSetStage) _activeSetStage("Sampling...",8+Math.round(value/max*86));
   });
 
-  api.addEventListener("h3studio-preview",(evt)=>{
+  api.addEventListener("h3one-preview",(evt)=>{
     const node=_activeNode;
     if(!node||!node._h3_lpOn) return;
     const d=evt.detail||{};
