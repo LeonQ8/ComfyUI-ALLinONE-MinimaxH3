@@ -241,11 +241,12 @@ function Toggle(labelTxt,checked,onChange,infoTxt){
 
 function MiniToggle(checked,onChange,label){
   const track=mk("div",{width:"26px",height:"14px",borderRadius:"7px",
-    background:checked?C.lime:C.dim,cursor:"pointer",position:"relative",
-    transition:"background .2s",flexShrink:"0",outline:"none"});
+    background:checked?C.lime:C.bg3,cursor:"pointer",position:"relative",
+    border:`1px solid ${checked?"transparent":C.borderH}`,boxSizing:"border-box",
+    transition:"background .2s,border-color .2s",flexShrink:"0",outline:"none"});
   const thumb=mk("div",{position:"absolute",top:"2px",left:checked?"14px":"2px",
     width:"10px",height:"10px",borderRadius:"50%",
-    background:checked?"#111":"#888",transition:"left .2s,background .2s",pointerEvents:"none"});
+    background:checked?"#111":"#aaa",transition:"left .2s,background .2s",pointerEvents:"none"});
   track.appendChild(thumb);
   track.setAttribute("role","switch");
   track.setAttribute("aria-checked",String(!!checked));
@@ -253,9 +254,10 @@ function MiniToggle(checked,onChange,label){
   track.tabIndex=0;
   let val=!!checked;
   const _render=()=>{
-    track.style.background=val?C.lime:C.dim;
+    track.style.background=val?C.lime:C.bg3;
+    track.style.borderColor=val?"transparent":C.borderH;
     thumb.style.left=val?"14px":"2px";
-    thumb.style.background=val?"#111":"#888";
+    thumb.style.background=val?"#111":"#aaa";
     track.setAttribute("aria-checked",String(val));
   };
   const _toggle=()=>{ val=!val; _render(); onChange(val); };
@@ -2501,7 +2503,6 @@ app.registerExtension({
             _renderLoras();
           };
           if(!lr.name && S.loras.length<=1) rm.style.display="none";
-          if(!lr.name) tgl.el.style.display="none";
           row.append(dd.el,stNI,tgl.el,rm);
           loraRowsWrap.appendChild(row);
           loraRows.push(row);
