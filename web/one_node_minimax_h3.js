@@ -2634,12 +2634,28 @@ app.registerExtension({
         if(dim) tx(liveTxt,"Waiting for frame");
         else tx(liveTxt,"Live preview");
       };
+      let _lpFrames=[], _lpFps=24, _lpIdx=0, _lpTimer=null;
+      const _lpStop=()=>{ if(_lpTimer){ clearInterval(_lpTimer); _lpTimer=null; } };
       self._h3_lpFrame=(d)=>{
         if(_cmpMode) _exitCompare();
         errorBox.style.display="none";
         vidEl.style.display="none";vidEl.pause();vidEl.src="";
         placeholder.style.display="none";
-        imgEl.src=d.image||"";imgEl.style.display="block";
+        _lpStop();
+        _lpFrames=Array.isArray(d.frames)&&d.frames.length?d.frames:[];
+        _lpFps=Number(d.fps)||24;
+        _lpIdx=0;
+        if(_lpFrames.length){
+          imgEl.src=_lpFrames[0];imgEl.style.display="block";
+          if(_lpFrames.length>1){
+            const delay=Math.max(34,Math.round(1000/_lpFps));
+            _lpTimer=setInterval(()=>{
+              _lpIdx++;
+              imgEl.src=_lpFrames[Math.min(_lpIdx,_lpFrames.length-1)];
+              if(_lpIdx>=_lpFrames.length-1) _lpStop();
+            },delay);
+          }
+        }
         const step=Number(d.step)||0, total=Number(d.total)||0;
         if(total>0){
           const pct=Math.min(97,Math.max(8,Math.round(step/total*90)));
@@ -2648,8 +2664,8 @@ app.registerExtension({
         }
         _showLiveChip(true,false);
       };
-      self._h3_lpReset=()=>{ _showLiveChip(true,true); };
-      self._h3_lpErr=(msg)=>{ _showLiveChip(false); showError(msg); };
+      self._h3_lpReset=()=>{ _lpStop(); _lpFrames=[]; _showLiveChip(true,true); };
+      self._h3_lpErr=(msg)=>{ _lpStop(); _showLiveChip(false); showError(msg); };
       previewBox.append(placeholder,vidEl,imgEl,errorBox,progWrap,previewMeta,liveChip);
       const comparerWrap=mk("div",{position:"absolute",inset:"0",display:"none",cursor:"col-resize",userSelect:"none",borderRadius:"10px",overflow:"hidden",zIndex:"3"},{tabIndex:"0",role:"slider","aria-label":"Image comparison position","aria-valuemin":"0","aria-valuemax":"100","aria-valuenow":"50"});
       const cmpBase=mk("video",{position:"absolute",inset:"0",width:"100%",height:"100%",objectFit:"contain",background:"#000",display:"none"},{muted:true,loop:true,preload:"auto"});
@@ -4105,7 +4121,7 @@ app.registerExtension({
     if(d.node_id!==node._h3_lpId) return;
     if(d.error){ if(node._h3_lpErr) node._h3_lpErr(String(d.error)); return; }
     if(d.reset){ if(node._h3_lpReset) node._h3_lpReset(); return; }
-    if(d.image){ if(node._h3_lpFrame) node._h3_lpFrame(d); }
+    if((Array.isArray(d.frames)&&d.frames.length)||d.image){ if(node._h3_lpFrame) node._h3_lpFrame(d); }
   });
 
   api.addEventListener("executed",(evt)=>{

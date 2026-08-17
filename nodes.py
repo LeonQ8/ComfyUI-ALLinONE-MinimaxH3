@@ -242,7 +242,7 @@ def _h3one_limit_latent(torch, value, max_resolution):
     return frames.reshape(b, t, c, latent_h, latent_w).permute(0, 2, 1, 3, 4)
 
 
-def _h3one_animated_webp(decoder, latent, max_frames, fps, quality):
+def _h3one_jpeg_frames(decoder, latent, max_frames, quality):
     from PIL import Image
 
     total = int(latent.shape[2])
@@ -251,17 +251,17 @@ def _h3one_animated_webp(decoder, latent, max_frames, fps, quality):
         indices = sorted({round(i * (total - 1) / (count - 1)) for i in range(count)})
     else:
         indices = [0]
-    frames = []
+    data_urls = []
+    width = height = 0
     for idx in indices:
         frame = decoder(latent[:, :, idx])
         pixels = frame[0].detach().float().clamp(0, 1).mul(255).byte().permute(1, 2, 0).cpu().numpy()
-        frames.append(Image.fromarray(pixels, mode="RGB"))
-    buffer = io.BytesIO()
-    fps_safe = max(8, min(30, int(fps)))
-    duration = max(34, min(500, round(1000 / fps_safe)))
-    frames[0].save(buffer, format="WEBP", quality=int(quality), save_all=True,
-                   append_images=frames[1:], duration=duration, loop=0)
-    return frames[0].width, frames[0].height, "data:image/webp;base64," + base64.b64encode(buffer.getvalue()).decode("ascii")
+        pil = Image.fromarray(pixels, mode="RGB")
+        buffer = io.BytesIO()
+        pil.save(buffer, format="JPEG", quality=int(quality), subsampling=0, optimize=False)
+        data_urls.append("data:image/jpeg;base64," + base64.b64encode(buffer.getvalue()).decode("ascii"))
+        width, height = pil.width, pil.height
+    return data_urls, width, height
 
 
 class _H3OnePreviewJob:
@@ -314,24 +314,24 @@ class _H3OnePreviewWrapper:
         latent = _h3one_limit_latent(torch, job.latent, self.max_resolution)
         decoder = self._load()
         with torch.inference_mode():
-            width, height, data_url = _h3one_animated_webp(decoder, latent, self.frames, self.fps, self.quality)
+            frames, width, height = _h3one_jpeg_frames(decoder, latent, self.frames, self.quality)
         if job.run_id != self.active_run_id:
             return
         PromptServer.instance.send_sync(
             "h3one-preview",
             {
                 "node_id": self.node_id,
-                "image": data_url,
-                "step": job.step + 1,
-                "total": job.total_steps,
+                "frames": frames,
+                "fps": int(self.fps),
                 "width": width,
                 "height": height,
+                "step": job.step + 1,
+                "total": job.total_steps,
                 "run_id": job.run_id,
                 "elapsed_seconds": job.elapsed_seconds,
                 "average_step_seconds": job.average_step_seconds,
                 "eta_seconds": max(0.0, job.average_step_seconds * (job.total_steps - job.step - 1)),
             },
-            PromptServer.instance.client_id,
         )
 
     def _worker_main(self):
@@ -400,7 +400,6 @@ class _H3OnePreviewWrapper:
             PromptServer.instance.send_sync(
                 "h3one-preview",
                 {"node_id": self.node_id, "run_id": run_id, "error": str(message)[:500]},
-                PromptServer.instance.client_id,
             )
         except Exception:
             pass
@@ -409,7 +408,6 @@ class _H3OnePreviewWrapper:
         PromptServer.instance.send_sync(
             "h3one-preview",
             {"node_id": self.node_id, "run_id": run_id, "total": int(total_steps), "reset": True},
-            PromptServer.instance.client_id,
         )
 
     def __call__(self, executor, noise, latent_image, sampler, sigmas, denoise_mask, callback, disable_pbar, seed, latent_shapes):
