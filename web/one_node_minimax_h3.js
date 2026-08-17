@@ -1275,7 +1275,7 @@ app.registerExtension({
         meta.append(mBadge,mTime,mInfo,mGen,mSeedCopy);
         if(it.quality==="turbo"){
           const mTurbo=mk("span",{fontSize:"9px",fontWeight:"700",letterSpacing:".06em",color:"#ffc266",border:"1px solid rgba(255,194,102,.45)",borderRadius:"5px",padding:"2px 8px",background:"rgba(255,194,102,.1)"});
-          tx(mTurbo,"⚡ Turbo LoRA");
+          tx(mTurbo,"Turbo LoRA");
           meta.insertBefore(mTurbo,mTime);
         }
         const secPrompt=mk("div",{display:"flex",flexDirection:"column",gap:"6px",flexShrink:"0"});
