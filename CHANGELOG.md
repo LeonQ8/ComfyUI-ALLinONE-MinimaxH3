@@ -2,9 +2,11 @@
 
 Newest first.
 
-## 0.5.2 (2026-08-17)
+## 0.5.2 (2026-08-18)
 
 Each LoRA now has an on/off switch, and the Advanced panel has an Enable all / Disable all button. Disabled LoRAs keep their row but skip loading, so you can stack up to 10 LoRAs and switch between setups without deleting them. Turning a LoRA off also removes its trigger words from the prompt.
+
+Known issues: Chain mode can have issues, will be looked at in future releases. Images made with Image workflows can show black in the History, will be fixed in future releases.
 
 ## 0.5.1 (2026-08-17)
 
