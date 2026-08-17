@@ -1300,8 +1300,33 @@ app.registerExtension({
             const v=mk("img",{width:"100%",height:"100%",maxHeight:"100%",borderRadius:"8px",background:"#000",objectFit:"contain",outline:"none",display:"block",flex:"1 1 0",minHeight:"180px"},{src:vurl,alt:"Generated image"});
             secResult.appendChild(v);
           } else {
+            const wrapV=mk("div",{position:"relative",flex:"1 1 0",minHeight:"0",display:"flex",flexDirection:"column"});
             const v=mk("video",{width:"100%",flex:"1 1 0",minHeight:"0",height:"0",borderRadius:"8px",background:"#000",objectFit:"contain",outline:"none"},{controls:true,src:vurl});
-            secResult.appendChild(v);
+            const exBtn=mk("button",{position:"absolute",top:"8px",right:"8px",background:"rgba(12,12,12,.82)",border:`1px solid rgba(192,169,150,.5)`,borderRadius:"7px",padding:"4px 10px",fontSize:"9px",fontWeight:"700",color:C.lime,cursor:"pointer",outline:"none",display:"flex",alignItems:"center",gap:"5px",backdropFilter:"blur(6px)",zIndex:"2",transition:"border-color .15s"});
+            tx(exBtn,"Send to Extend");
+            exBtn.onmouseenter=()=>{exBtn.style.borderColor=C.lime;};
+            exBtn.onmouseleave=()=>{exBtn.style.borderColor="rgba(192,169,150,.5)";};
+            exBtn.onclick=async()=>{
+              exBtn.disabled=true;tx(exBtn,"Sending...");
+              try{
+                const stage=await fetch("/h3one/stage_input",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({filename:it.video,subfolder:it.subfolder||"",type:fileType})});
+                const sd=await stage.json();
+                if(!sd.ok) throw new Error(sd.error||"Could not copy the video");
+                S.extendVideo=sd.name;
+                persist();
+                exSlot._restorePreview(sd.name);
+                closeOverlayFade(historyOverlay);
+                _switchMode("extend");
+              }catch(e){
+                exBtn.disabled=false;
+                tx(exBtn,"File missing");
+                exBtn.style.borderColor="rgba(220,80,80,.6)";
+                exBtn.style.color="#ff8a8a";
+                setTimeout(()=>{tx(exBtn,"Send to Extend");exBtn.style.borderColor="rgba(192,169,150,.5)";exBtn.style.color=C.lime;},2600);
+              }
+            };
+            wrapV.append(v,exBtn);
+            secResult.appendChild(wrapV);
           }
         } else {
           const none=mk("div",{fontSize:"10px",color:C.muted});tx(none,"No video recorded.");

@@ -651,15 +651,19 @@ async def get_gallery(request):
 
 @PromptServer.instance.routes.post("/h3one/stage_input")
 async def stage_input(request):
-    """Copy an existing output video into the input folder so LoadVideo can read it
-    (used by the upscale hook). Returns the input-folder filename."""
+    """Copy an existing output or temp video into the input folder so LoadVideo can
+    read it (used by the upscale hook and Send to Extend). Returns the input-folder
+    filename."""
     try:
         data = await request.json()
         filename = data.get("filename", "")
         subfolder = data.get("subfolder", "")
         if not filename:
             return web.json_response({"ok": False, "error": "no filename"}, status=400)
-        src = _safe_join(_get_output_dir(), subfolder, filename)
+        if data.get("type") == "temp":
+            src = _safe_join(str(Path(folder_paths.get_temp_directory()).resolve()), subfolder, filename)
+        else:
+            src = _safe_join(_get_output_dir(), subfolder, filename)
         if not os.path.isfile(src):
             return web.json_response({"ok": False, "error": "not found"}, status=404)
         input_dir = Path(folder_paths.get_input_directory()).resolve()
