@@ -2,6 +2,10 @@
 
 Newest first.
 
+## 0.5.1 (2026-08-17)
+
+Fixed a bug where the node could still use an old photo right after you added a new one. The new photo now always loads before generation starts, and if loading fails the old photo stays instead of silently breaking.
+
 ## 0.5.0 (2026-08-17)
 
 Image Edit and Reference Mix now include a Compare slider for checking the source against the result. Image mode now shows one final still instead of the internal frame batch. Upscaling in Image workflows is currently broken and will be fixed in a later release.

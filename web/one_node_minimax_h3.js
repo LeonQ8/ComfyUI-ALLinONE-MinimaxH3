@@ -385,7 +385,7 @@ function ImgSlot(optional,onFile){
   wrap.append(icoWrap,prevEl,rm,inp);
   wrap.onmouseenter=()=>{wrap.style.borderColor=C.lime;};
   wrap.onmouseleave=()=>{wrap.style.borderColor=C.border;};
-  wrap.onclick=()=>inp.click();
+  wrap.onclick=()=>{inp.value="";inp.click();};
   let _dragDepth=0;
   wrap.addEventListener("dragenter",e=>{e.preventDefault();e.stopPropagation();_dragDepth++;wrap.style.borderColor=C.lime;wrap.style.background=C.bg1;});
   wrap.addEventListener("dragover",e=>{e.preventDefault();e.stopPropagation();});
@@ -403,12 +403,23 @@ function ImgSlot(optional,onFile){
   const _load=async(file)=>{
     const objUrl=URL.createObjectURL(file);
     _showLoaded(objUrl,file.name);
-    const fd=new FormData();fd.append("image",file);fd.append("overwrite","true");
+    const prev=_currentName;
     try{
-      const r=await api.fetchApi("/upload/image",{method:"POST",body:fd});
-      const d=await r.json();_currentName=d.name||file.name;
+      _currentName=await _uploadImage(file);
       onFile(_currentName);
-    }catch(err){console.warn("[H3One] upload:",err);_currentName=file.name;onFile(_currentName);}
+    }catch(err){
+      console.warn("[H3One] upload:",err);
+      if(prev){
+        _currentName=prev;
+        _restorePreview(prev);
+      } else {
+        _currentName=null;
+        prevEl.src="";prevEl.style.display="none";
+        icoWrap.style.display="flex";rm.style.display="none";
+        wrap.style.borderColor=C.border;
+      }
+      if(_h3ShowError)_h3ShowError("Image upload failed: "+fmtErr(err)+"\nThe previous image was kept.");
+    }finally{inp.value="";}
   };
   inp.onchange=()=>{if(inp.files[0])_load(inp.files[0]);};
   rm.onclick=e=>{
@@ -419,7 +430,7 @@ function ImgSlot(optional,onFile){
   };
   const _restorePreview=(name)=>{
     if(!name) return;
-    const src=api.apiURL(`/view?filename=${encodeURIComponent(name)}&type=input&subfolder=`);
+    const src=api.apiURL(`/view?filename=${encodeURIComponent(name)}&type=input&subfolder=&t=${Date.now()}`);
     _currentName=name;
     _showLoaded(src,name);
   };
@@ -611,6 +622,20 @@ function MediaSlot(type,onFile){
   wrap._restorePreview=_restorePreview;
   return wrap;
 }
+
+let _uploadsPending=0;
+let _h3ShowError=null;
+const _uploadImage=async(file)=>{
+  _uploadsPending++;
+  try{
+    const fd=new FormData();fd.append("image",file);fd.append("overwrite","true");
+    const r=await api.fetchApi("/upload/image",{method:"POST",body:fd});
+    if(!r.ok) throw new Error("upload failed (HTTP "+r.status+")");
+    const d=await r.json();
+    if(!d||!d.name) throw new Error("upload returned no filename");
+    return d.name;
+  }finally{_uploadsPending--;}
+};
 
 function loadState(){ try{return JSON.parse(localStorage.getItem(LS_KEY)||"{}");}catch(e){return{};} }
 function saveState(s){ try{localStorage.setItem(LS_KEY,JSON.stringify(s));}catch(e){} }
@@ -1863,13 +1888,14 @@ app.registerExtension({
             upImg.value="";
             upImg.onchange=async()=>{
               if(!upImg.files[0]) return;
-              const fd=new FormData();fd.append("image",upImg.files[0]);fd.append("overwrite","true");
               try{
-                const r=await api.fetchApi("/upload/image",{method:"POST",body:fd});
-                const d=await r.json();
-                S.imgRefs.push(d.name||upImg.files[0].name);
+                S.imgRefs.push(await _uploadImage(upImg.files[0]));
                 persist();
-              }catch(e){ console.warn(e); }
+              }catch(e){
+                console.warn(e);
+                if(_h3ShowError)_h3ShowError("Image upload failed: "+fmtErr(e));
+              }
+              upImg.value="";
               _renderImgRefs();
             };
             upImg.click();
@@ -1925,13 +1951,14 @@ app.registerExtension({
           upImg.value="";
           upImg.onchange=async()=>{
             if(!upImg.files[0]) return;
-            const fd=new FormData();fd.append("image",upImg.files[0]);fd.append("overwrite","true");
             try{
-              const r=await api.fetchApi("/upload/image",{method:"POST",body:fd});
-              const d=await r.json();
-              S.refImages.push(d.name||upImg.files[0].name);
+              S.refImages.push(await _uploadImage(upImg.files[0]));
               persist();
-            }catch(e){ console.warn(e); }
+            }catch(e){
+              console.warn(e);
+              if(_h3ShowError)_h3ShowError("Image upload failed: "+fmtErr(e));
+            }
+            upImg.value="";
             _renderRefs();
           };
           upImg.click();
@@ -2995,6 +3022,7 @@ app.registerExtension({
         errorBox.append(title,body);
         vidEl.style.display="none";imgEl.style.display="none";placeholder.style.display="none";
       };
+      _h3ShowError=showError;
       const showOutput=(item)=>{
         errorBox.style.display="none";
         if(S.seed!==undefined&&S.seed!==null&&S.seed!=="") _seedByFile[item.filename]=S.seed;
@@ -3645,6 +3673,14 @@ app.registerExtension({
           showError(`Live Preview is on but the decoder "${S.models.tae}" was not found in a ComfyUI models/vae_approx folder.\nOpen Settings to pick the Live Preview decoder, download taeh3.safetensors from huggingface.co/Kijai/MiniMax-H3-TAE, or turn Live Preview off.`);
           return;
         }
+        if(_uploadsPending>0){
+          let _wait=0;
+          while(_uploadsPending>0&&_wait<200){
+            setStage("Waiting for image upload...",4);
+            await new Promise(res=>setTimeout(res,100));
+            _wait++;
+          }
+        }
         try{
           const n=Math.max(1,Math.min(4,S.batch||1));
           const ids=[];
@@ -3836,14 +3872,11 @@ app.registerExtension({
           else lastSlot.loadFile(file);
         } else if(S.mode==="r2v"){
           if(S.refImages.length>=9) return;
-          const fd=new FormData();fd.append("image",file);fd.append("overwrite","true");
           try{
-            const r=await api.fetchApi("/upload/image",{method:"POST",body:fd});
-            const d=await r.json();
-            S.refImages.push(d.name||file.name);
+            S.refImages.push(await _uploadImage(file));
             persist();
             _renderRefs();
-          }catch(err){ console.warn("[H3One] paste upload:",err); }
+          }catch(err){ console.warn("[H3One] paste upload:",err); if(_h3ShowError)_h3ShowError("Pasted image upload failed: "+fmtErr(err)); }
         } else if(S.mode==="keyframes"){
           let empty=S.kf.find(k=>!k.img);
           if(!empty){
@@ -3851,13 +3884,10 @@ app.registerExtension({
             empty={img:null,pos:Math.min(9999,(S.kf.length+1)*62)};
             S.kf.push(empty);
           }
-          const fd=new FormData();fd.append("image",file);fd.append("overwrite","true");
           try{
-            const r=await api.fetchApi("/upload/image",{method:"POST",body:fd});
-            const d=await r.json();
-            empty.img=d.name||file.name;
+            empty.img=await _uploadImage(file);
             persist();_renderKf();
-          }catch(err){ console.warn("[H3One] paste upload:",err); }
+          }catch(err){ console.warn("[H3One] paste upload:",err); if(_h3ShowError)_h3ShowError("Pasted image upload failed: "+fmtErr(err)); }
         }
       },{capture:true});
 
