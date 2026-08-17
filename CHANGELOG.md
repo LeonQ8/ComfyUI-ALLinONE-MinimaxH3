@@ -2,6 +2,16 @@
 
 Newest first.
 
+## 0.6.0 (2026-08-18)
+
+- The Text Encoder list now only shows the model H3 actually uses.
+- New FPS setting under Duration controls frame count and output framerate.
+- Right-click a video in the Library or Gallery to send it straight into Extend mode.
+- Videos in the History page now have a Send to Extend button.
+- Reference image and video thumbs keep their real aspect ratio instead of being cropped square.
+- The Seed field clamps to the maximum the H3 model accepts.
+- A Resolution chip appears on the preview.
+
 ## 0.5.2 (2026-08-18)
 
 Each LoRA now has an on/off switch, and the Advanced panel has an Enable all / Disable all button. Disabled LoRAs keep their row but skip loading, so you can stack up to 10 LoRAs and switch between setups without deleting them.
