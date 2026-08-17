@@ -236,7 +236,10 @@ def _h3one_limit_latent(torch, value, max_resolution):
     scale = float(max_resolution) / longest
     latent_h = max(1, round(value.shape[-2] * scale))
     latent_w = max(1, round(value.shape[-1] * scale))
-    return torch.nn.functional.interpolate(value, size=(latent_h, latent_w), mode="bilinear", align_corners=False)
+    b, c, t, h, w = value.shape
+    frames = value.permute(0, 2, 1, 3, 4).reshape(b * t, c, h, w)
+    frames = torch.nn.functional.interpolate(frames, size=(latent_h, latent_w), mode="bilinear", align_corners=False)
+    return frames.reshape(b, t, c, latent_h, latent_w).permute(0, 2, 1, 3, 4)
 
 
 def _h3one_animated_webp(decoder, latent, max_frames, fps, quality):
