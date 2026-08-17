@@ -2701,7 +2701,7 @@ app.registerExtension({
           _kjMp4Url=URL.createObjectURL(_kjB64Blob(d.image,mime));
           imgEl.style.display="none";
           vidEl.style.display="block";
-          vidEl.muted=true;vidEl.loop=true;vidEl.controls=false;
+          vidEl.muted=true;vidEl.loop=true;vidEl.controls=true;vidEl.playsInline=true;
           vidEl.src=_kjMp4Url;
           vidEl.play().catch(()=>{});
         } else if(mime==="image/webp"){
@@ -3076,6 +3076,7 @@ app.registerExtension({
           return;
         }
         vidEl.onloadedmetadata=()=>_updateResolutionChip(vidEl.videoWidth,vidEl.videoHeight);
+        vidEl.controls=true;vidEl.muted=false;vidEl.loop=false;
         vidEl.src=url;vidEl.style.display="block";imgEl.style.display="none";
         placeholder.style.display="none";errorBox.style.display="none";
         _updateSeedChip(item.filename);
