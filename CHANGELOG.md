@@ -2,6 +2,10 @@
 
 Newest first.
 
+## 0.5.0 (2026-08-17)
+
+Image Edit and Reference Mix now include a Compare slider for checking the source against the result. Image mode now shows one final still instead of the internal frame batch.
+
 ## 0.4.2 (2026-08-17)
 
 Minor fixes.
