@@ -7,6 +7,7 @@ Newest first.
 - The Text Encoder list now only shows the model H3 actually uses.
 - New FPS setting under Duration controls frame count and output framerate.
 - Right-click a video in the Library or Gallery to send it straight into Extend mode.
+- Extend results are auto-staged so you can chain extends.
 - Videos in the History page now have a Send to Extend button.
 - Reference image and video thumbs keep their real aspect ratio instead of being cropped square.
 - The Seed field clamps to the maximum the H3 model accepts.
