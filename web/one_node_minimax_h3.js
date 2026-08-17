@@ -2986,6 +2986,7 @@ app.registerExtension({
           S.extendVideo=sd.name;
           persist();
           exSlot._restorePreview(sd.name);
+          if(libraryOverlay.style.display!=="none"){ libLightbox.style.display="none"; closeOverlayFade(libraryOverlay); }
           if(selectMode) _switchMode("extend");
         }catch(e){
           showError("Could not send video to Extend: "+fmtErr(e));
