@@ -1797,11 +1797,24 @@ app.registerExtension({
       const imgMPNI=NI("",S.imgMP,0.2,4,0.05,v=>{S.imgMP=v;persist();},"62px");
       const imgMPLbl=mk("div",{fontSize:"9px",color:C.muted,flexShrink:"0"});tx(imgMPLbl,"MP");
       const imgCustom=mk("div",{display:"none",alignItems:"center",gap:"6px",width:"100%"});
-      const imgCW=NI("",S.imgW,32,16384,32,v=>{S.imgW=Math.max(32,Math.round(v/32)*32);persist();},"62px");
-      const imgCH=NI("",S.imgH,32,16384,32,v=>{S.imgH=Math.max(32,Math.round(v/32)*32);persist();},"62px");
+      const _alignImgDimension=v=>Math.max(32,Math.round(v/32)*32);
+      const _syncImgCustomMP=()=>{
+        if(S.imgAspect!=="Custom") return;
+        const w=_alignImgDimension(S.imgW||1024),h=_alignImgDimension(S.imgH||1024);
+        imgMPNI.setVal(((w*h)/1e6).toFixed(2));
+      };
+      const imgCW=NI("",S.imgW,32,16384,32,v=>{S.imgW=_alignImgDimension(v);_syncImgCustomMP();persist();},"62px");
+      const imgCH=NI("",S.imgH,32,16384,32,v=>{S.imgH=_alignImgDimension(v);_syncImgCustomMP();persist();},"62px");
       const imgX=mk("div",{fontSize:"10px",color:C.muted,flexShrink:"0"});tx(imgX,"x");
       imgCustom.append(imgCW,imgX,imgCH,mk("div",{fontSize:"9px",color:C.muted}, {textContent:"px (custom)"}));
-      const _updImgCustom=()=>{ imgCustom.style.display=S.imgAspect==="Custom"?"flex":"none"; imgMPNI._inp.disabled=S.imgAspect==="Custom"; imgMPNI.style.opacity=S.imgAspect==="Custom"?"0.5":""; };
+      const _updImgCustom=()=>{
+        const custom=S.imgAspect==="Custom";
+        imgCustom.style.display=custom?"flex":"none";
+        imgMPNI._inp.disabled=custom;
+        imgMPNI.style.opacity=custom?"0.5":"";
+        if(custom) _syncImgCustomMP();
+        else imgMPNI.setVal(Number(S.imgMP)||1);
+      };
       _updImgCustom();
       imgGeomRow.append(imgAspectDD.el,imgMPNI,imgMPLbl);
       imgSubRow.appendChild(imgGeomRow);
@@ -3247,8 +3260,9 @@ app.registerExtension({
         }
         S.imgLastW=w;S.imgLastH=h;
         dir.width=w;dir.height=h;
-        dir.aspect_ratio=S.imgAspect==="Custom"?"1:1":S.imgAspect;
-        dir.megapixels=Number(S.imgMP)||1;
+        const customAspect=S.imgAspect==="Custom";
+        dir.aspect_ratio=customAspect?"custom":S.imgAspect;
+        dir.megapixels=customAspect?(w*h)/1e6:(Number(S.imgMP)||1);
         dir.seed=S.seed||0;
         dir.sampling_profile=S.imgProfile==="custom"?"base_quality_20":(S.imgProfile||"base_quality_20");
         dir.frame_profile="recommended_5";
