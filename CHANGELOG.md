@@ -2,6 +2,10 @@
 
 Newest first.
 
+## 0.5.2 (2026-08-17)
+
+Each LoRA now has an on/off switch, and the Advanced panel has an Enable all / Disable all button. Disabled LoRAs keep their row but skip loading, so you can stack up to 10 LoRAs and switch between setups without deleting them. Turning a LoRA off also removes its trigger words from the prompt.
+
 ## 0.5.1 (2026-08-17)
 
 Fixed a bug where the node could still use an old photo right after you added a new one. The new photo now always loads before generation starts, and if loading fails the old photo stays instead of silently breaking.

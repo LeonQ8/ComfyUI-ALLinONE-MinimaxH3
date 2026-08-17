@@ -239,6 +239,35 @@ function Toggle(labelTxt,checked,onChange,infoTxt){
   return{el:wrap,get value(){return val;},_setChecked};
 }
 
+function MiniToggle(checked,onChange,label){
+  const track=mk("div",{width:"26px",height:"14px",borderRadius:"7px",
+    background:checked?C.lime:C.dim,cursor:"pointer",position:"relative",
+    transition:"background .2s",flexShrink:"0",outline:"none"});
+  const thumb=mk("div",{position:"absolute",top:"2px",left:checked?"14px":"2px",
+    width:"10px",height:"10px",borderRadius:"50%",
+    background:checked?"#111":"#888",transition:"left .2s,background .2s",pointerEvents:"none"});
+  track.appendChild(thumb);
+  track.setAttribute("role","switch");
+  track.setAttribute("aria-checked",String(!!checked));
+  if(label) track.setAttribute("aria-label",label);
+  track.tabIndex=0;
+  let val=!!checked;
+  const _render=()=>{
+    track.style.background=val?C.lime:C.dim;
+    thumb.style.left=val?"14px":"2px";
+    thumb.style.background=val?"#111":"#888";
+    track.setAttribute("aria-checked",String(val));
+  };
+  const _toggle=()=>{ val=!val; _render(); onChange(val); };
+  track.onclick=_toggle;
+  track.onkeydown=e=>{ if(e.key===" "||e.key==="Enter"){ e.preventDefault(); _toggle(); } };
+  track.onfocus=()=>{ track.style.boxShadow=`0 0 0 2px rgba(var(--h3accent-rgb),.35)`; };
+  track.onblur=()=>{ track.style.boxShadow="none"; };
+  track.onmouseenter=()=>{ track.style.boxShadow=`0 0 0 2px rgba(var(--h3accent-rgb),.2)`; };
+  track.onmouseleave=()=>{ if(document.activeElement!==track) track.style.boxShadow="none"; };
+  return{el:track,get value(){return val;},_setChecked(v){val=!!v;_render();}};
+}
+
 function DD(items,selected,onChange){
   let val=selected;
   const wrap=mk("div",{position:"relative",width:"100%",minWidth:"0",overflow:"hidden"});
@@ -778,7 +807,7 @@ app.registerExtension({
           seed:            (typeof saved.seed==="number")?saved.seed:0,
           randomizeSeed:   saved.randomizeSeed!==undefined?saved.randomizeSeed:true,
           batch:           saved.batch||1,
-          loras:          (()=>{ const arr=Array.isArray(saved.loras)?saved.loras:[]; const named=arr.filter(l=>l&&l.name); return named.concat([{name:"",strength:1}]); })(),
+          loras:          (()=>{ const arr=Array.isArray(saved.loras)?saved.loras:[]; const named=arr.filter(l=>l&&l.name); return named.concat([{name:"",strength:1,enabled:true}]); })(),
           firstFrame:      saved.firstFrame||null,
           lastFrame:       saved.lastFrame||null,
           refImages:       Array.isArray(saved.refImages)?saved.refImages:[],
@@ -2346,7 +2375,7 @@ app.registerExtension({
         if(typeof _syncLiveToggle==="function") _syncLiveToggle();
         if(ms.resolution!==undefined){ S.resolution=ms.resolution; resDD.set(ms.resolution); _updResCustom(); }
         if(ms.duration!==undefined){ S.duration=ms.duration; durNI._inp.value=String(ms.duration); _updateFramesLabel(); }
-        if(Array.isArray(ms.loras)){ const named=ms.loras.filter(l=>l&&l.name); S.loras=named.concat([{name:"",strength:1}]); _renderLoras(); }
+        if(Array.isArray(ms.loras)){ const named=ms.loras.filter(l=>l&&l.name); S.loras=named.concat([{name:"",strength:1,enabled:true}]); _renderLoras(); }
         if(Array.isArray(ms.refImages)) S.refImages=ms.refImages.slice();
         if(Array.isArray(ms.refVideos)) S.refVideos=ms.refVideos.map(v=>(typeof v==="string")?{name:v,useAudio:false}:{name:(v&&v.name)||"",useAudio:!!(v&&v.useAudio)});
         if(Array.isArray(ms.refAudios)) S.refAudios=ms.refAudios.slice();
@@ -2372,10 +2401,14 @@ app.registerExtension({
       const loraHdr=mk("div",{display:"flex",alignItems:"center",justifyContent:"space-between",cursor:"pointer",userSelect:"none"});
       const loraTitle=mk("div",{fontSize:"9px",fontWeight:"700",letterSpacing:".1em",textTransform:"uppercase",color:C.muted});
       tx(loraTitle,"Advanced");
-      const loraSub=mk("div",{fontSize:"10px",color:C.muted,marginLeft:"auto",marginRight:"8px"});tx(loraSub,"LoRAs — none loaded");
+      const loraSub=mk("div",{fontSize:"10px",color:C.muted,marginLeft:"auto",marginRight:"6px"});tx(loraSub,"LoRAs — none loaded");
+      const loraGlob=mk("button",{fontSize:"9px",fontWeight:"700",color:C.muted,border:`1px solid ${C.border}`,background:"transparent",borderRadius:"6px",padding:"2px 8px",cursor:"pointer",marginRight:"6px",outline:"none",transition:"color .15s,border-color .15s,opacity .15s"},{type:"button"});
+      tx(loraGlob,"Enable all");
+      loraGlob.onmouseenter=()=>{ if(!loraGlob.disabled){ loraGlob.style.borderColor=C.lime; loraGlob.style.color=C.lime; } };
+      loraGlob.onmouseleave=()=>{ loraGlob.style.borderColor=C.border; loraGlob.style.color=C.muted; };
       const loraChev=mk("span",{color:C.dim,fontSize:"10px",flexShrink:"0"});
       tx(loraChev,"▾");
-      loraHdr.append(loraTitle,loraSub,loraChev);
+      loraHdr.append(loraTitle,loraSub,loraGlob,loraChev);
       const loraBody=mk("div",{display:"flex",flexDirection:"column",gap:"5px"});
       const loraRowsWrap=mk("div",{display:"flex",flexDirection:"column",gap:"5px"});
       loraBody.appendChild(loraRowsWrap);
@@ -2384,13 +2417,52 @@ app.registerExtension({
       addLoraBtn.onmouseenter=()=>{addLoraBtn.style.borderColor=C.lime;addLoraBtn.style.color=C.lime;};
       addLoraBtn.onmouseleave=()=>{addLoraBtn.style.borderColor="rgba(var(--h3accent-rgb),.4)";addLoraBtn.style.color="rgba(var(--h3accent-rgb),.7)";};
       addLoraBtn.onclick=()=>{
-        if(S.loras.length>=8) return;
-        S.loras.push({name:"",strength:1});
+        if(S.loras.filter(l=>l&&l.name).length>=10) return;
+        S.loras.push({name:"",strength:1,enabled:true});
         persist();
         _renderLoras();
       };
       loraBody.appendChild(addLoraBtn);
       loraArea.append(loraHdr,loraBody);
+      const _trigCache={};
+      const _stripLoraTriggers=async(lr)=>{
+        let trigs=_trigCache[lr.name];
+        if(!trigs){
+          try{
+            const r=await fetch(`/h3one/lora_triggers?name=${encodeURIComponent(lr.name)}`);
+            const d=await r.json();
+            if(d.ok&&Array.isArray(d.triggers)&&d.triggers.length){ trigs=d.triggers; _trigCache[lr.name]=trigs; }
+          }catch(e){ console.warn("[H3One] lora triggers:",e); }
+        }
+        if(!trigs||!trigs.length) return;
+        const esc=s=>String(s).replace(/[.*+?^${}()|[\]\\]/g,"\\$&");
+        const protectedSet=new Set();
+        S.loras.forEach(l=>{
+          if(!l||l===lr||!l.name||l.enabled===false) return;
+          (_trigCache[l.name]||[]).forEach(t=>{ if(t) protectedSet.add(t); });
+        });
+        const usable=trigs.filter(t=>t&&!protectedSet.has(t));
+        if(!usable.length) return;
+        let p=S.prompt||"";
+        const joined=trigs.join(", ");
+        let changed=false;
+        if(usable.length===trigs.length&&p.includes(", "+joined)){
+          p=p.replace(", "+joined,"");
+          changed=true;
+        } else if(usable.length===trigs.length&&p===joined){
+          p="";
+          changed=true;
+        } else {
+          usable.forEach(t=>{
+            const re=new RegExp("(^|[\\s,.;:!?()\\[\\]\"'])"+esc(t)+"($|[\\s,.;:!?()\\[\\]\"'])","g");
+            p=p.replace(re,(m,pre,post)=>{ changed=true; return pre+post; });
+          });
+        }
+        if(changed){
+          p=p.replace(/\s+/g," ").replace(/^\s*[,.;:]\s*/,"").replace(/\s*[,.;:](\s|$)/g,"$1").replace(/\(\s*\)|\[\s*\]/g,"").replace(/\s{2,}/g," ").trim();
+          _setPrompt(p);
+        }
+      };
       const loraRows=[];
       const _renderLoras=()=>{
         loraRows.forEach(r=>r.remove());
@@ -2404,6 +2476,7 @@ app.registerExtension({
                 const r=await fetch(`/h3one/lora_triggers?name=${encodeURIComponent(lr.name)}`);
                 const d=await r.json();
                 if(d.ok&&d.triggers&&d.triggers.length){
+                  _trigCache[lr.name]=d.triggers;
                   const tw=d.triggers.join(", ");
                   if(!(S.prompt||"").includes(tw)){
                     _setPrompt((S.prompt?S.prompt+" ":"")+tw);
@@ -2414,22 +2487,43 @@ app.registerExtension({
             _renderLoras();
           });
           const stNI=NI("",lr.strength,-3,3,0.1,v=>{lr.strength=Math.round(v*100)/100;persist();},"52px");
+          const tgl=MiniToggle(lr.enabled!==false,async v=>{
+            lr.enabled=v;persist();
+            if(!v) await _stripLoraTriggers(lr);
+            _renderLoras();
+          },"Enable/disable "+(lr.name?lr.name.split("/").pop():"this LoRA"));
           const rm=mk("button",{flexShrink:"0"}, {type:"button",className:"h3-rmbtn",title:"Remove this LoRA","aria-label":"Remove this LoRA"});
           tx(rm,"x");
           rm.onclick=()=>{
             S.loras.splice(idx,1);
-            if(!S.loras.length) S.loras=[{name:"",strength:1}];
+            if(!S.loras.length) S.loras=[{name:"",strength:1,enabled:true}];
             persist();
             _renderLoras();
           };
           if(!lr.name && S.loras.length<=1) rm.style.display="none";
-          row.append(dd.el,stNI,rm);
+          if(!lr.name) tgl.el.style.display="none";
+          row.append(dd.el,stNI,tgl.el,rm);
           loraRowsWrap.appendChild(row);
           loraRows.push(row);
         });
-        addLoraBtn.style.display=S.loras.length>=8?"none":"";
-        const _n=S.loras.filter(l=>l&&l.name).length;
-        tx(loraSub, _n?"LoRAs — "+_n+" loaded":"LoRAs — none loaded");
+        addLoraBtn.style.display=S.loras.filter(l=>l&&l.name).length>=10?"none":"";
+        const named=S.loras.filter(l=>l&&l.name);
+        const onCount=named.filter(l=>l.enabled!==false).length;
+        tx(loraSub, named.length?named.length+" selected · "+onCount+" on":"LoRAs — none loaded");
+        const allOn=named.length&&named.every(l=>l.enabled!==false);
+        tx(loraGlob, named.length?(allOn?"Disable all":"Enable all"):"Enable all");
+        loraGlob.disabled=!named.length;
+        loraGlob.style.opacity=named.length?"1":".35";
+        loraGlob.style.cursor=named.length?"pointer":"default";
+        loraGlob.style.borderColor=C.border;loraGlob.style.color=C.muted;
+      };
+      loraGlob.onclick=()=>{
+        const named=S.loras.filter(l=>l&&l.name);
+        if(!named.length) return;
+        const allOn=named.every(l=>l.enabled!==false);
+        named.forEach(l=>{l.enabled=!allOn;});
+        persist();
+        _renderLoras();
       };
       _renderLoras();
 
@@ -3177,7 +3271,7 @@ app.registerExtension({
         let modelSrc=["2",0];
         let nextId=100;
         const newId=()=>String(nextId++);
-        const actives=S.loras.filter(l=>l.name);
+        const actives=S.loras.filter(l=>l.name&&l.enabled!==false);
         actives.forEach(lr=>{
           const id=newId();
           wf[id]={class_type:"LoraLoaderModelOnly",inputs:{model:modelSrc,lora_name:lr.name,strength_model:lr.strength},_meta:{title:"LoRA"}};
@@ -3238,7 +3332,7 @@ app.registerExtension({
         let modelSrc=["3",0];
         let nextId=100;
         const newId=()=>String(nextId++);
-        S.loras.filter(l=>l.name).forEach(lr=>{
+        S.loras.filter(l=>l.name&&l.enabled!==false).forEach(lr=>{
           const id=newId();
           wf[id]={class_type:"LoraLoaderModelOnly",inputs:{model:modelSrc,lora_name:lr.name,strength_model:lr.strength},_meta:{title:"LoRA"}};
           modelSrc=[id,0];
@@ -3567,7 +3661,7 @@ app.registerExtension({
         let modelSrc=["s:2",0];
         let nextId=900;
         const newId=()=>String(nextId++);
-        const actives=S.loras.filter(l=>l.name);
+        const actives=S.loras.filter(l=>l.name&&l.enabled!==false);
         actives.forEach(lr=>{
           const id=newId();
           wf[id]={class_type:"LoraLoaderModelOnly",inputs:{model:modelSrc,lora_name:lr.name,strength_model:lr.strength},_meta:{title:"LoRA"}};
