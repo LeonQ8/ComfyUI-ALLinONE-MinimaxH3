@@ -2,6 +2,10 @@
 
 Newest first.
 
+## 0.6.1 (2026-08-18)
+
+Live Preview now plays the whole clip while it samples instead of showing one still frame, powered by KJNodes Model Preview Override. A dropdown next to the Live Preview toggle picks between three presets: Fast, Balanced and Detailed. Fast is the lightest on generation speed, Detailed looks the best. Needs ComfyUI-KJNodes and taeh3.safetensors in a models/vae_approx folder.
+
 ## 0.6.0 (2026-08-18)
 
 - The Text Encoder list now only shows the model H3 actually uses.

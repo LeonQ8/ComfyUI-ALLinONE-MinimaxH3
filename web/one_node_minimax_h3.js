@@ -90,6 +90,12 @@ const DEFAULT_MODELS = {
   upscaleVae:"none",
 };
 
+const LP_PRESETS = {
+  fast:{res:384,frames:6,label:"Fast"},
+  balanced:{res:512,frames:10,label:"Balanced"},
+  detailed:{res:768,frames:10,label:"Detailed"},
+};
+
 function snapFrames(seconds, fps=24){
   const base = Math.max(5, Math.round(seconds * fps));
   return base + ((5 - (base % 17)) + 17) % 17;
@@ -863,6 +869,7 @@ app.registerExtension({
           modeSettings:    (saved.modeSettings&&typeof saved.modeSettings==="object")?saved.modeSettings:{},
           autoSave:        saved.autoSave!==undefined?saved.autoSave:true,
           livePreview:     saved.livePreview===true,
+          livePreviewMode: (saved.livePreviewMode==="fast"||saved.livePreviewMode==="detailed")?saved.livePreviewMode:"balanced",
           generating:      false,
           playOnFinish:    saved.playOnFinish!==undefined?saved.playOnFinish:true,
           folded:          (saved.folded&&typeof saved.folded==="object")?saved.folded:{},
@@ -911,6 +918,7 @@ app.registerExtension({
           modeSettings:S.modeSettings,
           autoSave:S.autoSave,customW:S.customW,customH:S.customH,
           playOnFinish:S.playOnFinish,folded:S.folded,livePreview:S.livePreview,
+          livePreviewMode:S.livePreviewMode,
           imgSub:S.imgSub,imgAspect:S.imgAspect,imgMP:S.imgMP,imgW:S.imgW,imgH:S.imgH,
           imgProfile:S.imgProfile,imgRefs:S.imgRefs,
         });
@@ -2585,6 +2593,7 @@ app.registerExtension({
       placeholder.append(phIco,phLbl);
       const vidEl=mk("video",{position:"absolute",inset:"0",width:"100%",height:"100%",objectFit:"contain",display:"none",background:"#000"},{controls:true});
       const imgEl=mk("img",{position:"absolute",inset:"0",width:"100%",height:"100%",objectFit:"contain",display:"none",background:"#000"});
+      const webpCanvas=mk("canvas",{position:"absolute",inset:"0",width:"100%",height:"100%",objectFit:"contain",display:"none",background:"#000"});
       const errorBox=mk("div",{position:"absolute",inset:"0",display:"none",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:"16px",color:C.err,fontSize:"11px",lineHeight:"1.6",textAlign:"center",background:"rgba(0,0,0,.8)"});
       const progWrap=mk("div",{position:"absolute",bottom:"0",left:"0",right:"0",background:"linear-gradient(transparent,rgba(0,0,0,.88))",padding:"14px 14px 10px",display:"none",flexDirection:"column",gap:"4px",pointerEvents:"none"});
       const progTop=mk("div",{display:"flex",justifyContent:"space-between",alignItems:"center"});
@@ -2626,23 +2635,96 @@ app.registerExtension({
         if(dim) tx(liveTxt,"Waiting for frame");
         else tx(liveTxt,"Live preview");
       };
+      let _kjImgUrl=null, _kjMp4Url=null, _kjWebpFrames=null, _kjWebpTimer=null, _kjPlayStart=0, _kjWebpFps=12;
+      const _kjB64Blob=(b64,mime)=>{
+        const bin=atob(b64);
+        const arr=new Uint8Array(bin.length);
+        for(let i=0;i<bin.length;i++) arr[i]=bin.charCodeAt(i);
+        return new Blob([arr],{type:mime});
+      };
+      const _kjStopWebp=()=>{
+        if(_kjWebpTimer){ clearInterval(_kjWebpTimer); _kjWebpTimer=null; }
+        _kjWebpFrames=null;
+        webpCanvas.style.display="none";
+        webpCanvas.getContext("2d").clearRect(0,0,webpCanvas.width,webpCanvas.height);
+      };
+      const _kjReset=()=>{
+        _kjStopWebp();
+        vidEl.pause();vidEl.removeAttribute("src");vidEl.style.display="none";
+        imgEl.removeAttribute("src");imgEl.style.display="none";
+        if(_kjImgUrl){ URL.revokeObjectURL(_kjImgUrl); _kjImgUrl=null; }
+        if(_kjMp4Url){ URL.revokeObjectURL(_kjMp4Url); _kjMp4Url=null; }
+      };
+      const _kjPlayWebp=async(b64,fps)=>{
+        _kjStopWebp();
+        if(typeof ImageDecoder==="undefined") return;
+        try{
+          const blob=_kjB64Blob(b64,"image/webp");
+          const dec=new ImageDecoder({data:blob.stream(),type:"image/webp"});
+          await dec.completed;
+          const track=dec.tracks.selectedTrack;
+          if(!track||track.frameCount<=1){ dec.close?.(); return; }
+          const frames=[];
+          for(let i=0;i<track.frameCount;i++){
+            const r=await dec.decode({frameIndex:i});
+            frames.push(r.image);
+          }
+          dec.close?.();
+          if(!frames.length) return;
+          _kjWebpFrames=frames;
+          _kjWebpFps=Number(fps)||12;
+          _kjPlayStart=performance.now();
+          vidEl.style.display="none";vidEl.pause();
+          imgEl.style.display="none";
+          webpCanvas.style.display="block";
+          _kjWebpTimer=setInterval(()=>{
+            if(!_kjWebpFrames) return;
+            const n=_kjWebpFrames.length;
+            const dur=1000/_kjWebpFps;
+            const idx=Math.min(n-1,Math.floor(((performance.now()-_kjPlayStart)%(n*dur))/dur));
+            const f=_kjWebpFrames[idx];
+            if(webpCanvas.width!==f.displayWidth||webpCanvas.height!==f.displayHeight){
+              webpCanvas.width=f.displayWidth;webpCanvas.height=f.displayHeight;
+            }
+            webpCanvas.getContext("2d").drawImage(f,0,0);
+          },33);
+        }catch(e){}
+      };
       self._h3_lpFrame=(d)=>{
         if(_cmpMode) _exitCompare();
         errorBox.style.display="none";
-        vidEl.style.display="none";vidEl.pause();vidEl.src="";
         placeholder.style.display="none";
-        imgEl.src=d.image||"";imgEl.style.display="block";
+        const mime=typeof d.mime==="string"?d.mime:"image/jpeg";
+        if(mime==="video/mp4"){
+          _kjStopWebp();
+          if(_kjMp4Url){ URL.revokeObjectURL(_kjMp4Url); _kjMp4Url=null; }
+          _kjMp4Url=URL.createObjectURL(_kjB64Blob(d.image,mime));
+          imgEl.style.display="none";
+          vidEl.style.display="block";
+          vidEl.muted=true;vidEl.loop=true;vidEl.controls=true;vidEl.playsInline=true;
+          vidEl.src=_kjMp4Url;
+          vidEl.play().catch(()=>{});
+        } else if(mime==="image/webp"){
+          _kjPlayWebp(d.image,Number(d.fps)||12);
+        } else {
+          _kjStopWebp();
+          if(_kjImgUrl){ URL.revokeObjectURL(_kjImgUrl); _kjImgUrl=null; }
+          _kjImgUrl=URL.createObjectURL(_kjB64Blob(d.image,mime));
+          vidEl.style.display="none";vidEl.pause();
+          imgEl.src=_kjImgUrl;imgEl.style.display="block";
+        }
         const step=Number(d.step)||0, total=Number(d.total)||0;
         if(total>0){
           const pct=Math.min(97,Math.max(8,Math.round(step/total*90)));
-          const eta=Number(d.eta_seconds)||0;
-          setStage(`Sampling · step ${step}/${total}${eta>0?` · ETA ~${Math.round(eta)}s`:""}`,pct);
+          const avg=Number(d.avg_step_ms)||0;
+          const eta=avg>0?Math.round((total-step)*avg/1000):0;
+          setStage(`Sampling · step ${step}/${total}${eta>0?` · ETA ~${eta}s`:""}`,pct);
         }
         _showLiveChip(true,false);
       };
-      self._h3_lpReset=()=>{ _showLiveChip(true,true); };
-      self._h3_lpErr=(msg)=>{ _showLiveChip(false); showError(msg); };
-      previewBox.append(placeholder,vidEl,imgEl,errorBox,progWrap,previewMeta,liveChip);
+      self._h3_lpReset=()=>{ _kjReset(); _showLiveChip(true,true); };
+      self._h3_lpErr=(msg)=>{ _kjReset(); _showLiveChip(false); showError(msg); };
+      previewBox.append(placeholder,vidEl,imgEl,webpCanvas,errorBox,progWrap,previewMeta,liveChip);
       const comparerWrap=mk("div",{position:"absolute",inset:"0",display:"none",cursor:"col-resize",userSelect:"none",borderRadius:"10px",overflow:"hidden",zIndex:"3"},{tabIndex:"0",role:"slider","aria-label":"Image comparison position","aria-valuemin":"0","aria-valuemax":"100","aria-valuenow":"50"});
       const cmpBase=mk("video",{position:"absolute",inset:"0",width:"100%",height:"100%",objectFit:"contain",background:"#000",display:"none"},{muted:true,loop:true,preload:"auto"});
       const cmpBaseImg=mk("img",{position:"absolute",inset:"0",width:"100%",height:"100%",objectFit:"contain",background:"#000",display:"none"},{alt:"Comparison source"});
@@ -2913,7 +2995,15 @@ app.registerExtension({
       const liveTogBtn=mk("button",{}, {type:"button",className:"h3-actbtn"+(S.livePreview?" on":"")});
       liveTogBtn._lbl=mk("span",{}, {textContent:S.livePreview?"Preview On":"Preview Off"});
       liveTogBtn.appendChild(liveTogBtn._lbl);
-      const liveInfo=infoIcon("Live Preview: watch the video appear while it samples. Each step is decoded with a tiny TAEH3 model on the CPU, so generation takes a little longer.\nNeeds taeh3.safetensors in a ComfyUI models/vae_approx folder - download it from huggingface.co/Kijai/MiniMax-H3-TAE. If your copy lives in a subfolder, pick it under Settings: Live Preview decoder.\nNot available with the Turbo preset or in Image mode.");
+      const liveInfo=infoIcon("Live Preview: the clip plays in the preview box while it samples, powered by KJNodes Model Preview Override with the tiny TAEH3 decoder.\nNeeds ComfyUI-KJNodes and taeh3.safetensors in a ComfyUI models/vae_approx folder - download it from huggingface.co/Kijai/MiniMax-H3-TAE. If your copy lives in a subfolder, pick it under Settings: Live Preview decoder.\nThe dropdown picks preview size and frame count. Fast is the lightest, Detailed looks best but slows generation the most.\nNot available with the Turbo preset or in Image mode.");
+      const lpModeSel=mk("select",{height:"20px",borderRadius:"8px",background:"#1a1a1a",color:"#c9c9c9",border:"1px solid var(--h3-line2)",fontSize:"9px",padding:"0 4px",cursor:"pointer",outline:"none"});
+      Object.keys(LP_PRESETS).forEach(k=>{
+        const o=mk("option",{}, {value:k,textContent:LP_PRESETS[k].label});
+        lpModeSel.appendChild(o);
+      });
+      lpModeSel.value=(S.livePreviewMode&&LP_PRESETS[S.livePreviewMode])?S.livePreviewMode:"balanced";
+      lpModeSel.title="Live Preview quality. Fast: 384px, 6 frames, lightest. Balanced: 512px, 10 frames. Detailed: 768px, 10 frames, heaviest.";
+      lpModeSel.onchange=()=>{ S.livePreviewMode=lpModeSel.value; persist(); };
       const _syncLiveToggle=()=>{
         const hidden=S.mode==="image";
         liveTogWrap.style.display=hidden?"none":"flex";
@@ -2947,7 +3037,7 @@ app.registerExtension({
         persist();
         _syncLiveToggle();
       };
-      liveTogWrap.append(liveTogBtn,liveInfo);
+      liveTogWrap.append(liveTogBtn,lpModeSel,liveInfo);
       _syncLiveToggle();
       _checkTae();
       galleryRefresh.style.height="26px";
@@ -2986,6 +3076,7 @@ app.registerExtension({
           return;
         }
         vidEl.onloadedmetadata=()=>_updateResolutionChip(vidEl.videoWidth,vidEl.videoHeight);
+        vidEl.controls=true;vidEl.muted=false;vidEl.loop=false;
         vidEl.src=url;vidEl.style.display="block";imgEl.style.display="none";
         placeholder.style.display="none";errorBox.style.display="none";
         _updateSeedChip(item.filename);
@@ -3438,14 +3529,16 @@ app.registerExtension({
         }
         _insertModelPatches(wf);
         if(S.livePreview){
-          wf["lp"]={class_type:"H3StudioTAEH3Preview",inputs:{
+          const lpSet=(S.livePreviewMode&&LP_PRESETS[S.livePreviewMode])?LP_PRESETS[S.livePreviewMode]:LP_PRESETS.balanced;
+          wf["lp"]={class_type:"ModelPreviewOverrideKJ",inputs:{
             model:wf["5"].inputs.model,
-            enabled:true,
+            max_resolution:lpSet.res,
+            jpeg_quality:80,
+            suppress_default_preview:true,
+            preview_frames:lpSet.frames,
+            preview_fps:12,
             tiny_vae:S.models.tae||"taeh3.safetensors",
-            max_resolution:768,
-            jpeg_quality:85,
-            preview_every_n_steps:1,
-          },_meta:{title:"Live Preview (TAEH3)"}};
+          },_meta:{title:"Live Preview (Model Preview Override)"}};
           wf["5"].inputs.model=["lp",0];
         }
         _applyAutoSave(wf);
@@ -3751,14 +3844,16 @@ app.registerExtension({
         }
         wf["s:5"].inputs.model=modelSrc;
         if(S.livePreview){
-          wf["s:lp"]={class_type:"H3StudioTAEH3Preview",inputs:{
+          const lpSet=(S.livePreviewMode&&LP_PRESETS[S.livePreviewMode])?LP_PRESETS[S.livePreviewMode]:LP_PRESETS.balanced;
+          wf["s:lp"]={class_type:"ModelPreviewOverrideKJ",inputs:{
             model:modelSrc,
-            enabled:true,
+            max_resolution:lpSet.res,
+            jpeg_quality:80,
+            suppress_default_preview:true,
+            preview_frames:lpSet.frames,
+            preview_fps:12,
             tiny_vae:S.models.tae||"taeh3.safetensors",
-            max_resolution:768,
-            jpeg_quality:85,
-            preview_every_n_steps:1,
-          },_meta:{title:"Live Preview (TAEH3)"}};
+          },_meta:{title:"Live Preview (Model Preview Override)"}};
           wf["s:5"].inputs.model=["s:lp",0];
         }
         wf["s:1"].inputs.clip_name=S.models.clip;
@@ -4076,14 +4171,15 @@ app.registerExtension({
     if(max>0&&_activeSetStage) _activeSetStage("Sampling...",8+Math.round(value/max*86));
   });
 
-  api.addEventListener("h3studio-preview",(evt)=>{
+  api.addEventListener("kj_preview_override",(evt)=>{
     const node=_activeNode;
     if(!node||!node._h3_lpOn) return;
     const d=evt.detail||{};
     if(d.node_id!==node._h3_lpId) return;
-    if(d.error){ if(node._h3_lpErr) node._h3_lpErr(String(d.error)); return; }
-    if(d.reset){ if(node._h3_lpReset) node._h3_lpReset(); return; }
-    if(d.image){ if(node._h3_lpFrame) node._h3_lpFrame(d); }
+    if(Array.isArray(d.sigmas)&&d.sigmas.length>1){
+      if(node._h3_lpReset) node._h3_lpReset();
+    }
+    if(typeof d.image==="string"){ if(node._h3_lpFrame) node._h3_lpFrame(d); }
   });
 
   api.addEventListener("executed",(evt)=>{
