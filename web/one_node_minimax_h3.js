@@ -2429,72 +2429,19 @@ app.registerExtension({
       };
       loraBody.appendChild(addLoraBtn);
       loraArea.append(loraHdr,loraBody);
-      const _trigCache={};
-      const _stripLoraTriggers=async(lr)=>{
-        let trigs=_trigCache[lr.name];
-        if(!trigs){
-          try{
-            const r=await fetch(`/h3one/lora_triggers?name=${encodeURIComponent(lr.name)}`);
-            const d=await r.json();
-            if(d.ok&&Array.isArray(d.triggers)&&d.triggers.length){ trigs=d.triggers; _trigCache[lr.name]=trigs; }
-          }catch(e){ console.warn("[H3One] lora triggers:",e); }
-        }
-        if(!trigs||!trigs.length) return;
-        const esc=s=>String(s).replace(/[.*+?^${}()|[\]\\]/g,"\\$&");
-        const protectedSet=new Set();
-        S.loras.forEach(l=>{
-          if(!l||l===lr||!l.name||l.enabled===false) return;
-          (_trigCache[l.name]||[]).forEach(t=>{ if(t) protectedSet.add(t); });
-        });
-        const usable=trigs.filter(t=>t&&!protectedSet.has(t));
-        if(!usable.length) return;
-        let p=S.prompt||"";
-        const joined=trigs.join(", ");
-        let changed=false;
-        if(usable.length===trigs.length&&p.includes(", "+joined)){
-          p=p.replace(", "+joined,"");
-          changed=true;
-        } else if(usable.length===trigs.length&&p===joined){
-          p="";
-          changed=true;
-        } else {
-          usable.forEach(t=>{
-            const re=new RegExp("(^|[\\s,.;:!?()\\[\\]\"'])"+esc(t)+"($|[\\s,.;:!?()\\[\\]\"'])","g");
-            p=p.replace(re,(m,pre,post)=>{ changed=true; return pre+post; });
-          });
-        }
-        if(changed){
-          p=p.replace(/\s+/g," ").replace(/^\s*[,.;:]\s*/,"").replace(/\s*[,.;:](\s|$)/g,"$1").replace(/\(\s*\)|\[\s*\]/g,"").replace(/\s{2,}/g," ").trim();
-          _setPrompt(p);
-        }
-      };
       const loraRows=[];
       const _renderLoras=()=>{
         loraRows.forEach(r=>r.remove());
         loraRows.length=0;
         S.loras.forEach((lr,idx)=>{
           const row=mk("div",{display:"flex",alignItems:"center",gap:"6px"});
-          const dd=DD(_M.loras.length?_M.loras:["none"],lr.name||"none",async v=>{
+          const dd=DD(_M.loras.length?_M.loras:["none"],lr.name||"none",v=>{
             lr.name=v==="none"?"":v;persist();
-            if(lr.name){
-              try{
-                const r=await fetch(`/h3one/lora_triggers?name=${encodeURIComponent(lr.name)}`);
-                const d=await r.json();
-                if(d.ok&&d.triggers&&d.triggers.length){
-                  _trigCache[lr.name]=d.triggers;
-                  const tw=d.triggers.join(", ");
-                  if(!(S.prompt||"").includes(tw)){
-                    _setPrompt((S.prompt?S.prompt+" ":"")+tw);
-                  }
-                }
-              }catch(e){ console.warn("[H3One] lora triggers:",e); }
-            }
             _renderLoras();
           });
           const stNI=NI("",lr.strength,-3,3,0.1,v=>{lr.strength=Math.round(v*100)/100;persist();},"52px");
-          const tgl=MiniToggle(lr.enabled!==false,async v=>{
+          const tgl=MiniToggle(lr.enabled!==false,v=>{
             lr.enabled=v;persist();
-            if(!v) await _stripLoraTriggers(lr);
             _renderLoras();
           },"Enable/disable "+(lr.name?lr.name.split("/").pop():"this LoRA"));
           const rm=mk("button",{flexShrink:"0"}, {type:"button",className:"h3-rmbtn",title:"Remove this LoRA","aria-label":"Remove this LoRA"});
