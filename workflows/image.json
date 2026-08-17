@@ -7,6 +7,6 @@
   "6": { "class_type": "BasicGuider", "inputs": { "model": ["3", 0], "conditioning": ["3", 2] }, "_meta": { "title": "Basic Guider" } },
   "7": { "class_type": "SamplerCustomAdvanced", "inputs": { "noise": ["5", 0], "guider": ["6", 0], "sampler": ["4", 1], "sigmas": ["4", 2], "latent_image": ["3", 3] }, "_meta": { "title": "Sampler Custom Advanced" } },
   "8": { "class_type": "H3StudioDecode", "inputs": { "samples": ["7", 0], "vae": ["3", 4] }, "_meta": { "title": "H3 VAE Decode" } },
-  "9": { "class_type": "H3StudioSaveImage", "inputs": { "images": ["8", 0], "filename_prefix": "one-node-minimax-h3/img", "studio_context": ["2", 0] }, "_meta": { "title": "Save PNG" } },
-  "10": { "class_type": "PreviewImage", "inputs": { "images": ["8", 0] }, "_meta": { "title": "Preview" } }
+  "9": { "class_type": "H3StudioSaveImage", "inputs": { "images": ["11", 0], "filename_prefix": "one-node-minimax-h3/img", "studio_context": ["2", 0] }, "_meta": { "title": "Save PNG" } },
+  "11": { "class_type": "ImageFromBatch", "inputs": { "image": ["8", 0], "batch_index": ["8", 3], "length": 1 }, "_meta": { "title": "Select Preferred Still" } }
 }

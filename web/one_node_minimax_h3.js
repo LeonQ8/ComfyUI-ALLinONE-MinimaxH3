@@ -1205,9 +1205,11 @@ app.registerExtension({
         const srTitle=mk("div",{fontSize:"9px",fontWeight:"700",letterSpacing:".08em",textTransform:"uppercase",color:C.muted,flexShrink:"0"});tx(srTitle,"Result");
         secResult.appendChild(srTitle);
         if(it.video){
-          const vurl=api.apiURL(`/view?filename=${encodeURIComponent(it.video)}&type=output&subfolder=${encodeURIComponent(it.subfolder||"")}`);
-          if(it.kind==="image"){
-            const v=mk("img",{width:"100%",maxHeight:"100%",borderRadius:"8px",background:"#000",objectFit:"contain",outline:"none",flex:"1 1 0",minHeight:"0"},{src:vurl});
+          const fileType=it.type||(/^ComfyUI_temp_/i.test(it.video)?"temp":"output");
+          const vurl=api.apiURL(`/view?filename=${encodeURIComponent(it.video)}&type=${encodeURIComponent(fileType)}&subfolder=${encodeURIComponent(it.subfolder||"")}`);
+          const isImageHistory=it.kind==="image"||/\.(png|jpe?g|webp|bmp)$/i.test(it.video||"");
+          if(isImageHistory){
+            const v=mk("img",{width:"100%",height:"100%",maxHeight:"100%",borderRadius:"8px",background:"#000",objectFit:"contain",outline:"none",display:"block",flex:"1 1 0",minHeight:"180px"},{src:vurl,alt:"Generated image"});
             secResult.appendChild(v);
           } else {
             const v=mk("video",{width:"100%",flex:"1 1 0",minHeight:"0",height:"0",borderRadius:"8px",background:"#000",objectFit:"contain",outline:"none"},{controls:true,src:vurl});
@@ -2501,11 +2503,13 @@ app.registerExtension({
       self._h3_lpReset=()=>{ _showLiveChip(true,true); };
       self._h3_lpErr=(msg)=>{ _showLiveChip(false); showError(msg); };
       previewBox.append(placeholder,vidEl,imgEl,errorBox,progWrap,seedChip,liveChip);
-      const comparerWrap=mk("div",{position:"absolute",inset:"0",display:"none",cursor:"col-resize",userSelect:"none",borderRadius:"10px",overflow:"hidden",zIndex:"3"});
-      const cmpBase=mk("video",{position:"absolute",inset:"0",width:"100%",height:"100%",objectFit:"contain",background:"#000"},{muted:true,loop:true,preload:"auto"});
+      const comparerWrap=mk("div",{position:"absolute",inset:"0",display:"none",cursor:"col-resize",userSelect:"none",borderRadius:"10px",overflow:"hidden",zIndex:"3"},{tabIndex:"0",role:"slider","aria-label":"Image comparison position","aria-valuemin":"0","aria-valuemax":"100","aria-valuenow":"50"});
+      const cmpBase=mk("video",{position:"absolute",inset:"0",width:"100%",height:"100%",objectFit:"contain",background:"#000",display:"none"},{muted:true,loop:true,preload:"auto"});
+      const cmpBaseImg=mk("img",{position:"absolute",inset:"0",width:"100%",height:"100%",objectFit:"contain",background:"#000",display:"none"},{alt:"Comparison source"});
       const cmpGen=mk("div",{position:"absolute",top:"0",left:"0",bottom:"0",overflow:"hidden",width:"50%"});
-      const cmpGenVid=mk("video",{position:"absolute",top:"0",left:"0",height:"100%",objectFit:"contain",background:"#000"},{muted:true,loop:true,preload:"auto"});
-      cmpGen.appendChild(cmpGenVid);
+      const cmpGenVid=mk("video",{position:"absolute",top:"0",left:"0",height:"100%",objectFit:"contain",background:"#000",display:"none"},{muted:true,loop:true,preload:"auto"});
+      const cmpGenImg=mk("img",{position:"absolute",top:"0",left:"0",height:"100%",objectFit:"contain",background:"#000",display:"none"},{alt:"Generated image"});
+      cmpGen.append(cmpGenVid,cmpGenImg);
       const cmpLine=mk("div",{position:"absolute",top:"0",bottom:"0",width:"2px",background:C.lime,left:"calc(50% - 1px)",boxShadow:"0 0 8px rgba(var(--h3accent-rgb),.55)",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",zIndex:"4"});
       const cmpHandle=mk("div",{width:"30px",height:"30px",borderRadius:"50%",background:C.lime,border:"2px solid #111",flexShrink:"0",display:"flex",alignItems:"center",justifyContent:"center",boxShadow:"0 2px 10px rgba(0,0,0,.7)",pointerEvents:"none"});
       cmpHandle.innerHTML=`<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="#111" stroke-width="2.5" stroke-linecap="round"><path d="M8 4l-4 8 4 8M16 4l4 8-4 8"/></svg>`;
@@ -2514,7 +2518,7 @@ app.registerExtension({
       tx(cmpLbl1,"UPSCALED");
       const cmpLbl2=mk("div",{position:"absolute",top:"8px",right:"8px",fontSize:"8px",fontWeight:"700",letterSpacing:".06em",color:"rgba(255,255,255,.85)",background:"rgba(0,0,0,.55)",borderRadius:"4px",padding:"2px 6px",zIndex:"5",pointerEvents:"none"});
       tx(cmpLbl2,"ORIGINAL");
-      comparerWrap.append(cmpBase,cmpGen,cmpLine,cmpLbl1,cmpLbl2);
+      comparerWrap.append(cmpBase,cmpBaseImg,cmpGen,cmpLine,cmpLbl1,cmpLbl2);
       previewBox.appendChild(comparerWrap);
       let _cmpDragging=false;
       const _cmpSetPct=(pct)=>{
@@ -2522,6 +2526,8 @@ app.registerExtension({
         cmpGen.style.width=pct+"%";
         cmpLine.style.left=`calc(${pct}% - 1px)`;
         cmpGenVid.style.width=(comparerWrap.offsetWidth||600)+"px";
+        cmpGenImg.style.width=(comparerWrap.offsetWidth||600)+"px";
+        comparerWrap.setAttribute("aria-valuenow",String(Math.round(pct)));
       };
       comparerWrap.addEventListener("mousedown",e=>{_cmpDragging=true;e.preventDefault();});
       document.addEventListener("mousemove",e=>{
@@ -2543,33 +2549,96 @@ app.registerExtension({
       cmpBtn.onmouseleave=()=>{cmpBtn.style.borderColor=C.borderH;cmpBtn.style.color=C.text;};
       cmpBtn.onclick=()=>{ _cmpMode?_exitCompare():_enterCompare(); };
       previewBox.appendChild(cmpBtn);
+      const cmpSourceSelect=mk("select",{position:"absolute",top:"8px",left:"96px",display:"none",height:"24px",maxWidth:"100px",background:"rgba(0,0,0,.72)",border:`1px solid ${C.borderH}`,borderRadius:"6px",padding:"0 5px",fontSize:"9px",fontWeight:"700",color:C.text,cursor:"pointer",outline:"none",zIndex:"6"},{"aria-label":"Comparison source"});
+      previewBox.appendChild(cmpSourceSelect);
       let _cmpMode=false;
+      let _cmpImageMode=false;
+      let _cmpImageRefs=[];
+      let _cmpImageRefIndex=0;
       let _upOrig=null;
       let _upResult=null;
       let _upscaleRun="";
+      const _isImageItem=item=>!!(item&&(item.kind==="image"||/\.(png|jpe?g|webp|bmp)$/i.test(item.filename||"")));
+      const _inputImageUrl=name=>api.apiURL(`/view?filename=${encodeURIComponent(name)}&type=input&subfolder=`);
+      const _outputImageUrl=item=>api.apiURL(`/view?filename=${encodeURIComponent(item.filename)}&type=${encodeURIComponent(item.type||"output")}&subfolder=${encodeURIComponent(item.subfolder||"")}`);
+      const _syncCompareSourceSelect=()=>{
+        cmpSourceSelect.innerHTML="";
+        _cmpImageRefs.forEach((name,index)=>{
+          const option=document.createElement("option");
+          option.value=String(index);
+          option.textContent=`@Image${index+1}`;
+          cmpSourceSelect.appendChild(option);
+        });
+        cmpSourceSelect.value=String(_cmpImageRefIndex);
+        cmpSourceSelect.style.display=_cmpMode&&_cmpImageMode&&_cmpImageRefs.length>1?"block":"none";
+      };
+      const _loadImageCompare=()=>{
+        const source=_cmpImageRefs[_cmpImageRefIndex];
+        if(!source||!_curItem) return false;
+        cmpBaseImg.src=_inputImageUrl(source);
+        cmpGenImg.src=_outputImageUrl(_curItem);
+        cmpBaseImg.alt=`Comparison source @Image${_cmpImageRefIndex+1}`;
+        cmpGenImg.alt="Generated image";
+        tx(cmpLbl2,_cmpImageRefs.length>1?`@Image${_cmpImageRefIndex+1}`:"SOURCE");
+        return true;
+      };
+      const _setCompareMedia=imageMode=>{
+        cmpBase.style.display=imageMode?"none":"block";
+        cmpGenVid.style.display=imageMode?"none":"block";
+        cmpBaseImg.style.display=imageMode?"block":"none";
+        cmpGenImg.style.display=imageMode?"block":"none";
+      };
+      cmpSourceSelect.onchange=()=>{
+        _cmpImageRefIndex=Math.max(0,Math.min(_cmpImageRefs.length-1,parseInt(cmpSourceSelect.value)||0));
+        if(_cmpMode&&_cmpImageMode){ _loadImageCompare();_cmpSetPct(50); }
+      };
       const _enterCompare=()=>{
-        if(!_upOrig||!_curItem) return;
-        const upUrl=api.apiURL(`/view?filename=${encodeURIComponent(_curItem.filename)}&type=output&subfolder=${encodeURIComponent(_curItem.subfolder||"")}`);
-        const orUrl=api.apiURL(`/view?filename=${encodeURIComponent(_upOrig.filename)}&type=output&subfolder=${encodeURIComponent(_upOrig.subfolder||"")}`);
-        cmpGenVid.src=upUrl;
-        cmpBase.src=orUrl;
-        cmpGenVid.load();cmpBase.load();
+        const imageMode=S.mode==="image"&&["edit","refmix"].includes(S.imgSub)&&_cmpImageRefs.length&&_isImageItem(_curItem);
+        if(imageMode){
+          if(!_loadImageCompare()) return;
+          tx(cmpLbl1,"GENERATED");
+        } else {
+          if(!_upOrig||!_curItem) return;
+          const upUrl=api.apiURL(`/view?filename=${encodeURIComponent(_curItem.filename)}&type=${encodeURIComponent(_curItem.type||"output")}&subfolder=${encodeURIComponent(_curItem.subfolder||"")}`);
+          const orUrl=api.apiURL(`/view?filename=${encodeURIComponent(_upOrig.filename)}&type=${encodeURIComponent(_upOrig.type||"output")}&subfolder=${encodeURIComponent(_upOrig.subfolder||"")}`);
+          cmpGenVid.src=upUrl;
+          cmpBase.src=orUrl;
+          cmpGenVid.load();cmpBase.load();
+          tx(cmpLbl1,"UPSCALED");
+          tx(cmpLbl2,"ORIGINAL");
+        }
+        _cmpImageMode=!!imageMode;
+        _setCompareMedia(_cmpImageMode);
         _cmpMode=true;
         _cmpSetPct(50);
         vidEl.style.display="none";
+        imgEl.style.display="none";
         comparerWrap.style.display="block";
         tx(cmpBtn,"Exit compare");
-        cmpGenVid.play().catch(()=>{});
-        cmpBase.play().catch(()=>{});
+        _syncCompareSourceSelect();
+        if(!_cmpImageMode){ cmpGenVid.play().catch(()=>{});cmpBase.play().catch(()=>{}); }
       };
       const _exitCompare=()=>{
         _cmpMode=false;
+        _cmpImageMode=false;
         cmpGenVid.pause();cmpBase.pause();
         cmpGenVid.src="";cmpBase.src="";
+        cmpGenImg.src="";cmpBaseImg.src="";
+        _setCompareMedia(false);
         comparerWrap.style.display="none";
-        vidEl.style.display="block";
+        cmpSourceSelect.style.display="none";
+        const image=_isImageItem(_curItem);
+        vidEl.style.display=image?"none":"block";
+        imgEl.style.display=image?"block":"none";
         tx(cmpBtn,"Compare");
       };
+      comparerWrap.addEventListener("keydown",e=>{
+         if(!_cmpMode||!(["ArrowLeft","ArrowRight","Home","End"].includes(e.key))) return;
+         e.preventDefault();
+         const current=Number(comparerWrap.getAttribute("aria-valuenow"))||50;
+         const next=e.key==="Home"?0:(e.key==="End"?100:current+(e.key==="ArrowRight"?5:-5));
+         _cmpSetPct(next);
+      });
       const setStage=(l,p)=>{
         tx(progStage,l);progFill.style.width=p+"%";tx(progPct,Math.round(p)+"%");
       };
@@ -2759,9 +2828,10 @@ app.registerExtension({
       const _showVideo=(item,fromFinish)=>{
         _curItem=item;
         if(_cmpMode) _exitCompare();
-        if(_upResult){
-          cmpBtn.style.display=item.filename===_upResult.filename?"block":"none";
-        }
+        const imageCompare=S.mode==="image"&&["edit","refmix"].includes(S.imgSub)&&_cmpImageRefs.length>0&&_isImageItem(item);
+        const upscaleCompare=!!(_upResult&&item.filename===_upResult.filename);
+        cmpBtn.style.display=imageCompare||upscaleCompare?"block":"none";
+        cmpSourceSelect.style.display="none";
         const vtype=item.type||"output";
         const url=api.apiURL(`/view?filename=${encodeURIComponent(item.filename)}&type=${vtype}&subfolder=${encodeURIComponent(item.subfolder||"")}`);
         if(item.kind==="image"||/\.(png|jpe?g|webp|bmp)$/i.test(item.filename||"")){
@@ -2946,12 +3016,12 @@ app.registerExtension({
             body:JSON.stringify({node_id:self.id,info:{filename:item.filename,subfolder:item.subfolder||""}})}).catch(()=>{});
           const histMode=wasUpscale?("Upscale "+S.upscaleFactor+"x ("+(wasUpscale==="upscale-rtx"?"RTX VSR":"SeedVR2")+")"):S.mode;
           const histRes=wasUpscale?(S.upscaleFactor+"x upscale"):(S.mode==="image"?(S.imgLastW+"x"+S.imgLastH):S.resolution);
-          fetch("/h3one/history",{method:"POST",headers:{"Content-Type":"application/json"},
-            body:JSON.stringify({
-              mode:histMode,quality:wasUpscale?"":S.quality,prompt:(S.prompt||"").slice(0,2000),duration:wasUpscale?0:S.duration,
-              resolution:histRes,seed:S.seed,gen_time:genMs,video:item.filename,subfolder:item.subfolder||"",
-              kind:item.kind==="image"?"image":"video",
-            })}).catch(()=>{});
+           fetch("/h3one/history",{method:"POST",headers:{"Content-Type":"application/json"},
+             body:JSON.stringify({
+               mode:histMode,quality:wasUpscale?"":S.quality,prompt:(S.prompt||"").slice(0,2000),duration:wasUpscale?0:S.duration,
+               resolution:histRes,seed:S.seed,gen_time:genMs,video:item.filename,subfolder:item.subfolder||"",type:item.type||"output",
+               kind:item.kind==="image"?"image":"video",
+             })}).catch(()=>{});
         }
         _loadGallery();
       };
@@ -3543,6 +3613,9 @@ app.registerExtension({
         if(S.generating) return;
         _upOrig=null;_upResult=null;
         if(_cmpMode) _exitCompare();
+        _cmpImageRefs=S.mode==="image"&&["edit","refmix"].includes(S.imgSub)?(S.imgRefs||[]).filter(Boolean).slice(0,S.imgSub==="edit"?1:9):[];
+        _cmpImageRefIndex=0;
+        _syncCompareSourceSelect();
         cmpBtn.style.display="none";
         _activeNode=self;
         _activeShowOutput=showOutput;

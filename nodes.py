@@ -602,6 +602,9 @@ async def get_history(request):
 async def add_history(request):
     try:
         data = await request.json()
+        file_type = str(data.get("type", "output") or "output")
+        if file_type not in ("output", "temp", "input"):
+            file_type = "output"
         entry = {
             "id": str(uuid.uuid4()),
             "timestamp": int(time.time()),
@@ -614,6 +617,7 @@ async def add_history(request):
             "gen_time": data.get("gen_time", 0),
             "video": data.get("video", ""),
             "subfolder": data.get("subfolder", ""),
+            "type": file_type,
             "kind": data.get("kind", "video"),
         }
         items = _load_history()
