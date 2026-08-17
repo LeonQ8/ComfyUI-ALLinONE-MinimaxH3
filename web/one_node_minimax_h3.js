@@ -1,5 +1,8 @@
 import { app } from "../../scripts/app.js";
 import { api } from "../../scripts/api.js";
+import { h3TextEncoderItems } from "./h3_model_features.js";
+import { createOutputControls, normalizeOutputSettings, outputFrameLabel, patchOutputVideo } from "./h3_output_features.js";
+import { attachOutputContextMenu } from "./h3_output_context.js";
 
 const ACCENT_DEFAULT = "#c0a996";
 const SUPPORT_URL = "https://ko-fi.com/leonq8";
@@ -34,6 +37,7 @@ function setVideoMuted(m){
 
 const NODE_W = 1200;
 const NODE_H = 700;
+const H3_SEED_MAX = 1125899906842623;
 const LS_KEY = "one_node_minimax_h3_state";
 
 const MODES = [
@@ -86,8 +90,8 @@ const DEFAULT_MODELS = {
   upscaleVae:"none",
 };
 
-function snapFrames(seconds){
-  const base = Math.max(5, Math.round(seconds * 24));
+function snapFrames(seconds, fps=24){
+  const base = Math.max(5, Math.round(seconds * fps));
   return base + ((5 - (base % 17)) + 17) % 17;
 }
 
@@ -379,6 +383,16 @@ function mkRmBtn(){
 }
 
 function ImgSlot(optional,onFile){
+  const PREVIEW_LONG=192;
+  const resetSize=()=>{wrap.style.width="72px";wrap.style.height="72px";};
+  const fitSize=(width,height)=>{
+    if(!width||!height) return;
+    const ratio=Number(width)/Number(height);
+    if(!Number.isFinite(ratio)||ratio<=0) return;
+    const w=ratio>=1?PREVIEW_LONG:Math.max(72,Math.round(PREVIEW_LONG*ratio));
+    const h=ratio>=1?Math.max(72,Math.round(PREVIEW_LONG/ratio)):PREVIEW_LONG;
+    wrap.style.width=`${w}px`;wrap.style.height=`${h}px`;
+  };
   const wrap=mk("div",{
     width:"72px",height:"72px",borderRadius:"12px",
     border:`1.5px dashed ${C.border}`,background:C.bg2,
@@ -408,7 +422,7 @@ function ImgSlot(optional,onFile){
   } else { icoWrap.append(ico,lbl); }
   const prevEl=mk("img",{
     position:"absolute",inset:"0",width:"100%",height:"100%",
-    objectFit:"cover",display:"none",borderRadius:"11px",
+    objectFit:"contain",display:"none",borderRadius:"11px",background:"#111",
   });
   const rm=mkRmBtn();
   const inp=mk("input",{display:"none"},{type:"file",accept:"image/*"});
@@ -426,6 +440,9 @@ function ImgSlot(optional,onFile){
   });
   let _currentName=null;
   const _showLoaded=(src,fname)=>{
+    prevEl.onload=()=>{
+      fitSize(prevEl.naturalWidth,prevEl.naturalHeight);
+    };
     prevEl.src=src;prevEl.style.display="block";
     icoWrap.style.display="none";rm.style.display="flex";
     wrap.style.borderColor=C.lime;
@@ -456,6 +473,7 @@ function ImgSlot(optional,onFile){
     e.stopPropagation();
     prevEl.src="";prevEl.style.display="none";
     rm.style.display="none";icoWrap.style.display="flex";
+    resetSize();
     wrap.style.borderColor=C.border;inp.value="";_currentName=null;onFile(null);
   };
   const _restorePreview=(name)=>{
@@ -468,6 +486,16 @@ function ImgSlot(optional,onFile){
 }
 
 function MediaSlot(type,onFile){
+  const PREVIEW_LONG=192;
+  const resetSize=()=>{wrap.style.width="72px";wrap.style.height="72px";};
+  const fitSize=(width,height)=>{
+    if(!width||!height) return;
+    const ratio=Number(width)/Number(height);
+    if(!Number.isFinite(ratio)||ratio<=0) return;
+    const w=ratio>=1?PREVIEW_LONG:Math.max(72,Math.round(PREVIEW_LONG*ratio));
+    const h=ratio>=1?Math.max(72,Math.round(PREVIEW_LONG/ratio)):PREVIEW_LONG;
+    wrap.style.width=`${w}px`;wrap.style.height=`${h}px`;
+  };
   const acceptMap={video:"video/*",audio:"audio/*"};
   const icons={
     video:`<rect x="2" y="2" width="20" height="20" rx="2.5"/><polygon points="10 8 16 12 10 16 10 8" fill="currentColor" stroke="none"/>`,
@@ -494,9 +522,10 @@ function MediaSlot(type,onFile){
   icoWrap.append(ico,lbl);
   const videoThumb = type==="video" ? mk("video",{
     position:"absolute",inset:"0",width:"100%",height:"100%",
-    objectFit:"cover",display:"none",borderRadius:"11px",pointerEvents:"none",
+    objectFit:"contain",display:"none",borderRadius:"11px",pointerEvents:"none",background:"#111",
   }) : null;
   if(videoThumb){ videoThumb.muted=_videoMuted; videoThumb.preload="metadata"; }
+  if(videoThumb) videoThumb.onloadedmetadata=()=>fitSize(videoThumb.videoWidth,videoThumb.videoHeight);
   const audioGlow = type==="audio" ? mk("div",{
     position:"absolute",inset:"0",display:"none",
     flexDirection:"column",alignItems:"center",justifyContent:"center",pointerEvents:"none",
@@ -611,6 +640,7 @@ function MediaSlot(type,onFile){
   const _clearLoaded=()=>{
     icoWrap.style.display="flex";loadedName.style.display="none";rm.style.display="none";
     wrap.style.borderColor=C.border;wrap.style.background=C.bg2;
+    resetSize();
     wrap._hasFile=false;wrap._filename=null;
     if(videoThumb){videoThumb.style.display="none";videoThumb.src="";}
     if(audioGlow) audioGlow.style.display="none";
@@ -805,7 +835,7 @@ app.registerExtension({
           optSage:         (saved.quality==="custom")?(saved.optSage!==undefined?saved.optSage:false):_qf.sage,
           samplerName:     saved.samplerName||"res_multistep",
           schedulerName:   saved.schedulerName||"simple",
-          seed:            (typeof saved.seed==="number")?saved.seed:0,
+          seed:            (typeof saved.seed==="number")?Math.max(0,Math.min(H3_SEED_MAX,Math.round(saved.seed))):0,
           randomizeSeed:   saved.randomizeSeed!==undefined?saved.randomizeSeed:true,
           batch:           saved.batch||1,
           loras:          (()=>{ const arr=Array.isArray(saved.loras)?saved.loras:[]; const named=arr.filter(l=>l&&l.name); return named.concat([{name:"",strength:1,enabled:true}]); })(),
@@ -821,6 +851,7 @@ app.registerExtension({
           models:          Object.assign({}, DEFAULT_MODELS, saved.models||{}),
           speedLora:       saved.speedLora||"",
           audioOn:         saved.audioOn!==undefined?saved.audioOn:true,
+          ...normalizeOutputSettings(saved),
           soundEnabled:    saved.soundEnabled!==undefined?saved.soundEnabled:true,
           sound:           saved.sound||"chime",
           accent:          (saved.accent&&saved.accent!=="#f0ff41"&&saved.accent.toLowerCase()!=="#00e5ff")?saved.accent:ACCENT_DEFAULT,
@@ -874,7 +905,7 @@ app.registerExtension({
           refImages:S.refImages,refVideos:S.refVideos,refAudios:S.refAudios,
           audioFile:S.audioFile,extendVideo:S.extendVideo,
           kf:(S.kf||[]).map(k=>({img:k.img||null,pos:k.pos||0})),
-          models:S.models,speedLora:S.speedLora,audioOn:S.audioOn,
+          models:S.models,speedLora:S.speedLora,audioOn:S.audioOn,fps:S.fps,
           soundEnabled:S.soundEnabled,sound:S.sound,accent:S.accent,mcLength:S.mcLength,
           upscaleFactor:S.upscaleFactor,upscaleMethod:S.upscaleMethod,
           modeSettings:S.modeSettings,
@@ -959,6 +990,8 @@ app.registerExtension({
           .h3-actbtn.danger:hover{border-color:rgba(255,128,128,.55);color:var(--h3-err);}
           .h3-actbtn.warn{border-color:rgba(255,194,102,.4);}
           /* seed chip over the preview */
+          .h3-previewmeta{position:absolute;top:8px;right:8px;display:flex;align-items:center;gap:6px;z-index:4;}
+          .h3-previewmeta .h3-seedchip{position:static;}
           .h3-seedchip{position:absolute;top:8px;right:8px;display:none;align-items:center;gap:7px;background:rgba(12,12,12,.82);backdrop-filter:blur(6px);border:1px solid var(--h3-line2);border-radius:9px;padding:4px 5px 4px 10px;z-index:4;cursor:default;box-shadow:inset 0 1px 0 rgba(255,255,255,.06),0 2px 8px rgba(0,0,0,.5);}
           .h3-seedchip .scl{font-size:8px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--h3-tx3);}
           .h3-seedchip .scv{font-size:10px;font-weight:700;color:var(--h3accent);font-variant-numeric:tabular-nums;}
@@ -1484,6 +1517,7 @@ app.registerExtension({
           tx(name,(item.favorite?"★ ":"")+item.filename);
           card.append(v,name);
           card.onclick=()=>_libOpen(item);
+          attachOutputContextMenu(card,item,{isVideo:!isImg,onExtend:_stageVideoForExtend});
           card.onmouseenter=()=>card.style.borderColor=C.lime;
           card.onmouseleave=()=>card.style.borderColor=C.border;
           libGrid.appendChild(card);
@@ -2263,6 +2297,7 @@ app.registerExtension({
       const framesLbl=mk("div",{fontSize:"9px",color:C.muted,flexShrink:"0"});
       durInner.append(durNI,framesLbl);
       durRow.append(durCap,durInner);
+      const {fpsRow}=createOutputControls({S,mk,tx,infoIcon,NI,persist,updateFramesLabel:()=>_updateFramesLabel()});
       const stepsRow=mk("div",{display:"flex",flexDirection:"column",gap:"3px"});
       const stepsCap=mk("div",{fontSize:"10px",color:C.text});tx(stepsCap,"Steps");
       const stepsNI=NI("",S.steps,1,60,1,v=>{S.steps=Math.round(v);persist();},"60px");
@@ -2326,7 +2361,7 @@ app.registerExtension({
       schedCapRow.append(schedCap,infoIcon("The noise schedule. MiniMax H3's native workflows use simple - keep it unless you know why you're changing it."));
       const schedDD=DD(SCHEDULERS,S.schedulerName||"simple",v=>{S.schedulerName=v;persist();});
       schedRow.append(schedCapRow,schedDD.el);
-      params.append(resRow,durRow,stepsRow,qualRow,samplerRow,schedRow);
+      params.append(resRow,durRow,fpsRow,stepsRow,qualRow,samplerRow,schedRow);
 
       // Custom sampling controls for Image mode (shown when the profile is Custom)
       const imgAdvRow=mk("div",{display:"none",flexDirection:"column",gap:"7px"});
@@ -2484,11 +2519,11 @@ app.registerExtension({
       const seedBody=mk("div",{display:"flex",flexDirection:"column",gap:"5px"});
       const seedRow=mk("div",{}, {className:"h3-seedrow"});
       const seedLbl=mk("span",{}, {className:"h3-slbl",textContent:"Seed"});
-      const seedNI=NI("",S.seed,0,9007199254740991,1,v=>{S.seed=Math.round(v);persist();},"110px");
+      const seedNI=NI("",S.seed,0,H3_SEED_MAX,1,v=>{S.seed=Math.round(v);persist();},"110px");
       seedNI.style.height="34px";seedNI.style.borderRadius="9px";seedNI.style.background="var(--h3-panel)";
       seedNI.style.border="1px solid var(--h3-line)";seedNI.style.width="auto";seedNI.style.flex="1 1 0";
       seedNI.style.minWidth="0";seedNI.style.maxWidth="150px";
-      const _rollSeed=()=>{ S.seed=Math.floor(Math.random()*9007199254740991); seedNI._inp.value=String(S.seed); persist(); };
+      const _rollSeed=()=>{ S.seed=Math.floor(Math.random()*(H3_SEED_MAX+1)); seedNI._inp.value=String(S.seed); persist(); };
       const randLbl=mk("span",{}, {className:"h3-slbl",textContent:"Random"});
       const randTgl=mk("button",{}, {type:"button",role:"switch",className:"h3-tgl","aria-label":"Randomize seed",title:"Randomize seed"});
       randTgl.appendChild(mk("span",{}, {className:"thumb"}));
@@ -2550,6 +2585,12 @@ app.registerExtension({
         setTimeout(()=>{ tx(seedChipCopy._lbl,"Copy"); seedChipCopy.classList.remove("ok","err"); },1300);
       };
       seedChip.append(seedChipLbl,seedChipVal,seedChipCopy);
+      const resolutionChip=mk("div",{}, {className:"h3-seedchip"});
+      const resolutionChipLbl=mk("span",{}, {className:"scl",textContent:"Resolution"});
+      const resolutionChipVal=mk("span",{}, {className:"scv",textContent:""});
+      resolutionChip.append(resolutionChipLbl,resolutionChipVal);
+      const previewMeta=mk("div",{}, {className:"h3-previewmeta"});
+      previewMeta.append(resolutionChip,seedChip);
       const liveChip=mk("div",{}, {className:"h3-livechip"});
       const liveDot=mk("span",{}, {className:"lcdot"});
       const liveTxt=mk("span",{}, {className:"lctxt",textContent:"Live preview"});
@@ -2576,7 +2617,7 @@ app.registerExtension({
       };
       self._h3_lpReset=()=>{ _showLiveChip(true,true); };
       self._h3_lpErr=(msg)=>{ _showLiveChip(false); showError(msg); };
-      previewBox.append(placeholder,vidEl,imgEl,errorBox,progWrap,seedChip,liveChip);
+      previewBox.append(placeholder,vidEl,imgEl,errorBox,progWrap,previewMeta,liveChip);
       const comparerWrap=mk("div",{position:"absolute",inset:"0",display:"none",cursor:"col-resize",userSelect:"none",borderRadius:"10px",overflow:"hidden",zIndex:"3"},{tabIndex:"0",role:"slider","aria-label":"Image comparison position","aria-valuemin":"0","aria-valuemax":"100","aria-valuenow":"50"});
       const cmpBase=mk("video",{position:"absolute",inset:"0",width:"100%",height:"100%",objectFit:"contain",background:"#000",display:"none"},{muted:true,loop:true,preload:"auto"});
       const cmpBaseImg=mk("img",{position:"absolute",inset:"0",width:"100%",height:"100%",objectFit:"contain",background:"#000",display:"none"},{alt:"Comparison source"});
@@ -2906,10 +2947,12 @@ app.registerExtension({
         const upscaleCompare=!!(_upResult&&item.filename===_upResult.filename);
         cmpBtn.style.display=imageCompare||upscaleCompare?"block":"none";
         cmpSourceSelect.style.display="none";
+        resolutionChip.style.display="none";
         const vtype=item.type||"output";
         const url=api.apiURL(`/view?filename=${encodeURIComponent(item.filename)}&type=${vtype}&subfolder=${encodeURIComponent(item.subfolder||"")}`);
         if(item.kind==="image"||/\.(png|jpe?g|webp|bmp)$/i.test(item.filename||"")){
           vidEl.style.display="none";vidEl.pause();vidEl.src="";
+          imgEl.onload=()=>_updateResolutionChip(imgEl.naturalWidth,imgEl.naturalHeight);
           imgEl.src=url;imgEl.style.display="block";
           placeholder.style.display="none";errorBox.style.display="none";
           _updateSeedChip(item.filename);
@@ -2917,6 +2960,7 @@ app.registerExtension({
           _updateTimeBar(item.filename);
           return;
         }
+        vidEl.onloadedmetadata=()=>_updateResolutionChip(vidEl.videoWidth,vidEl.videoHeight);
         vidEl.src=url;vidEl.style.display="block";imgEl.style.display="none";
         placeholder.style.display="none";errorBox.style.display="none";
         _updateSeedChip(item.filename);
@@ -2932,6 +2976,20 @@ app.registerExtension({
         }
         vidEl.muted=false;
         vidEl.play().catch(()=>{ vidEl.muted=true; vidEl.play().catch(()=>{}); });
+      };
+      const _stageVideoForExtend=async(item,selectMode=true)=>{
+        if(!item||item.kind==="image"||/\.(png|jpe?g|webp|bmp)$/i.test(item.filename||"")) return;
+        try{
+          const stage=await fetch("/h3one/stage_input",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({filename:item.filename,subfolder:item.subfolder||""})});
+          const sd=await stage.json();
+          if(!sd.ok) throw new Error(sd.error||"Could not copy the video to the input folder");
+          S.extendVideo=sd.name;
+          persist();
+          exSlot._restorePreview(sd.name);
+          if(selectMode) _switchMode("extend");
+        }catch(e){
+          showError("Could not send video to Extend: "+fmtErr(e));
+        }
       };
       const _favCurrent=async()=>{
         if(!_curItem) return;
@@ -3019,6 +3077,7 @@ app.registerExtension({
           if(item.favorite) name.style.color=C.lime;
           card.append(v,name);
           card.onclick=()=>_showVideo(item);
+          attachOutputContextMenu(card,item,{isVideo:!isImg,onExtend:_stageVideoForExtend});
           card.onmouseenter=()=>card.style.borderColor=C.lime;
           card.onmouseleave=()=>card.style.borderColor=C.border;
           galleryBox.appendChild(card);
@@ -3062,6 +3121,7 @@ app.registerExtension({
       const showError=(msg)=>{
         errorBox.style.display="flex";
         errorBox.innerHTML="";
+        resolutionChip.style.display="none";
         const title=mk("div",{fontSize:"12px",fontWeight:"700",color:C.err,letterSpacing:".02em",marginBottom:"6px"});
         tx(title,"Something went wrong");
         const body=mk("div",{fontSize:"11px",color:C.text,lineHeight:"1.6",whiteSpace:"pre-wrap",wordBreak:"break-word",maxWidth:"100%"});
@@ -3087,6 +3147,7 @@ app.registerExtension({
         _activeShownFiles.push(item.filename);
         const isTemp=item.type==="temp";
         if(!isTemp){
+          if(S.mode==="extend"&&!wasUpscale) _stageVideoForExtend(item,false);
           fetch("/h3one/set_output",{method:"POST",headers:{"Content-Type":"application/json"},
             body:JSON.stringify({node_id:self.id,info:{filename:item.filename,subfolder:item.subfolder||""}})}).catch(()=>{});
           const histMode=wasUpscale?("Upscale "+S.upscaleFactor+"x ("+(wasUpscale==="upscale-rtx"?"RTX VSR":"SeedVR2")+")"):S.mode;
@@ -3110,6 +3171,14 @@ app.registerExtension({
         }
         tx(seedChipVal,String(seed));
         seedChip.style.display="flex";
+      };
+      const _updateResolutionChip=(width,height)=>{
+        if(!(width>0&&height>0)){
+          resolutionChip.style.display="none";
+          return;
+        }
+        tx(resolutionChipVal,`${width}×${height}`);
+        resolutionChip.style.display="flex";
       };
       const _showSeedFromHistory=async(filename)=>{
         try{
@@ -3325,10 +3394,10 @@ app.registerExtension({
         wf["3"].inputs.vae_name=S.models.vaeVideo;
         wf["4"].inputs.vae_name=S.models.vaeAudio;
         const res=_resolveRes();
-        let frames=snapFrames(S.duration);
+        let frames=snapFrames(S.duration,S.fps);
         if(S.mode==="extend"){
           const EXT_CONTEXT=90;
-          frames=snapFrames(S.duration+EXT_CONTEXT/24);
+          frames=snapFrames(S.duration+EXT_CONTEXT/24,S.fps);
         }
         condNode.inputs.prompt=_finalPrompt(S.prompt);
         condNode.inputs.width=res.width;
@@ -3355,6 +3424,7 @@ app.registerExtension({
         }
         _applyAutoSave(wf);
         _insertCacheBust(wf);
+        patchOutputVideo(wf,S.fps);
         return {frames,res};
       };
 
@@ -3535,7 +3605,7 @@ app.registerExtension({
             wf["7"].inputs.conditioning=[kfId,0];
           }
         } else if(mode==="keyframes"){
-          const totalFrames=snapFrames(S.duration);
+          const totalFrames=snapFrames(S.duration,S.fps);
           const positions=[];
           let imgNum=0;
           S.kf.forEach((k)=>{
@@ -3581,7 +3651,7 @@ app.registerExtension({
           const mc=out["c"+idx+":mc"];
           const trim=out["c"+idx+":trim"];
           const save=out["c"+idx+":save"];
-          const frames=snapFrames(cl.duration);
+          const frames=snapFrames(cl.duration,S.fps);
           cond.inputs.prompt=_finalPrompt(cl.prompt, idx===0?"t2v":undefined);
           cond.inputs.width=res.width;
           cond.inputs.height=res.height;
@@ -3681,6 +3751,7 @@ app.registerExtension({
           });
         }
         _applyAutoSave(wf);
+        patchOutputVideo(wf,S.fps);
         return wf;
       };
 
@@ -3732,7 +3803,7 @@ app.registerExtension({
           const n=Math.max(1,Math.min(4,S.batch||1));
           const ids=[];
           for(let i=0;i<n;i++){
-            if(S.randomizeSeed){ S.seed=Math.floor(Math.random()*9007199254740991); seedNI._inp.value=String(S.seed); }
+            if(S.randomizeSeed){ S.seed=Math.floor(Math.random()*(H3_SEED_MAX+1)); seedNI._inp.value=String(S.seed); }
             const wf=await _buildWorkflow();
             const body={prompt:wf,client_id:api.clientId,extra_data:{enable_previews:true}};
             const res=await api.fetchApi("/prompt",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
@@ -3775,7 +3846,8 @@ app.registerExtension({
           const d=await r.json();
           _M={diffusion:d.diffusion_models||[],text_encoders:d.text_encoders||[],vaes:d.vaes||[],loras:d.loras||[]};
           const has=(arr,v)=>arr.some(m=>(m||"").toLowerCase()===(v||"").toLowerCase());
-          if(!has(_M.text_encoders,S.models.clip)) S.models.clip=_pickModel(_M.text_encoders,"qwen3vl_32b_minimax_h3");
+          const clipItems=h3TextEncoderItems(_M.text_encoders);
+          if(!has(clipItems,S.models.clip)) S.models.clip=_pickModel(clipItems,"qwen3vl_32b_minimax_h3");
           if(!has(_M.diffusion,S.models.unetT2V)) S.models.unetT2V=_pickModel(_M.diffusion,"fl2va");
           if(!has(_M.diffusion,S.models.unetR2V)) S.models.unetR2V=_pickModel(_M.diffusion,"ref2va");
           if(!has(_M.vaes,S.models.vaeVideo)) S.models.vaeVideo=_pickModel(_M.vaes,"video_vae");
@@ -3783,7 +3855,7 @@ app.registerExtension({
           persist();
           modelDDs.unetT2V.updateItems(_M.diffusion);
           modelDDs.unetR2V.updateItems(_M.diffusion);
-          modelDDs.clip.updateItems(_M.text_encoders);
+          modelDDs.clip.updateItems(clipItems);
           modelDDs.vaeVideo.updateItems(_M.vaes);
           modelDDs.vaeAudio.updateItems(_M.vaes);
           speedLoraDD.updateItems(["none"].concat(_M.loras));
@@ -3821,7 +3893,7 @@ app.registerExtension({
           _discTmpl=d.prompt_templates||{};
         }catch(e){console.warn("[H3One] load config:",e);}
       };
-      const _updateFramesLabel=()=>{ tx(framesLbl,`= ${snapFrames(S.duration)} frames @ 24fps`); };
+      const _updateFramesLabel=()=>{ tx(framesLbl,outputFrameLabel(S.duration,S.fps,(seconds)=>snapFrames(seconds,S.fps))); };
       _updateFramesLabel();
       _loadModels();
       _loadConfig();
