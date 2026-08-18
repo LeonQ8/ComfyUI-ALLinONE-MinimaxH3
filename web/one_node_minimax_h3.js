@@ -206,6 +206,14 @@ function imgAspectName(key){
   return names[key]||key||"";
 }
 
+function viewQuery(item,type){
+  const src=item||{};
+  const name=src.filename||src.video||"";
+  const t=type||src.type||"output";
+  const m=src.mtime||Date.now();
+  return `filename=${encodeURIComponent(name)}&type=${encodeURIComponent(t)}&subfolder=${encodeURIComponent(src.subfolder||"")}&m=${m}`;
+}
+
 function _captureFileSize(file){
   return new Promise((resolve)=>{
     if(!file||!file.type||!file.type.startsWith("image/")){ resolve(null); return; }
@@ -1629,7 +1637,7 @@ function persist(){
         secResult.appendChild(srTitle);
         if(it.video){
           const fileType=it.type||(/^ComfyUI_temp_/i.test(it.video)?"temp":"output");
-          const vurl=api.apiURL(`/view?filename=${encodeURIComponent(it.video)}&type=${encodeURIComponent(fileType)}&subfolder=${encodeURIComponent(it.subfolder||"")}`);
+          const vurl=api.apiURL(`/view?${viewQuery(it,fileType)}`);
           const isImageHistory=it.kind==="image"||/\.(png|jpe?g|webp|bmp)$/i.test(it.video||"");
           if(isImageHistory){
             const v=mk("img",{width:"100%",height:"100%",maxHeight:"100%",borderRadius:"8px",background:"#000",objectFit:"contain",outline:"none",display:"block",flex:"1 1 0",minHeight:"180px"},{src:vurl,alt:"Generated image"});
@@ -1719,7 +1727,7 @@ function persist(){
           }
           if(it.video){
             const thumb=mk("video",{width:"64px",height:"36px",borderRadius:"6px",background:"#000",objectFit:"cover",border:`1px solid ${C.border}`,flexShrink:"0",pointerEvents:"none",display:"block"},{muted:true,preload:"metadata",playsInline:true});
-            thumb.src=api.apiURL(`/view?filename=${encodeURIComponent(it.video)}&type=output&subfolder=${encodeURIComponent(it.subfolder||"")}`);
+            thumb.src=api.apiURL(`/view?${viewQuery(it)}`);
             thumb.addEventListener("loadeddata",()=>{ try{ thumb.currentTime=0.1; }catch(e){} });
             thumb.title=it.video;
             row.appendChild(thumb);
@@ -1867,7 +1875,7 @@ function persist(){
         }
         vis.forEach(item=>{
           const card=mk("div",{background:C.bg1,border:`1px solid ${C.border}`,borderRadius:"9px",overflow:"hidden",cursor:"pointer",display:"flex",flexDirection:"column",transition:"border-color .15s, background .15s"});
-          const url=api.apiURL(`/view?filename=${encodeURIComponent(item.filename)}&type=output&subfolder=${encodeURIComponent(item.subfolder||"")}`);
+          const url=api.apiURL(`/view?${viewQuery(item)}`);
           const isImg=item.kind==="image"||/\.(png|jpe?g|webp|bmp)$/i.test(item.filename||"");
           const v=isImg
             ? mk("img",{width:"100%",height:"78px",objectFit:"cover",display:"block",background:"#000",pointerEvents:"none"},{src:url})
@@ -1917,7 +1925,7 @@ function persist(){
             tx(lbPromptBox,"No prompt recorded for this video.");
           }
         }catch(e){ tx(lbPromptBox,"No prompt recorded for this video."); }
-        const lbUrl=api.apiURL(`/view?filename=${encodeURIComponent(item.filename)}&type=output&subfolder=${encodeURIComponent(item.subfolder||"")}`);
+        const lbUrl=api.apiURL(`/view?${viewQuery(item)}`);
         const isImg=item.kind==="image"||/\.(png|jpe?g|webp|bmp)$/i.test(item.filename||"");
         if(isImg){
           lbVideo.style.display="none";lbVideo.pause();lbVideo.src="";
@@ -3231,7 +3239,7 @@ function persist(){
       let _upscaleRun="";
       const _isImageItem=item=>!!(item&&(item.kind==="image"||/\.(png|jpe?g|webp|bmp)$/i.test(item.filename||"")));
       const _inputImageUrl=name=>api.apiURL(`/view?filename=${encodeURIComponent(name)}&type=input&subfolder=`);
-      const _outputImageUrl=item=>api.apiURL(`/view?filename=${encodeURIComponent(item.filename)}&type=${encodeURIComponent(item.type||"output")}&subfolder=${encodeURIComponent(item.subfolder||"")}`);
+      const _outputImageUrl=item=>api.apiURL(`/view?${viewQuery(item)}`);
       const _syncCompareSourceSelect=()=>{
         cmpSourceSelect.innerHTML="";
         _cmpImageRefs.forEach((name,index)=>{
@@ -3270,8 +3278,8 @@ function persist(){
           tx(cmpLbl1,"GENERATED");
         } else {
           if(!_upOrig||!_curItem) return;
-          const upUrl=api.apiURL(`/view?filename=${encodeURIComponent(_curItem.filename)}&type=${encodeURIComponent(_curItem.type||"output")}&subfolder=${encodeURIComponent(_curItem.subfolder||"")}`);
-          const orUrl=api.apiURL(`/view?filename=${encodeURIComponent(_upOrig.filename)}&type=${encodeURIComponent(_upOrig.type||"output")}&subfolder=${encodeURIComponent(_upOrig.subfolder||"")}`);
+          const upUrl=api.apiURL(`/view?${viewQuery(_curItem)}`);
+          const orUrl=api.apiURL(`/view?${viewQuery(_upOrig)}`);
           cmpGenVid.src=upUrl;
           cmpBase.src=orUrl;
           cmpGenVid.load();cmpBase.load();
@@ -3513,7 +3521,7 @@ function persist(){
         cmpSourceSelect.style.display="none";
         resolutionChip.style.display="none";
         const vtype=item.type||"output";
-        const url=api.apiURL(`/view?filename=${encodeURIComponent(item.filename)}&type=${vtype}&subfolder=${encodeURIComponent(item.subfolder||"")}`);
+        const url=api.apiURL(`/view?${viewQuery(item,vtype)}`);
         if(item.kind==="image"||/\.(png|jpe?g|webp|bmp)$/i.test(item.filename||"")){
           vidEl.style.display="none";vidEl.pause();vidEl.src="";
           imgEl.onload=()=>_updateResolutionChip(imgEl.naturalWidth,imgEl.naturalHeight);
@@ -3634,7 +3642,7 @@ function persist(){
         }
         _galItems.slice(0,30).forEach(item=>{
           const card=mk("div",{width:"96px",flexShrink:"0",cursor:"pointer",background:C.bg1,border:`1px solid ${C.border}`,borderRadius:"7px",overflow:"hidden"});
-          const url=api.apiURL(`/view?filename=${encodeURIComponent(item.filename)}&type=output&subfolder=${encodeURIComponent(item.subfolder||"")}`);
+          const url=api.apiURL(`/view?${viewQuery(item)}`);
           const isImg=item.kind==="image"||/\.(png|jpe?g|webp|bmp)$/i.test(item.filename||"");
           const v=isImg
             ? mk("img",{width:"100%",height:"54px",objectFit:"cover",display:"block",background:"#000",pointerEvents:"none"},{src:url})

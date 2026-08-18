@@ -125,3 +125,15 @@ export function imgAspectName(key) {
   };
   return names[key] || key || "";
 }
+
+// Query string for a /view URL. ComfyUI's save counter collapses when output
+// files are deleted, so filenames get reused and /view can serve stale browser
+// cached content. The m param is ignored by the server and only busts the
+// cache: the item's mtime when known, otherwise the current time.
+export function viewQuery(item, type) {
+  const src = item || {};
+  const name = src.filename || src.video || "";
+  const t = type || src.type || "output";
+  const m = src.mtime || Date.now();
+  return `filename=${encodeURIComponent(name)}&type=${encodeURIComponent(t)}&subfolder=${encodeURIComponent(src.subfolder || "")}&m=${m}`;
+}

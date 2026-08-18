@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { aspect, sizeOf, sameSize, orientRes, fitResolutionToAspect, resolveFitPrimary, imgProfileShort, imgAspectName } from "../web/h3_helpers.mjs";
+import { aspect, sizeOf, sameSize, orientRes, fitResolutionToAspect, resolveFitPrimary, imgProfileShort, imgAspectName, viewQuery } from "../web/h3_helpers.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, "..");
@@ -44,6 +44,7 @@ test("helpers file is non-trivial and exports the core helpers", () => {
   assert.ok(src.includes("export function sameSize"), "helpers must export sameSize");
   assert.ok(src.includes("export function imgProfileShort"), "helpers must export imgProfileShort");
   assert.ok(src.includes("export function imgAspectName"), "helpers must export imgAspectName");
+  assert.ok(src.includes("export function viewQuery"), "helpers must export viewQuery");
 });
 
 test("aspect: landscape and portrait", () => {
@@ -273,6 +274,34 @@ test("imgAspectName: custom and unknown keys pass through", () => {
   assert.equal(imgAspectName("17:5"), "17:5");
   assert.equal(imgAspectName(null), "");
   assert.equal(imgAspectName(undefined), "");
+});
+
+test("viewQuery: builds a busted query from a gallery item", () => {
+  const q = viewQuery({ filename: "img_00001_.png", subfolder: "one-node-minimax-h3", type: "output", mtime: 1234567890 });
+  assert.equal(q, "filename=img_00001_.png&type=output&subfolder=one-node-minimax-h3&m=1234567890");
+});
+
+test("viewQuery: falls back to Date.now when no mtime is known", () => {
+  const before = Date.now();
+  const q = viewQuery({ filename: "img_00001_.png", subfolder: "" });
+  assert.match(q, /^filename=img_00001_\.png&type=output&subfolder=&m=\d+$/);
+  const m = Number(q.split("m=")[1]);
+  assert.ok(m >= before && m <= Date.now() + 10, `m=${m} outside the timing window`);
+});
+
+test("viewQuery: honors an explicit type override and history-style items", () => {
+  const q = viewQuery({ video: "h3_00001_.mp4", subfolder: "one-node-minimax-h3", type: "output" }, "temp");
+  assert.match(q, /filename=h3_00001_\.mp4&type=temp&subfolder=one-node-minimax-h3/);
+});
+
+test("viewQuery: encodes special characters", () => {
+  const q = viewQuery({ filename: "my image (2).png", subfolder: "a b", type: "output", mtime: 7 });
+  assert.equal(q, "filename=my%20image%20(2).png&type=output&subfolder=a%20b&m=7");
+});
+
+test("viewQuery: empty item produces empty filename", () => {
+  const q = viewQuery(null);
+  assert.match(q, /^filename=&type=output&subfolder=&m=\d+$/);
 });
 
 // -- Build-order regression guard --------------------------------------------
