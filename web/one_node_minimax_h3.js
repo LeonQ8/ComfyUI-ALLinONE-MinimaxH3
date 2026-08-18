@@ -2434,6 +2434,7 @@ app.registerExtension({
       schedCapRow.append(schedCap,infoIcon("The noise schedule. MiniMax H3's native workflows use simple - keep it unless you know why you're changing it."));
       const schedDD=DD(SCHEDULERS,S.schedulerName||"simple",v=>{S.schedulerName=v;persist();});
       schedRow.append(schedCapRow,schedDD.el);
+      qualRow.style.gridColumn="1 / -1";
       params.append(resRow,durRow,fpsRow,stepsRow,qualRow,samplerRow,schedRow);
 
       // Custom sampling controls for Image mode (shown when the profile is Custom)
