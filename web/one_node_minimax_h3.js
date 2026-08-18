@@ -130,6 +130,49 @@ function sameSize(a, b){
   return a.width === b.width && a.height === b.height;
 }
 
+function orientRes(res, orientation){
+  if (!res || orientation !== "portrait" || res.width <= res.height) return res;
+  const flipped = Object.assign({}, res, {
+    width: res.height,
+    height: res.width,
+  });
+  if (typeof res.label === "string") {
+    const m = res.label.match(/^(\d+)x(\d+)(.*)$/);
+    if (m) flipped.label = `${m[2]}x${m[1]}${m[3]}`;
+  }
+  return flipped;
+}
+
+function fitResolutionToAspect(sourceWidth, sourceHeight, targetWidth, targetHeight){
+  const sw = Number(sourceWidth);
+  const sh = Number(sourceHeight);
+  const tw = Number(targetWidth);
+  const th = Number(targetHeight);
+  if (!(sw > 0) || !(sh > 0) || !(tw > 0) || !(th > 0)) {
+    return { width: tw, height: th };
+  }
+  const ratio = sw / sh;
+  const targetPixels = tw * th;
+  const capShort = 768;
+  const capLong = 1344;
+  let best = null;
+  for (let w = 32; w <= capLong; w += 32) {
+    for (let h = 32; h <= capLong; h += 32) {
+      const shortEdge = Math.min(w, h);
+      const longEdge = Math.max(w, h);
+      if (shortEdge > capShort) continue;
+      if (longEdge > capLong) continue;
+      if (w * h > targetPixels) continue;
+      const aspectError = Math.abs(Math.log((w / h) / ratio));
+      const areaError = Math.abs(Math.log((w * h) / targetPixels));
+      const score = aspectError * 12 + areaError;
+      if (!best || score < best.score) best = { width: w, height: h, score };
+    }
+  }
+  if (!best) return { width: tw, height: th };
+  return { width: best.width, height: best.height };
+}
+
 function _captureFileSize(file){
   return new Promise((resolve)=>{
     if(!file||!file.type||!file.type.startsWith("image/")){ resolve(null); return; }
@@ -950,6 +993,8 @@ app.registerExtension({
           mcLength:        saved.mcLength!==undefined?saved.mcLength:22,
           customW:         saved.customW||960,
           customH:         saved.customH||544,
+          resFitAspect:    saved.resFitAspect!==undefined?saved.resFitAspect:true,
+          resDriveFrom:    (saved.resDriveFrom&&typeof saved.resDriveFrom==="object"&&!Array.isArray(saved.resDriveFrom))?saved.resDriveFrom:{},
           upscaleFactor:   saved.upscaleFactor||2,
           upscaleMethod:   saved.upscaleMethod||"seedvr",
           modeSettings:    (saved.modeSettings&&typeof saved.modeSettings==="object")?saved.modeSettings:{},
@@ -1008,12 +1053,14 @@ function persist(){
           upscaleFactor:S.upscaleFactor,upscaleMethod:S.upscaleMethod,
           modeSettings:S.modeSettings,
           autoSave:S.autoSave,customW:S.customW,customH:S.customH,
+          resFitAspect:S.resFitAspect,resDriveFrom:S.resDriveFrom,
           playOnFinish:S.playOnFinish,folded:S.folded,livePreview:S.livePreview,
           livePreviewMode:S.livePreviewMode,
           imgSub:S.imgSub,imgAspect:S.imgAspect,imgMP:S.imgMP,imgW:S.imgW,imgH:S.imgH,
           imgProfile:S.imgProfile,imgRefs:S.imgRefs,imgRefsSize:S.imgRefsSize,
           resOrientation:S.resOrientation,
         });
+        if(typeof _syncFitRow==="function"){ try{ _syncFitRow(); }catch(e){} }
       }
 
       const _rememberFrameInfo=(orientKey,sizeKey,size)=>{
@@ -1024,6 +1071,129 @@ function persist(){
         if(orientKey) S[orientKey]=newOrient;
         S[sizeKey]=size||null;
         persist();
+        if(typeof _syncFitRow==="function") _syncFitRow();
+      };
+
+      const _validSize=(size)=>!size||typeof size!=="object" ? false : (Number(size.width)>0 && Number(size.height)>0);
+      const _labelSize=(size,label)=>Object.assign({}, size, {label});
+      const _refImageSize=(state,idx)=>{
+        const name=state.refImages&&state.refImages[idx];
+        if(!name) return null;
+        const sz=state.refImageSizes&&state.refImageSizes[name];
+        return _validSize(sz) ? _labelSize(sz, `Reference ${idx+1}`) : null;
+      };
+      const _refVideoSize=(state,idx)=>{
+        const v=state.refVideos&&state.refVideos[idx];
+        if(!v||!v.width) return null;
+        if(!_validSize({width:v.width,height:v.height})) return null;
+        return _labelSize({width:v.width,height:v.height}, `Video ${idx+1}`);
+      };
+      const _kfSize=(state,idx)=>{
+        const k=state.kf&&state.kf[idx];
+        if(!k||!k.img) return null;
+        if(!_validSize({width:k.width,height:k.height})) return null;
+        return _labelSize({width:k.width,height:k.height}, `Keyframe ${k.pos}`);
+      };
+      const _imgRefSize=(state,idx)=>{
+        const name=state.imgRefs&&state.imgRefs[idx];
+        if(!name) return null;
+        const sz=state.imgRefsSize&&state.imgRefsSize[name];
+        return _validSize(sz) ? _labelSize(sz, `Image ref ${idx+1}`) : null;
+      };
+
+      const _fitSourceSize=(state=S)=>{
+        const mode=state.mode;
+        const drive=(state.resDriveFrom&&state.resDriveFrom[mode])||null;
+        if(mode==="t2v"||mode==="chain") return null;
+        if(mode==="i2v"){
+          if(drive==="last"&&_validSize(state.lastFrameSize)) return _labelSize(state.lastFrameSize,"Last Frame");
+          if(_validSize(state.firstFrameSize)) return _labelSize(state.firstFrameSize,"First Frame");
+          if(_validSize(state.lastFrameSize)) return _labelSize(state.lastFrameSize,"Last Frame");
+          return null;
+        }
+        if(mode==="r2v"||mode==="audio_drive"){
+          if(drive){
+            const m=drive.match(/^(ref|video):(\d+)$/);
+            if(m){
+              const r=m[1]==="ref" ? _refImageSize(state,+m[2]) : _refVideoSize(state,+m[2]);
+              if(r) return r;
+            }
+          }
+          if(state.refImages&&state.refImages.length){
+            for(let i=0;i<state.refImages.length;i++){
+              const r=_refImageSize(state,i);
+              if(r) return r;
+            }
+          }
+          if(state.refVideos&&state.refVideos.length){
+            for(let i=0;i<state.refVideos.length;i++){
+              const r=_refVideoSize(state,i);
+              if(r) return r;
+            }
+          }
+          return null;
+        }
+        if(mode==="keyframes"){
+          const kfs=(state.kf||[]).filter(k=>k&&k.img&&_validSize({width:k.width,height:k.height}));
+          if(!kfs.length) return null;
+          if(drive&&drive.startsWith("kf:")){
+            const r=_kfSize(state,parseInt(drive.slice(3),10));
+            if(r) return r;
+          }
+          kfs.sort((a,b)=>(a.pos||0)-(b.pos||0));
+          return _labelSize({width:kfs[0].width,height:kfs[0].height}, `Keyframe ${kfs[0].pos}`);
+        }
+        if(mode==="extend"){
+          return _validSize(state.extendVideoSize) ? _labelSize(state.extendVideoSize,"Source video") : null;
+        }
+        if(mode==="image"){
+          if(drive&&drive.startsWith("imgRef:")){
+            const r=_imgRefSize(state,parseInt(drive.slice(7),10));
+            if(r) return r;
+          }
+          if(state.imgRefs&&state.imgRefs.length){
+            for(let i=0;i<state.imgRefs.length;i++){
+              const r=_imgRefSize(state,i);
+              if(r) return r;
+            }
+          }
+          return null;
+        }
+        return null;
+      };
+
+      const _effectiveResOrientation=(state=S)=>{
+        if(state.resOrientation!=="auto") return state.resOrientation;
+        const src=_fitSourceSize(state);
+        if(!src) return "landscape";
+        return aspect(src.width,src.height)||"landscape";
+      };
+
+      const _driveFromOptions=(state=S)=>{
+        const mode=state.mode;
+        const opts=[];
+        if(mode==="i2v"){
+          if(_validSize(state.firstFrameSize)) opts.push({value:"first",label:"First Frame"});
+          if(_validSize(state.lastFrameSize)) opts.push({value:"last",label:"Last Frame"});
+        } else if(mode==="r2v"||mode==="audio_drive"){
+          (state.refImages||[]).forEach((n,i)=>{
+            const sz=state.refImageSizes&&state.refImageSizes[n];
+            if(_validSize(sz)) opts.push({value:`ref:${i}`,label:`Reference ${i+1}`});
+          });
+          (state.refVideos||[]).forEach((v,i)=>{
+            if(v&&v.width>0) opts.push({value:`video:${i}`,label:`Video ${i+1}`});
+          });
+        } else if(mode==="keyframes"){
+          (state.kf||[]).forEach((k,i)=>{
+            if(k&&k.img&&k.width>0&&k.height>0) opts.push({value:`kf:${i}`,label:`Keyframe ${k.pos}`});
+          });
+        } else if(mode==="image"){
+          (state.imgRefs||[]).forEach((n,i)=>{
+            const sz=state.imgRefsSize&&state.imgRefsSize[n];
+            if(_validSize(sz)) opts.push({value:`imgRef:${i}`,label:`Image ref ${i+1}`});
+          });
+        }
+        return opts;
       };
 
       const _foldState=S.folded||{};
@@ -2407,6 +2577,7 @@ function persist(){
         else if(S.mode==="image"){ modeHdr.style.display="flex"; modeTitle.textContent="Image (H3 Studio)"; _renderImgRefs(); imgArea.style.display="flex"; if(_syncImgAdvRef) _syncImgAdvRef(); }
         else { modeHdr.style.display="none"; modeTitle.textContent="Text to Video"; }
         if(typeof _syncLiveToggle==="function") _syncLiveToggle();
+        if(typeof _syncFitRow==="function") _syncFitRow();
       };
 
       // -- PARAMS ------------------------------------------------------------
@@ -2419,12 +2590,22 @@ function persist(){
       const params=mk("div",{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"8px"});
       let _resItems=[];
       const _resolveRes=()=>{
+        let base;
         if(S.resolution==="Custom"){
           const w=Math.max(32,Math.min(16384,Math.round(S.customW/32)*32));
           const h=Math.max(32,Math.min(16384,Math.round(S.customH/32)*32));
-          return {width:w,height:h,label:`${w}x${h} (custom)`};
+          base={width:w,height:h,label:`${w}x${h} (custom)`};
+        } else {
+          base=_resItems.find(r=>r.label===S.resolution)||_resItems[0]||{width:960,height:544,label:S.resolution};
         }
-        return _resItems.find(r=>r.label===S.resolution)||_resItems[0]||{width:960,height:544,label:S.resolution};
+        if(S.resFitAspect&&S.resolution!=="Custom"){
+          const src=_fitSourceSize(S);
+          if(src){
+            const fit=fitResolutionToAspect(src.width,src.height,base.width,base.height);
+            return {width:fit.width,height:fit.height,label:`${fit.width}x${fit.height} (Fit · ${src.label})`};
+          }
+        }
+        return orientRes(base, _effectiveResOrientation(S));
       };
       const resRow=mk("div",{display:"flex",flexDirection:"column",gap:"3px"});
       const resCapRow=mk("div",{display:"flex",alignItems:"center",gap:"4px"});
@@ -2435,8 +2616,19 @@ function persist(){
       tx(swapBtn,"\u21C4");
       swapBtn.onmouseenter=()=>{swapBtn.style.borderColor=C.lime;swapBtn.style.color=C.lime;};
       swapBtn.onmouseleave=()=>{swapBtn.style.borderColor=C.border;swapBtn.style.color=C.muted;};
+      const fitBtn=mk("button",{height:"28px",padding:"0 10px",flexShrink:"0",background:C.bg3,border:`1px solid ${C.border}`,borderRadius:"7px",color:C.muted,fontSize:"8px",fontWeight:"700",letterSpacing:".06em",textTransform:"uppercase",cursor:"pointer",outline:"none",transition:"border-color .15s,color .15s,background .15s",boxSizing:"border-box"},{type:"button",title:"Auto-fit resolution to the primary source aspect","aria-label":"Auto-fit resolution"});
+      tx(fitBtn,"Fit");
+      const _syncFitBtn=()=>{
+        const on=!!S.resFitAspect;
+        fitBtn.style.background=on?C.lime:C.bg3;
+        fitBtn.style.color=on?"#111":C.muted;
+        fitBtn.style.borderColor=on?C.lime:C.border;
+        tx(fitBtn,on?"Fit: ON":"Fit");
+      };
+      fitBtn.onclick=()=>{ S.resFitAspect=!S.resFitAspect; persist(); _syncFitBtn(); _syncFitRow(); _updateFramesLabel&&_updateFramesLabel(); };
+      _syncFitBtn();
       const resDDWrap=mk("div",{display:"flex",alignItems:"center",gap:"6px",width:"100%"});
-      resDDWrap.append(resDD.el,swapBtn);
+      resDDWrap.append(resDD.el,swapBtn,fitBtn);
       resRow.append(resCapRow,resDDWrap);
       const resCustom=mk("div",{display:"none",alignItems:"center",gap:"6px"});
       const resCW=NI("",S.customW,32,16384,32,v=>{S.customW=Math.max(32,Math.min(16384,Math.round(v/32)*32));persist();_updResMP();},"58px");
@@ -2452,6 +2644,59 @@ function persist(){
       resCustom.append(resCW,resX,resCH,resMPLbl);
       resRow.appendChild(resCustom);
       const _updResCustom=()=>{ resCustom.style.display=S.resolution==="Custom"?"flex":"none"; _updResMP(); };
+
+      const driveFromDD=DD([], "", v=>{
+        S.resDriveFrom=S.resDriveFrom||{};
+        S.resDriveFrom[S.mode]=v;
+        persist();
+        _syncFitRow();
+        _updateFramesLabel&&_updateFramesLabel();
+      });
+      driveFromDD.el.style.display="none";
+      driveFromDD.el.style.fontSize="9px";
+      driveFromDD.el.style.height="22px";
+      driveFromDD.el.style.padding="0 8px";
+      const fitInfo=mk("div",{fontSize:"8px",color:C.muted,lineHeight:"1.4"});
+      tx(fitInfo,"");
+      const driveFromRow=mk("div",{display:"none",alignItems:"center",gap:"6px",flexWrap:"wrap"});
+      const driveFromLbl=mk("div",{fontSize:"9px",color:C.muted,flexShrink:"0"});
+      tx(driveFromLbl,"Drive from");
+      driveFromRow.append(driveFromLbl, driveFromDD.el, fitInfo);
+      resRow.appendChild(driveFromRow);
+
+      const _syncFitRow=()=>{
+        if(!S.resFitAspect||S.resolution==="Custom"){
+          driveFromRow.style.display="none";
+          return;
+        }
+        const opts=_driveFromOptions(S);
+        const drive=(S.resDriveFrom&&S.resDriveFrom[S.mode])||null;
+        const active=drive && opts.some(o=>o.value===drive);
+        const cur=active? drive : (opts[0]&&opts[0].value);
+        if(cur && (!active||!drive)){
+          S.resDriveFrom=S.resDriveFrom||{};
+          S.resDriveFrom[S.mode]=cur;
+          persist();
+        }
+        if(!opts.length){
+          driveFromRow.style.display="none";
+          return;
+        }
+        driveFromRow.style.display="flex";
+        driveFromDD.updateItems(opts.map(o=>o.label));
+        driveFromDD.set(opts.find(o=>o.value===cur).label);
+        const src=_fitSourceSize(S);
+        const r=_resolveRes();
+        if(src){
+          const mp=(r.width*r.height/1000000).toFixed(2);
+          tx(fitInfo, `${src.label} ${src.width}x${src.height} -> canvas ${r.width}x${r.height} (${mp}MP)`);
+          const over=Math.min(r.width,r.height)>768||Math.max(r.width,r.height)>1344;
+          fitInfo.style.color=over?C.warn:C.muted;
+        } else {
+          tx(fitInfo, "Upload a primary image or video to drive the fit.");
+          fitInfo.style.color=C.warn;
+        }
+      };
       const _swapRes=()=>{
         const r=_resolveRes();
         const flip=_resItems.find(p=>p.width===r.height&&p.height===r.width&&p.width!==r.width);
@@ -2468,6 +2713,7 @@ function persist(){
         persist();_updateFramesLabel();_updResCustom();
       };
       swapBtn.onclick=_swapRes;
+      _syncFitRow();
       const durFpsCell=mk("div",{display:"flex",flexDirection:"column",gap:"3px"});
       const durCap=mk("div",{fontSize:"10px",color:C.text});tx(durCap,"Duration (s)");
       const durInner=mk("div",{display:"flex",alignItems:"center",gap:"8px"});

@@ -25,3 +25,47 @@ export function sameSize(a, b) {
   if (!a || !b) return false;
   return a.width === b.width && a.height === b.height;
 }
+
+export function orientRes(res, orientation) {
+  if (!res || orientation !== "portrait" || res.width <= res.height) return res;
+  const flipped = {
+    ...res,
+    width: res.height,
+    height: res.width,
+  };
+  if (typeof res.label === "string") {
+    const m = res.label.match(/^(\d+)x+(\d+)(.*)$/);
+    if (m) flipped.label = `${m[2]}x${m[1]}${m[3]}`;
+  }
+  return flipped;
+}
+
+export function fitResolutionToAspect(sourceWidth, sourceHeight, targetWidth, targetHeight) {
+  const sw = Number(sourceWidth);
+  const sh = Number(sourceHeight);
+  const tw = Number(targetWidth);
+  const th = Number(targetHeight);
+  if (!(sw > 0) || !(sh > 0) || !(tw > 0) || !(th > 0)) {
+    return { width: tw, height: th };
+  }
+  const ratio = sw / sh;
+  const targetPixels = tw * th;
+  const capShort = 768;
+  const capLong = 1344;
+  let best = null;
+  for (let w = 32; w <= capLong; w += 32) {
+    for (let h = 32; h <= capLong; h += 32) {
+      const shortEdge = Math.min(w, h);
+      const longEdge = Math.max(w, h);
+      if (shortEdge > capShort) continue;
+      if (longEdge > capLong) continue;
+      if (w * h > targetPixels) continue;
+      const aspectError = Math.abs(Math.log(w / h / ratio));
+      const areaError = Math.abs(Math.log((w * h) / targetPixels));
+      const score = aspectError * 12 + areaError;
+      if (!best || score < best.score) best = { width: w, height: h, score };
+    }
+  }
+  if (!best) return { width: tw, height: th };
+  return { width: best.width, height: best.height };
+}

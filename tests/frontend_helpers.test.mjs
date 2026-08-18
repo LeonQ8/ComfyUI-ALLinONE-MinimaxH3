@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { aspect, sizeOf, sameSize } from "../web/h3_helpers.mjs";
+import { aspect, sizeOf, sameSize, orientRes, fitResolutionToAspect } from "../web/h3_helpers.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, "..");
@@ -97,4 +97,88 @@ test("sameSize: equal, null/null, mixed", () => {
   assert.ok(!sameSize(null, { width: 1, height: 1 }));
   assert.ok(!sameSize({ width: 1, height: 1 }, null));
   assert.ok(!sameSize({ width: 1920, height: 1080 }, { width: 1280, height: 720 }));
+});
+
+test("orientRes: flips landscape preset when portrait is requested", () => {
+  const r = orientRes({ width: 1344, height: 768, label: "1344x768" }, "portrait");
+  assert.equal(r.width, 768);
+  assert.equal(r.height, 1344);
+  assert.equal(r.label, "768x1344");
+});
+
+test("orientRes: leaves already-portrait preset alone", () => {
+  const r = orientRes({ width: 768, height: 1344, label: "768x1344" }, "portrait");
+  assert.equal(r.width, 768);
+  assert.equal(r.height, 1344);
+});
+
+test("orientRes: landscape orientation never flips", () => {
+  const r = orientRes({ width: 1344, height: 768, label: "1344x768" }, "landscape");
+  assert.equal(r.width, 1344);
+  assert.equal(r.height, 768);
+});
+
+test("orientRes: null or missing orientation returns the input unchanged", () => {
+  const input = { width: 1344, height: 768, label: "1344x768" };
+  assert.strictEqual(orientRes(input, null), input);
+  const r = orientRes({ width: 1344, height: 768, label: "1344x768" });
+  assert.equal(r.width, 1344);
+  assert.equal(r.label, "1344x768");
+});
+
+test("orientRes: square preset is unchanged even with portrait request", () => {
+  const r = orientRes({ width: 768, height: 768, label: "768x768" }, "portrait");
+  assert.equal(r.width, 768);
+  assert.equal(r.height, 768);
+});
+
+test("fitResolutionToAspect: 16:9 source into 1344x768 budget stays 16:9-ish", () => {
+  const r = fitResolutionToAspect(1920, 1080, 1344, 768);
+  assert.ok(r.width % 32 === 0);
+  assert.ok(r.height % 32 === 0);
+  assert.ok(Math.min(r.width, r.height) <= 768);
+  assert.ok(Math.max(r.width, r.height) <= 1344);
+  assert.ok(r.width * r.height <= 1344 * 768);
+  const ratio = r.width / r.height;
+  assert.ok(Math.abs(Math.log(ratio / (1920 / 1080))) < 0.05);
+});
+
+test("fitResolutionToAspect: 9:16 source flips into portrait fit", () => {
+  const r = fitResolutionToAspect(1080, 1920, 1344, 768);
+  assert.ok(r.width % 32 === 0);
+  assert.ok(r.height % 32 === 0);
+  assert.ok(Math.min(r.width, r.height) <= 768);
+  assert.ok(Math.max(r.width, r.height) <= 1344);
+  assert.ok(r.width * r.height <= 1344 * 768);
+  assert.ok(r.height > r.width, "portrait source should produce taller result");
+});
+
+test("fitResolutionToAspect: 1:1 source lands on a square-ish fit", () => {
+  const r = fitResolutionToAspect(1024, 1024, 1344, 768);
+  assert.ok(r.width % 32 === 0 && r.height % 32 === 0);
+  assert.ok(Math.abs(Math.log(r.width / r.height)) < 0.05);
+  assert.ok(Math.min(r.width, r.height) <= 768);
+  assert.ok(Math.max(r.width, r.height) <= 1344);
+});
+
+test("fitResolutionToAspect: extreme 5:1 panorama stays within caps", () => {
+  const r = fitResolutionToAspect(5000, 1000, 1344, 768);
+  assert.ok(r.width % 32 === 0);
+  assert.ok(r.height % 32 === 0);
+  assert.ok(Math.min(r.width, r.height) <= 768);
+  assert.ok(Math.max(r.width, r.height) <= 1344);
+  assert.ok(r.width > r.height);
+});
+
+test("fitResolutionToAspect: degenerate inputs return target unchanged", () => {
+  assert.deepEqual(fitResolutionToAspect(0, 1080, 1344, 768), { width: 1344, height: 768 });
+  assert.deepEqual(fitResolutionToAspect(1920, 0, 1344, 768), { width: 1344, height: 768 });
+  assert.deepEqual(fitResolutionToAspect(1920, 1080, 0, 768), { width: 0, height: 768 });
+  assert.deepEqual(fitResolutionToAspect(NaN, 1080, 1344, 768), { width: 1344, height: 768 });
+});
+
+test("fitResolutionToAspect: respects a smaller area budget", () => {
+  const r = fitResolutionToAspect(1920, 1080, 800, 450);
+  assert.ok(r.width * r.height <= 800 * 450 + 1);
+  assert.ok(r.width % 32 === 0 && r.height % 32 === 0);
 });
