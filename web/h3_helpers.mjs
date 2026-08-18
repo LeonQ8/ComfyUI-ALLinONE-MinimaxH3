@@ -74,7 +74,7 @@ export function fitResolutionToAspect(sourceWidth, sourceHeight, targetWidth, ta
 //
 // `cfg` is the per-mode object saved as state.fitCfg[mode]:
 //   { key: "first"|"last"|"ref:0"|"video:0"|"kf:0"|"imgRef:0"|"src"|null,
-//     mode: "fit"|"custom", custom: {width,height}|null }
+//     mode: "fit"|"custom"|"normal", custom: {width,height}|null }
 // `slots` is the ordered list of available sources for that mode:
 //   [{ key, label, size: {width,height} }, ...]
 //
@@ -89,6 +89,9 @@ export function resolveFitPrimary(cfg, slots) {
   const slot = list.find((s) => s.key === key);
   if (c.mode === "custom" && c.custom && c.custom.width > 0 && c.custom.height > 0) {
     return { key, label: slot.label, mode: "custom", size: c.custom };
+  }
+  if (c.mode === "normal") {
+    return { key, label: slot.label, mode: "normal", size: slot.size };
   }
   return { key, label: slot.label, mode: "fit", size: slot.size };
 }

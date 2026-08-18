@@ -183,6 +183,9 @@ function resolveFitPrimary(cfg, slots){
   if (c.mode==="custom" && c.custom && c.custom.width>0 && c.custom.height>0) {
     return { key, label: slot.label, mode: "custom", size: c.custom };
   }
+  if (c.mode==="normal") {
+    return { key, label: slot.label, mode: "normal", size: slot.size };
+  }
   return { key, label: slot.label, mode: "fit", size: slot.size };
 }
 
@@ -1006,7 +1009,6 @@ app.registerExtension({
           mcLength:        saved.mcLength!==undefined?saved.mcLength:22,
           customW:         saved.customW||960,
           customH:         saved.customH||544,
-          resFitAspect:    saved.resFitAspect!==undefined?saved.resFitAspect:true,
           resDriveFrom:    (saved.resDriveFrom&&typeof saved.resDriveFrom==="object"&&!Array.isArray(saved.resDriveFrom))?saved.resDriveFrom:{},
           fitCfg:          (saved.fitCfg&&typeof saved.fitCfg==="object"&&!Array.isArray(saved.fitCfg))?saved.fitCfg:{},
           upscaleFactor:   saved.upscaleFactor||2,
@@ -1079,7 +1081,7 @@ function persist(){
           upscaleFactor:S.upscaleFactor,upscaleMethod:S.upscaleMethod,
           modeSettings:S.modeSettings,
           autoSave:S.autoSave,customW:S.customW,customH:S.customH,
-          resFitAspect:S.resFitAspect,resDriveFrom:S.resDriveFrom,fitCfg:S.fitCfg,
+          resDriveFrom:S.resDriveFrom,fitCfg:S.fitCfg,
           playOnFinish:S.playOnFinish,folded:S.folded,livePreview:S.livePreview,
           livePreviewMode:S.livePreviewMode,
           imgSub:S.imgSub,imgAspect:S.imgAspect,imgMP:S.imgMP,imgW:S.imgW,imgH:S.imgH,
@@ -1176,16 +1178,11 @@ function persist(){
         cfg.custom=(mode==="custom"&&custom&&_validSize(custom))?{width:Math.max(32,Math.round(custom.width/32)*32),height:Math.max(32,Math.round(custom.height/32)*32)}:null;
       };
 
-      const _clearFitPrimary=(state=S)=>{
-        const cfg=_fitCfgFor(state);
-        cfg.key=null; cfg.mode="fit"; cfg.custom=null;
-      };
-
       let _fitChipRefreshes=[];
       const _mkFitChip=(slotKey,label)=>{
         const chip=mk("button",{background:"transparent",border:`1px solid ${C.border}`,borderRadius:"5px",padding:"1px 6px",fontSize:"8px",fontWeight:"700",color:C.muted,cursor:"pointer",outline:"none",transition:"all .15s",whiteSpace:"nowrap"},{type:"button"});
         tx(chip,"Fit");
-        chip.title=`Set the video canvas from this ${label}. Click to cycle: Fit (auto aspect) -> Custom size -> Off.`;
+        chip.title=`Set the video canvas from this ${label}. Click to cycle: Fit (auto aspect) -> Custom size -> Normal (native size).`;
         const wrap=mk("div",{display:"flex",flexDirection:"column",gap:"2px",alignItems:"center"});
         const sizeRow=mk("div",{display:"none",alignItems:"center",gap:"2px"});
         const cw=NI("",960,32,16384,32,v=>{ const p=_fitPrimary(S); if(p&&p.key===slotKey){ _setFitPrimary(S,slotKey,"custom",{width:v,height:(p.custom?p.custom.height:544)}); persist(); _syncFitRowFn(); } },"42px");
@@ -1197,11 +1194,12 @@ function persist(){
           if(!wrap.isConnected) return;
           const p=_fitPrimary(S);
           const isPrimary=!!p&&p.key===slotKey;
-          const isCustom=isPrimary&&p.mode==="custom";
+          const mode=isPrimary?p.mode:"none";
+          const isCustom=mode==="custom";
           chip.style.borderColor=isPrimary?C.lime:C.border;
           chip.style.color=isPrimary?C.lime:C.muted;
           chip.style.background=isPrimary?"rgba(var(--h3accent-rgb),.10)":"transparent";
-          tx(chip,isCustom?"Custom":(isPrimary?"Fit: ON":"Fit"));
+          tx(chip,mode==="custom"?"Custom":(mode==="normal"?"Normal":(isPrimary?"Fit: ON":"Fit")));
           sizeRow.style.display=isCustom?"flex":"none";
           if(isCustom&&p.custom){
             cw._inp.value=String(Math.round(p.custom.width/32)*32);
@@ -1212,7 +1210,8 @@ function persist(){
           const p=_fitPrimary(S);
           if(p&&p.key===slotKey){
             if(p.mode==="fit"){ _setFitPrimary(S,slotKey,"custom",p.size); }
-            else { _clearFitPrimary(S); }
+            else if(p.mode==="custom"){ _setFitPrimary(S,slotKey,"normal",p.size); }
+            else { _setFitPrimary(S,slotKey,"fit",p.size); }
           } else {
             const sz=_fitSlotSize(S,slotKey);
             _setFitPrimary(S,slotKey,"fit",sz);
@@ -1280,10 +1279,10 @@ function persist(){
           .h3-ctitle{font-size:12.5px;font-weight:700;color:var(--h3-tx);}
           .h3-cdesc{font-size:10px;color:var(--h3-tx2);line-height:1.5;}
           /* recipe line: pill chips in two visual groups (media | sampling) */
-          .h3-recipe{display:flex;align-items:center;flex-wrap:wrap;gap:5px;font-variant-numeric:tabular-nums;}
-          .h3-chip{display:inline-flex;align-items:center;gap:5px;background:var(--h3-field);border:1px solid var(--h3-line);border-radius:20px;padding:3px 9px;font-size:10px;line-height:1.4;flex-shrink:0;}
-          .h3-chip .cl{font-size:8.5px;font-weight:700;letter-spacing:.04em;color:var(--h3-tx3);}
-          .h3-chip .cv{font-weight:700;color:var(--h3-tx);}
+          .h3-recipe{display:flex;align-items:center;flex-wrap:nowrap;gap:5px;overflow:hidden;font-variant-numeric:tabular-nums;}
+          .h3-chip{display:inline-flex;align-items:center;gap:5px;background:var(--h3-field);border:1px solid var(--h3-line);border-radius:20px;padding:3px 9px;font-size:10px;line-height:1.4;flex-shrink:0;max-width:150px;overflow:hidden;}
+          .h3-chip .cl{font-size:8.5px;font-weight:700;letter-spacing:.04em;color:var(--h3-tx3);flex-shrink:0;}
+          .h3-chip .cv{font-weight:700;color:var(--h3-tx);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;}
           .h3-chip.media .cv{color:var(--h3accent);}
           .h3-chip.btn{cursor:pointer;font-family:inherit;outline:none;}
           .h3-chip.btn:hover{border-color:var(--h3-line2);}
@@ -2644,13 +2643,17 @@ function persist(){
         } else {
           base=_resItems.find(r=>r.label===S.resolution)||_resItems[0]||{width:960,height:544,label:S.resolution};
         }
-        if(S.resFitAspect&&S.resolution!=="Custom"){
+        if(S.resolution!=="Custom"){
           const p=_fitPrimary(S);
           if(p){
             if(p.mode==="custom"){
               const w=Math.max(32,Math.min(16384,Math.round(p.size.width/32)*32));
               const h=Math.max(32,Math.min(16384,Math.round(p.size.height/32)*32));
               return {width:w,height:h,label:`${w}x${h} (Custom · ${p.label})`};
+            }
+            if(p.mode==="normal"){
+              const fit=fitResolutionToAspect(p.size.width,p.size.height,1344,768);
+              return {width:fit.width,height:fit.height,label:`${fit.width}x${fit.height} (Normal · ${p.label})`};
             }
             const fit=fitResolutionToAspect(p.size.width,p.size.height,base.width,base.height);
             return {width:fit.width,height:fit.height,label:`${fit.width}x${fit.height} (Fit · ${p.label})`};
@@ -2667,19 +2670,8 @@ function persist(){
       tx(swapBtn,"\u21C4");
       swapBtn.onmouseenter=()=>{swapBtn.style.borderColor=C.lime;swapBtn.style.color=C.lime;};
       swapBtn.onmouseleave=()=>{swapBtn.style.borderColor=C.border;swapBtn.style.color=C.muted;};
-      const fitBtn=mk("button",{height:"28px",padding:"0 10px",flexShrink:"0",background:C.bg3,border:`1px solid ${C.border}`,borderRadius:"7px",color:C.muted,fontSize:"8px",fontWeight:"700",letterSpacing:".06em",textTransform:"uppercase",cursor:"pointer",outline:"none",transition:"border-color .15s,color .15s,background .15s",boxSizing:"border-box"},{type:"button",title:"Auto-fit resolution to the primary source aspect","aria-label":"Auto-fit resolution"});
-      tx(fitBtn,"Fit");
-      const _syncFitBtn=()=>{
-        const on=!!S.resFitAspect;
-        fitBtn.style.background=on?C.lime:C.bg3;
-        fitBtn.style.color=on?"#111":C.muted;
-        fitBtn.style.borderColor=on?C.lime:C.border;
-        tx(fitBtn,on?"Fit: ON":"Fit");
-      };
-      fitBtn.onclick=()=>{ S.resFitAspect=!S.resFitAspect; persist(); _syncFitBtn(); _syncFitRowFn(); _updateFramesLabel&&_updateFramesLabel(); };
-      _syncFitBtn();
       const resDDWrap=mk("div",{display:"flex",alignItems:"center",gap:"6px",width:"100%"});
-      resDDWrap.append(resDD.el,swapBtn,fitBtn);
+      resDDWrap.append(resDD.el,swapBtn);
       resRow.append(resCapRow,resDDWrap);
       const resCustom=mk("div",{display:"none",alignItems:"center",gap:"6px"});
       const resCW=NI("",S.customW,32,16384,32,v=>{S.customW=Math.max(32,Math.min(16384,Math.round(v/32)*32));persist();_updResMP();},"58px");
@@ -2703,10 +2695,8 @@ function persist(){
       resRow.appendChild(fitInfoRow);
 
       _syncFitRowFn=()=>{
-        const noFitMode=(S.mode==="t2v"||S.mode==="chain");
-        fitBtn.style.display=noFitMode?"none":"";
         const src=_fitSourceSize(S);
-        const fitActive=!!(S.resFitAspect&&S.resolution!=="Custom"&&src);
+        const fitActive=!!(S.resolution!=="Custom"&&src);
         if(!fitActive){
           fitInfoRow.style.display="none";
           resDD.set(S.resolution);
@@ -2722,10 +2712,6 @@ function persist(){
         _fitChipRefreshes.forEach(r=>{try{r();}catch(e){}});
       };
       const _swapRes=()=>{
-        if(S.resFitAspect){
-          S.resFitAspect=false;
-          _syncFitBtn();
-        }
         let base;
         if(S.resolution==="Custom"){
           base={width:Math.max(32,Math.round(S.customW/32)*32),height:Math.max(32,Math.round(S.customH/32)*32)};
@@ -4476,7 +4462,8 @@ function persist(){
         const chip=(label,value,media,action)=>{
           const isBtn=typeof action==="function";
           const c=mk(isBtn?"button":"span",{}, {className:"h3-chip"+(isBtn?" btn":"")+(media?" media":"")});
-          if(isBtn){ c.type="button"; c.title="Click to edit"; }
+          if(isBtn){ c.type="button"; c.title=`${label?label+": ":""}${value}`; }
+          else c.title=`${label?label+": ":""}${value}`;
           if(label) c.appendChild(mk("span",{}, {className:"cl",textContent:label}));
           c.appendChild(mk("span",{}, {className:"cv",textContent:value}));
           if(isBtn) c.onclick=(e)=>{ e.stopPropagation(); action(e.currentTarget.getBoundingClientRect()); };
@@ -4508,7 +4495,9 @@ function persist(){
           return;
         }
         const r=_resolveRes();
-        chip(null,`${r.width}×${r.height}`,true,(rect)=>resDD.open(rect));
+        const p=_fitPrimary(S);
+        const fitTag=p?` (${p.mode==="custom"?"Custom":(p.mode==="normal"?"Normal":"Fit")} · ${p.label})`:"";
+        chip(null,`${r.width}×${r.height}${fitTag}`,true,(rect)=>resDD.open(rect));
         if(S.mode==="chain") chip(null,`${S.chainClips.length} clips`,true);
         else chip(null,`${S.duration}s`,true,()=>editField(durNI));
         recipeEl.appendChild(mk("span",{}, {className:"h3-gsep","aria-hidden":"true"}));

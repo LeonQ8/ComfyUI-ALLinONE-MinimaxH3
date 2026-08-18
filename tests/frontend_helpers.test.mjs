@@ -221,6 +221,16 @@ test("resolveFitPrimary: custom mode with invalid custom falls back to fit", () 
   assert.deepEqual(p, { key: "last", label: "Last Frame", mode: "fit", size: { width: 720, height: 1280 } });
 });
 
+test("resolveFitPrimary: normal mode returns the native slot size", () => {
+  const p = resolveFitPrimary({ key: "first", mode: "normal", custom: null }, SLOTS);
+  assert.deepEqual(p, { key: "first", label: "First Frame", mode: "normal", size: { width: 1080, height: 1920 } });
+});
+
+test("resolveFitPrimary: normal mode with no explicit key picks the first slot", () => {
+  const p = resolveFitPrimary({ key: null, mode: "normal", custom: null }, SLOTS);
+  assert.deepEqual(p, { key: "first", label: "First Frame", mode: "normal", size: { width: 1080, height: 1920 } });
+});
+
 // -- Build-order regression guard --------------------------------------------
 // The bundle builds its UI inside one _buildUI function. helpers that run
 // during that build (persist, _syncFitRowFn, driveFromDD.onChange) must not
