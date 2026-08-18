@@ -3026,9 +3026,9 @@ function persist(){
         randTgl.setAttribute("aria-checked",S.randomizeSeed?"true":"false");
         tx(randLbl,S.randomizeSeed?"Random":"Fixed");
         randLbl.style.color=S.randomizeSeed?"var(--h3accent)":"";
-        seedNI._inp.disabled=!S.randomizeSeed;
-        seedNI._inp.style.color=S.randomizeSeed?C.text:C.dim;
-        seedNI._inp.style.cursor=S.randomizeSeed?"text":"not-allowed";
+        seedNI._inp.disabled=S.randomizeSeed;
+        seedNI._inp.style.color=S.randomizeSeed?C.dim:C.text;
+        seedNI._inp.style.cursor=S.randomizeSeed?"not-allowed":"text";
       };
       _updSeedUI();
       randTgl.onclick=()=>{
@@ -4528,8 +4528,8 @@ function persist(){
         const editField=(ni)=>{ _unfoldParams(); focusNI(ni); };
         const editSeed=()=>{
           _unfoldParams();
-          if(S.randomizeSeed) focusNI(seedNI);
-          else randTgl.click();
+          if(S.randomizeSeed) randTgl.click();
+          else focusNI(seedNI);
         };
         if(S.mode==="image"){
           chip("Mode",_imgModeKey[S.imgSub]||"Text to Image",(r)=>imgSubDD.open(r),true);
