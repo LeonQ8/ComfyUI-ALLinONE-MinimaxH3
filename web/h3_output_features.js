@@ -10,7 +10,6 @@ export function outputFrameLabel(duration, fps, snapFrames) {
 }
 
 export function createOutputControls({ S, mk, tx, infoIcon, NI, persist, updateFramesLabel }) {
-  const fpsRow = mk("div", { display: "flex", flexDirection: "column", gap: "3px" });
   const fpsCapRow = mk("div", { display: "flex", alignItems: "center", gap: "4px" });
   const fpsCap = mk("div", { fontSize: "10px", color: "var(--h3-tx)" });
   tx(fpsCap, "FPS");
@@ -20,8 +19,7 @@ export function createOutputControls({ S, mk, tx, infoIcon, NI, persist, updateF
     persist();
     updateFramesLabel();
   }, "60px");
-  fpsRow.append(fpsCapRow, fpsNI);
-  return { fpsRow };
+  return { fpsCapRow, fpsNI };
 }
 
 export function patchOutputVideo(workflow, fps) {
