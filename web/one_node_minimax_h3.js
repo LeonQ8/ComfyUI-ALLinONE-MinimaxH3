@@ -2281,12 +2281,14 @@ app.registerExtension({
         _clearSections();
         modeCard.style.display=S.mode==="t2v"?"none":"";
         promptCard.style.display=S.mode==="chain"?"none":"";
-        if(S.mode==="chain"){
-          durRow.style.display="none";
-        } else if(S.mode==="image"){
-          durRow.style.display="none";
+        if(S.mode==="chain"||S.mode==="image"){
+          durHalf.style.display="none";
+          dfSep.style.display="none";
+          framesLbl.style.display="none";
         } else {
-          durRow.style.display="flex";
+          durHalf.style.display="flex";
+          dfSep.style.display="";
+          framesLbl.style.display="";
           tx(durCap,"Duration (s)");
           durNI._inp.disabled=false;
           durNI.style.opacity="";
@@ -2363,14 +2365,21 @@ app.registerExtension({
         persist();_updateFramesLabel();_updResCustom();
       };
       swapBtn.onclick=_swapRes;
-      const durRow=mk("div",{display:"flex",flexDirection:"column",gap:"3px"});
+      const durFpsCell=mk("div",{display:"flex",flexDirection:"column",gap:"3px"});
       const durCap=mk("div",{fontSize:"10px",color:C.text});tx(durCap,"Duration (s)");
       const durInner=mk("div",{display:"flex",alignItems:"center",gap:"8px"});
       const durNI=NI("",S.duration,1,30,0.5,v=>{S.duration=v;persist();_updateFramesLabel();},"60px");
+      durInner.append(durNI);
+      const durHalf=mk("div",{display:"flex",flexDirection:"column",gap:"3px",flex:"1",minWidth:"0"});
+      durHalf.append(durCap,durInner);
+      const dfSep=mk("div",{width:"1px",alignSelf:"stretch",background:C.border,margin:"0 10px",flexShrink:"0"});
+      const {fpsCapRow,fpsNI}=createOutputControls({S,mk,tx,infoIcon,NI,persist,updateFramesLabel:()=>_updateFramesLabel()});
+      const fpsHalf=mk("div",{display:"flex",flexDirection:"column",gap:"3px",flex:"1",minWidth:"0"});
+      fpsHalf.append(fpsCapRow,fpsNI);
+      const dfCols=mk("div",{display:"flex",alignItems:"stretch"});
+      dfCols.append(durHalf,dfSep,fpsHalf);
       const framesLbl=mk("div",{fontSize:"9px",color:C.muted,flexShrink:"0"});
-      durInner.append(durNI,framesLbl);
-      durRow.append(durCap,durInner);
-      const {fpsRow}=createOutputControls({S,mk,tx,infoIcon,NI,persist,updateFramesLabel:()=>_updateFramesLabel()});
+      durFpsCell.append(dfCols,framesLbl);
       const stepsRow=mk("div",{display:"flex",flexDirection:"column",gap:"3px"});
       const stepsCap=mk("div",{fontSize:"10px",color:C.text});tx(stepsCap,"Steps");
       const stepsNI=NI("",S.steps,1,60,1,v=>{S.steps=Math.round(v);persist();},"60px");
@@ -2419,7 +2428,6 @@ app.registerExtension({
       };
       const _syncOptChips=()=>_optChipSyncs.forEach(f=>f());
       optRow.append(_mkOptChip("optSol","SolAttn"),_mkOptChip("optCache","H3 Cache"),_mkOptChip("optSage","SageAttn"));
-      qualRow.appendChild(optRow);
       const SAMPLERS=["euler","euler_cfg_pp","euler_ancestral","euler_ancestral_cfg_pp","heun","heunpp2","exp_heun_2_x0","exp_heun_2_x0_sde","dpm_2","dpm_2_ancestral","lms","dpm_fast","dpm_adaptive","dpmpp_2s_ancestral","dpmpp_2s_ancestral_cfg_pp","dpmpp_sde","dpmpp_sde_gpu","dpmpp_2m","dpmpp_2m_cfg_pp","dpmpp_2m_sde","dpmpp_2m_sde_gpu","dpmpp_2m_sde_heun","dpmpp_2m_sde_heun_gpu","dpmpp_3m_sde","dpmpp_3m_sde_gpu","ddpm","lcm","ipndm","ipndm_v","deis","res_multistep","res_multistep_cfg_pp","res_multistep_ancestral","res_multistep_ancestral_cfg_pp","gradient_estimation","gradient_estimation_cfg_pp","er_sde","seeds_2","seeds_3","sa_solver","sa_solver_pece","ddim","uni_pc","uni_pc_bh2","legacy_rk","rk","rk_beta","deis_3m_ode","deis_2m_ode","deis_3m","deis_2m","res_6s_ode","res_5s_ode","res_3s_ode","res_2s_ode","res_3m_ode","res_2m_ode","res_6s","res_5s","res_3s","res_2s","res_3m","res_2m"];
       const SCHEDULERS=["simple","sgm_uniform","karras","exponential","ddim_uniform","beta","normal","linear_quadratic","kl_optimal","bong_tangent","beta57"];
       const samplerRow=mk("div",{display:"flex",flexDirection:"column",gap:"3px"});
@@ -2434,8 +2442,8 @@ app.registerExtension({
       schedCapRow.append(schedCap,infoIcon("The noise schedule. MiniMax H3's native workflows use simple - keep it unless you know why you're changing it."));
       const schedDD=DD(SCHEDULERS,S.schedulerName||"simple",v=>{S.schedulerName=v;persist();});
       schedRow.append(schedCapRow,schedDD.el);
-      qualRow.style.gridColumn="1 / -1";
-      params.append(resRow,durRow,fpsRow,stepsRow,qualRow,samplerRow,schedRow);
+      optRow.style.gridColumn="1 / -1";
+      params.append(resRow,durFpsCell,stepsRow,qualRow,optRow,samplerRow,schedRow);
 
       // Custom sampling controls for Image mode (shown when the profile is Custom)
       const imgAdvRow=mk("div",{display:"none",flexDirection:"column",gap:"7px"});
