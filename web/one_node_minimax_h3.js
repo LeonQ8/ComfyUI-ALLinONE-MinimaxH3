@@ -1726,9 +1726,14 @@ function persist(){
             row.appendChild(tChip);
           }
           if(it.video){
-            const thumb=mk("video",{width:"64px",height:"36px",borderRadius:"6px",background:"#000",objectFit:"cover",border:`1px solid ${C.border}`,flexShrink:"0",pointerEvents:"none",display:"block"},{muted:true,preload:"metadata",playsInline:true});
-            thumb.src=api.apiURL(`/view?${viewQuery(it)}`);
-            thumb.addEventListener("loadeddata",()=>{ try{ thumb.currentTime=0.1; }catch(e){} });
+            const isImg=it.kind==="image"||/\.(png|jpe?g|webp|bmp)$/i.test(it.video||"");
+            const thumb=isImg
+              ? mk("img",{width:"64px",height:"36px",borderRadius:"6px",background:"#000",objectFit:"cover",border:`1px solid ${C.border}`,flexShrink:"0",pointerEvents:"none",display:"block"},{src:api.apiURL(`/view?${viewQuery(it)}`),alt:""})
+              : mk("video",{width:"64px",height:"36px",borderRadius:"6px",background:"#000",objectFit:"cover",border:`1px solid ${C.border}`,flexShrink:"0",pointerEvents:"none",display:"block"},{muted:true,preload:"metadata",playsInline:true});
+            if(!isImg){
+              thumb.src=api.apiURL(`/view?${viewQuery(it)}`);
+              thumb.addEventListener("loadeddata",()=>{ try{ thumb.currentTime=0.1; }catch(e){} });
+            }
             thumb.title=it.video;
             row.appendChild(thumb);
           }
