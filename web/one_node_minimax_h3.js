@@ -109,6 +109,40 @@ function mediaKey(item){
   return `${typ}|${sub}|${name}`;
 }
 
+function aspect(width, height){
+  const w = Number(width);
+  const h = Number(height);
+  if (!Number.isFinite(w) || !Number.isFinite(h) || w <= 0 || h <= 0) return null;
+  return h > w ? "portrait" : "landscape";
+}
+
+function sizeOf(source){
+  if (!source || typeof source !== "object") return null;
+  const w = source.naturalWidth ?? source.videoWidth ?? source.width;
+  const h = source.naturalHeight ?? source.videoHeight ?? source.height;
+  if (!Number.isFinite(w) || !Number.isFinite(h) || w <= 0 || h <= 0) return null;
+  return { width: Math.round(w), height: Math.round(h) };
+}
+
+function sameSize(a, b){
+  if (!a && !b) return true;
+  if (!a || !b) return false;
+  return a.width === b.width && a.height === b.height;
+}
+
+function _captureFileSize(file){
+  return new Promise((resolve)=>{
+    if(!file||!file.type||!file.type.startsWith("image/")){ resolve(null); return; }
+    const url=URL.createObjectURL(file);
+    const img=new Image();
+    const done=(sz)=>{ URL.revokeObjectURL(url); resolve(sz); };
+    img.onload=()=>done(sizeOf(img));
+    img.onerror=()=>done(null);
+    img.src=url;
+    setTimeout(()=>done(null), 10000);
+  });
+}
+
 // -- DOM helpers (adapted from the One Node family) ----------------------------
 const mk = (tag,css={},props={}) => { const e=document.createElement(tag); Object.assign(e.style,css); Object.assign(e,props); return e; };
 const tx = (e,t) => { e.textContent=t; return e; };
@@ -419,7 +453,7 @@ function mkRmBtn(){
   return b;
 }
 
-function ImgSlot(optional,onFile){
+function ImgSlot(optional,onFile,onDimensions){
   const PREVIEW_LONG=192;
   const resetSize=()=>{wrap.style.width="72px";wrap.style.height="72px";};
   const fitSize=(width,height)=>{
@@ -430,6 +464,7 @@ function ImgSlot(optional,onFile){
     const h=ratio>=1?Math.max(72,Math.round(PREVIEW_LONG/ratio)):PREVIEW_LONG;
     wrap.style.width=`${w}px`;wrap.style.height=`${h}px`;
   };
+  let _pendingSize=null;
   const wrap=mk("div",{
     width:"72px",height:"72px",borderRadius:"12px",
     border:`1.5px dashed ${C.border}`,background:C.bg2,
@@ -478,6 +513,8 @@ function ImgSlot(optional,onFile){
   let _currentName=null;
   const _showLoaded=(src,fname)=>{
     prevEl.onload=()=>{
+      const _sz=sizeOf(prevEl);
+      _pendingSize=_sz;
       fitSize(prevEl.naturalWidth,prevEl.naturalHeight);
     };
     prevEl.src=src;prevEl.style.display="block";
@@ -491,6 +528,7 @@ function ImgSlot(optional,onFile){
     try{
       _currentName=await _uploadImage(file);
       onFile(_currentName);
+      if(onDimensions) onDimensions(_currentName,_pendingSize);
     }catch(err){
       console.warn("[H3One] upload:",err);
       if(prev){
@@ -512,17 +550,24 @@ function ImgSlot(optional,onFile){
     rm.style.display="none";icoWrap.style.display="flex";
     resetSize();
     wrap.style.borderColor=C.border;inp.value="";_currentName=null;onFile(null);
+    _pendingSize=null;
+    if(onDimensions) onDimensions(null,null);
   };
   const _restorePreview=(name)=>{
     if(!name) return;
     const src=api.apiURL(`/view?filename=${encodeURIComponent(name)}&type=input&subfolder=&t=${Date.now()}`);
     _currentName=name;
     _showLoaded(src,name);
+    if(onDimensions){
+      prevEl.addEventListener("load",()=>{
+        onDimensions(_currentName,_pendingSize);
+      },{once:true});
+    }
   };
   return{el:wrap,get name(){return _currentName;},loadFile:(file)=>_load(file),_restorePreview};
 }
 
-function MediaSlot(type,onFile){
+function MediaSlot(type,onFile,onDimensions){
   const PREVIEW_LONG=192;
   const resetSize=()=>{wrap.style.width="72px";wrap.style.height="72px";};
   const fitSize=(width,height)=>{
@@ -562,7 +607,10 @@ function MediaSlot(type,onFile){
     objectFit:"contain",display:"none",borderRadius:"11px",pointerEvents:"none",background:"#111",
   }) : null;
   if(videoThumb){ videoThumb.muted=_videoMuted; videoThumb.preload="metadata"; }
-  if(videoThumb) videoThumb.onloadedmetadata=()=>fitSize(videoThumb.videoWidth,videoThumb.videoHeight);
+  if(videoThumb) videoThumb.onloadedmetadata=()=>{
+    fitSize(videoThumb.videoWidth,videoThumb.videoHeight);
+    if(onDimensions) onDimensions(wrap._filename,sizeOf(videoThumb));
+  };
   const audioGlow = type==="audio" ? mk("div",{
     position:"absolute",inset:"0",display:"none",
     flexDirection:"column",alignItems:"center",justifyContent:"center",pointerEvents:"none",
@@ -686,6 +734,7 @@ function MediaSlot(type,onFile){
     _stopAudio();
     if(_objUrl){URL.revokeObjectURL(_objUrl);_objUrl=null;}
     onFile(null);
+    if(onDimensions) onDimensions(null,null);
   };
   const _restorePreview=(name)=>{
     if(!name) return;
@@ -878,12 +927,18 @@ app.registerExtension({
           loras:          (()=>{ const arr=Array.isArray(saved.loras)?saved.loras:[]; const named=arr.filter(l=>l&&l.name); return named.concat([{name:"",strength:1,enabled:true}]); })(),
           firstFrame:      saved.firstFrame||null,
           lastFrame:       saved.lastFrame||null,
+          firstFrameSize:  (saved.firstFrameSize&&saved.firstFrameSize.width>0&&saved.firstFrameSize.height>0)?{width:Number(saved.firstFrameSize.width),height:Number(saved.firstFrameSize.height)}:null,
+          lastFrameSize:   (saved.lastFrameSize&&saved.lastFrameSize.width>0&&saved.lastFrameSize.height>0)?{width:Number(saved.lastFrameSize.width),height:Number(saved.lastFrameSize.height)}:null,
+          firstFrameOrientation: ["landscape","portrait"].includes(saved.firstFrameOrientation)?saved.firstFrameOrientation:null,
+          lastFrameOrientation:  ["landscape","portrait"].includes(saved.lastFrameOrientation)?saved.lastFrameOrientation:null,
           refImages:       Array.isArray(saved.refImages)?saved.refImages:[],
-          refVideos:       (Array.isArray(saved.refVideos)?saved.refVideos:[]).map(v=>(typeof v==="string")?{name:v,useAudio:false}:{name:(v&&v.name)||"",useAudio:!!(v&&v.useAudio)}),
+          refImageSizes:   (saved.refImageSizes&&typeof saved.refImageSizes==="object"&&!Array.isArray(saved.refImageSizes))?saved.refImageSizes:{},
+          refVideos:       (Array.isArray(saved.refVideos)?saved.refVideos:[]).map(v=>(typeof v==="string")?{name:v,useAudio:false}:{name:(v&&v.name)||"",useAudio:!!(v&&v.useAudio),width:(v&&Number(v.width))||null,height:(v&&Number(v.height))||null}),
           refAudios:       Array.isArray(saved.refAudios)?saved.refAudios:[],
           audioFile:       saved.audioFile||null,
           extendVideo:     saved.extendVideo||null,
-          kf:              (Array.isArray(saved.kf)&&saved.kf.length)?saved.kf.map(k=>({img:k.img||null,pos:k.pos||0})):[{img:null,pos:1},{img:null,pos:62},{img:null,pos:124}],
+          extendVideoSize: (saved.extendVideoSize&&saved.extendVideoSize.width>0&&saved.extendVideoSize.height>0)?{width:Number(saved.extendVideoSize.width),height:Number(saved.extendVideoSize.height)}:null,
+          kf:              (Array.isArray(saved.kf)&&saved.kf.length)?saved.kf.map(k=>({img:k.img||null,pos:k.pos||0,width:(k&&Number(k.width))||null,height:(k&&Number(k.height))||null})):[{img:null,pos:1,width:null,height:null},{img:null,pos:62,width:null,height:null},{img:null,pos:124,width:null,height:null}],
           chainClips:      Array.isArray(saved.chainClips)&&saved.chainClips.length? saved.chainClips : [{prompt:"",duration:5},{prompt:"",duration:5}],
           models:          Object.assign({}, DEFAULT_MODELS, saved.models||{}),
           speedLora:       saved.speedLora||"",
@@ -911,6 +966,8 @@ app.registerExtension({
           imgH:            saved.imgH||1024,
           imgProfile:      saved.imgProfile||"base_quality_20",
           imgRefs:         Array.isArray(saved.imgRefs)?saved.imgRefs:[],
+          imgRefsSize:     (saved.imgRefsSize&&typeof saved.imgRefsSize==="object"&&!Array.isArray(saved.imgRefsSize))?saved.imgRefsSize:{},
+          resOrientation:  ["auto","landscape","portrait"].includes(saved.resOrientation)?saved.resOrientation:"auto",
         };
       }
       const S=self._h3_S;
@@ -928,7 +985,7 @@ app.registerExtension({
       };
       _applyAccent(S.accent||ACCENT_DEFAULT);
 
-      function persist(){
+function persist(){
         // Keep the per-mode snapshot current on EVERY change, so steps/duration/
         // quality/resolution/loras survive workflow-tab switches (they used to be
         // captured only when switching mode tabs, so a stale snapshot overwrote
@@ -940,9 +997,12 @@ app.registerExtension({
           steps:S.steps,quality:S.quality,optSol:S.optSol,optCache:S.optCache,optSage:S.optSage,samplerName:S.samplerName,schedulerName:S.schedulerName,randomizeSeed:S.randomizeSeed,seed:S.seed,batch:S.batch,
           loras:S.loras,chainClips:S.chainClips.map(c=>({prompt:c.prompt,duration:c.duration})),
           firstFrame:S.firstFrame,lastFrame:S.lastFrame,
-          refImages:S.refImages,refVideos:S.refVideos,refAudios:S.refAudios,
-          audioFile:S.audioFile,extendVideo:S.extendVideo,
-          kf:(S.kf||[]).map(k=>({img:k.img||null,pos:k.pos||0})),
+          firstFrameSize:S.firstFrameSize,lastFrameSize:S.lastFrameSize,
+          firstFrameOrientation:S.firstFrameOrientation,lastFrameOrientation:S.lastFrameOrientation,
+          refImages:S.refImages,refImageSizes:S.refImageSizes,
+          refVideos:S.refVideos,refAudios:S.refAudios,
+          audioFile:S.audioFile,extendVideo:S.extendVideo,extendVideoSize:S.extendVideoSize,
+          kf:(S.kf||[]).map(k=>({img:k.img||null,pos:k.pos||0,width:k.width||null,height:k.height||null})),
           models:S.models,speedLora:S.speedLora,audioOn:S.audioOn,fps:S.fps,
           soundEnabled:S.soundEnabled,sound:S.sound,accent:S.accent,mcLength:S.mcLength,
           upscaleFactor:S.upscaleFactor,upscaleMethod:S.upscaleMethod,
@@ -951,9 +1011,20 @@ app.registerExtension({
           playOnFinish:S.playOnFinish,folded:S.folded,livePreview:S.livePreview,
           livePreviewMode:S.livePreviewMode,
           imgSub:S.imgSub,imgAspect:S.imgAspect,imgMP:S.imgMP,imgW:S.imgW,imgH:S.imgH,
-          imgProfile:S.imgProfile,imgRefs:S.imgRefs,
+          imgProfile:S.imgProfile,imgRefs:S.imgRefs,imgRefsSize:S.imgRefsSize,
+          resOrientation:S.resOrientation,
         });
       }
+
+      const _rememberFrameInfo=(orientKey,sizeKey,size)=>{
+        const newOrient=orientKey?aspect(size&&size.width,size&&size.height):null;
+        const prev=S[sizeKey];
+        const prevOrient=orientKey?S[orientKey]:null;
+        if(prevOrient===newOrient&&sameSize(prev,size)) return;
+        if(orientKey) S[orientKey]=newOrient;
+        S[sizeKey]=size||null;
+        persist();
+      };
 
       const _foldState=S.folded||{};
       function _applyFold(key,hdr,body,chev){
@@ -2007,7 +2078,7 @@ app.registerExtension({
         imgRefsBox.appendChild(capE);
         const row=mk("div",{display:"flex",gap:"8px",flexWrap:"wrap"});
         (sub==="edit"?[S.imgRefs[0]||""]:S.imgRefs.slice(0,maxRefs)).forEach((name,idx)=>{
-          const slot=ImgSlot(false,n=>{ if(n===null){S.imgRefs.splice(idx,1);persist();} else { S.imgRefs[idx]=n; persist(); } _renderImgRefs(); });
+          const slot=ImgSlot(false,n=>{ if(n===null){S.imgRefs.splice(idx,1);} else { S.imgRefs[idx]=n; persist(); } _renderImgRefs(); },(name,size)=>{ if(name&&size){ S.imgRefsSize[name]=size; persist(); } });
           row.appendChild(slot.el);
           if(name) slot._restorePreview(name);
         });
@@ -2022,7 +2093,10 @@ app.registerExtension({
             upImg.onchange=async()=>{
               if(!upImg.files[0]) return;
               try{
-                S.imgRefs.push(await _uploadImage(upImg.files[0]));
+                const _nm=await _uploadImage(upImg.files[0]);
+                S.imgRefs.push(_nm);
+                const _sz=await _captureFileSize(upImg.files[0]);
+                if(_sz) S.imgRefsSize[_nm]=_sz;
                 persist();
               }catch(e){
                 console.warn(e);
@@ -2056,8 +2130,8 @@ app.registerExtension({
       };
 
       // I2V slots
-      const firstSlot=ImgSlot(true,n=>{S.firstFrame=n;persist();});
-      const lastSlot=ImgSlot(true,n=>{S.lastFrame=n;persist();});
+      const firstSlot=ImgSlot(true,n=>{S.firstFrame=n;persist();},(name,size)=>_rememberFrameInfo("firstFrameOrientation","firstFrameSize",size));
+      const lastSlot=ImgSlot(true,n=>{S.lastFrame=n;persist();},(name,size)=>_rememberFrameInfo("lastFrameOrientation","lastFrameSize",size));
       i2vArea.append(_mkSlotCard("First frame",firstSlot.el),_mkSlotCard("Last frame",lastSlot.el));
       if(S.firstFrame) firstSlot._restorePreview(S.firstFrame);
       if(S.lastFrame) lastSlot._restorePreview(S.lastFrame);
@@ -2070,7 +2144,7 @@ app.registerExtension({
         refArea.appendChild(imgCap);
         const imgRow=mk("div",{display:"flex",gap:"8px",flexWrap:"wrap"});
         S.refImages.forEach((name,idx)=>{
-          const slot=ImgSlot(false,n=>{ if(n===null){S.refImages.splice(idx,1);} else { S.refImages[idx]=n; persist(); } _renderRefs(); });
+          const slot=ImgSlot(false,n=>{ if(n===null){S.refImages.splice(idx,1);} else { S.refImages[idx]=n; persist(); } _renderRefs(); },(nm,size)=>{ if(nm&&size){ S.refImageSizes[nm]=size; persist(); } });
           imgRow.appendChild(slot.el);
           if(name) slot._restorePreview(name);
         });
@@ -2088,7 +2162,10 @@ app.registerExtension({
           upImg.onchange=async()=>{
             if(!upImg.files[0]) return;
             try{
-              S.refImages.push(await _uploadImage(upImg.files[0]));
+              const _nm=await _uploadImage(upImg.files[0]);
+              S.refImages.push(_nm);
+              const _sz=await _captureFileSize(upImg.files[0]);
+              if(_sz) S.refImageSizes[_nm]=_sz;
               persist();
             }catch(e){
               console.warn(e);
@@ -2119,6 +2196,11 @@ app.registerExtension({
             if(n===null){ S.refVideos.splice(idx,1); }
             else { S.refVideos[idx]={name:n,useAudio:!!(S.refVideos[idx]&&S.refVideos[idx].useAudio)}; persist(); }
             _renderRefs();
+          },(nm,size)=>{
+            if(nm&&size){
+              const e=S.refVideos[idx];
+              if(e&&e.name===nm){ e.width=size.width; e.height=size.height; persist(); }
+            }
           });
           card.appendChild(slot);
           if(name) slot._restorePreview(name);
@@ -2209,7 +2291,7 @@ app.registerExtension({
         kfArea.appendChild(hdr);
         S.kf.forEach((k,idx)=>{
           const row=mk("div",{display:"flex",alignItems:"center",gap:"8px"});
-          const slot=ImgSlot(false,n=>{k.img=n;persist();});
+          const slot=ImgSlot(false,n=>{k.img=n;persist();},(name,size)=>{ if(name&&size){ k.width=size.width; k.height=size.height; persist(); } else if(name===null){ k.width=null; k.height=null; persist(); } });
           row.appendChild(slot.el);
           if(k.img) slot._restorePreview(k.img);
           const posCap=mk("div",{fontSize:"9px",color:C.muted});tx(posCap,"Frame");
@@ -2237,7 +2319,7 @@ app.registerExtension({
       if(S.audioFile) adSlot._restorePreview(S.audioFile);
 
       // Extend video slot
-      const exSlot=MediaSlot("video",n=>{S.extendVideo=n;persist();});
+      const exSlot=MediaSlot("video",n=>{S.extendVideo=n;persist();},(name,size)=>_rememberFrameInfo(null,"extendVideoSize",size));
       exArea.append(_mkSlotCard("Video to extend",exSlot));
       if(S.extendVideo) exSlot._restorePreview(S.extendVideo);
 
@@ -4207,7 +4289,10 @@ app.registerExtension({
         } else if(S.mode==="r2v"){
           if(S.refImages.length>=9) return;
           try{
-            S.refImages.push(await _uploadImage(file));
+            const _nm=await _uploadImage(file);
+            S.refImages.push(_nm);
+            const _sz=await _captureFileSize(file);
+            if(_sz) S.refImageSizes[_nm]=_sz;
             persist();
             _renderRefs();
           }catch(err){ console.warn("[H3One] paste upload:",err); if(_h3ShowError)_h3ShowError("Pasted image upload failed: "+fmtErr(err)); }
@@ -4215,11 +4300,13 @@ app.registerExtension({
           let empty=S.kf.find(k=>!k.img);
           if(!empty){
             if(S.kf.length>=32) return;
-            empty={img:null,pos:Math.min(9999,(S.kf.length+1)*62)};
+            empty={img:null,pos:Math.min(9999,(S.kf.length+1)*62),width:null,height:null};
             S.kf.push(empty);
           }
           try{
             empty.img=await _uploadImage(file);
+            const _sz=await _captureFileSize(file);
+            if(_sz){ empty.width=_sz.width; empty.height=_sz.height; }
             persist();_renderKf();
           }catch(err){ console.warn("[H3One] paste upload:",err); if(_h3ShowError)_h3ShowError("Pasted image upload failed: "+fmtErr(err)); }
         }
