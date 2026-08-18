@@ -2704,6 +2704,10 @@ function persist(){
         }
       };
       const _swapRes=()=>{
+        if(S.resFitAspect){
+          S.resFitAspect=false;
+          _syncFitBtn();
+        }
         const r=_resolveRes();
         const flip=_resItems.find(p=>p.width===r.height&&p.height===r.width&&p.width!==r.width);
         if(flip){
