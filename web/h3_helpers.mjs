@@ -130,8 +130,7 @@ export function imgAspectName(key) {
 // files are deleted, so filenames get reused and /view can serve stale browser
 // cached content. The m param is ignored by the server and only busts the
 // cache: the item's mtime when known, otherwise the current time.
-export function viewQuery(item, type) {
-  const src = item || {};
+export function viewQuery(item, type) {  const src = item || {};
   const name = src.filename || src.video || "";
   const t = type || src.type || "output";
   const m = src.mtime || Date.now();
@@ -144,4 +143,69 @@ export function inputFileExists(files, name) {
   const base = String(name || "").replace(/\\/g, "/").split("/").pop();
   if (!base) return false;
   return (Array.isArray(files) ? files : []).some((f) => String(f).replace(/\\/g, "/").split("/").pop() === base);
+}
+
+// H3 Studio image canvas limits. The H3StudioDirector node rejects megapixels
+// outside 0.2..8.5 at queue time, so any request must be clamped before the
+// workflow is submitted or generation fails validation with no render at all.
+export const IMG_MIN_MP = 0.2;
+export const IMG_MAX_MP = 8.5;
+export const IMG_ASPECT_RATIOS = {
+  "1:1": 1,
+  "16:9": 16 / 9,
+  "9:16": 9 / 16,
+  "4:3": 4 / 3,
+  "3:4": 3 / 4,
+  "3:2": 3 / 2,
+  "2:3": 2 / 3,
+  "21:9": 21 / 9,
+};
+
+// Round a dimension down to a multiple of 32 (H3 Studio canvas grid).
+function floor32(v) {
+  return Math.max(32, Math.floor(v / 32) * 32);
+}
+
+// Clamp a raw megapixel value into the H3 Studio input range. Non-finite or
+// missing values fall back to 1.0 so a corrupt saved state can never push the
+// workflow outside the accepted range; zero or negative values snap to the
+// 0.2 MP floor instead of producing an invalid empty canvas.
+export function clampImageMP(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return 1.0;
+  return Math.min(IMG_MAX_MP, Math.max(IMG_MIN_MP, n));
+}
+
+// Compute a valid H3 Studio image canvas from a requested size.
+//
+// mode: "custom" uses width/height as exact pixel dims; "ratio" derives dims
+// from megapixels + an aspect key in IMG_ASPECT_RATIOS.
+// Returns { width, height, megapixels, capped } where capped is true when the
+// requested size exceeded the 8.5 MP ceiling and had to be scaled down. Both
+// dims are aligned to the 32-pixel canvas grid and the returned megapixels is
+// the actual (post-clamp) value, never more than IMG_MAX_MP.
+export function planImageCanvas({ mode = "custom", width = 1024, height = 1024, megapixels = 1.0, aspect = "1:1" } = {}) {
+  const target = mode === "ratio" ? clampImageMP(megapixels) * 1e6 : Math.max(32, Number(width) || 1024) * Math.max(32, Number(height) || 1024);
+  const ratio = IMG_ASPECT_RATIOS[aspect] || 1;
+  let w;
+  let h;
+  if (mode === "ratio") {
+    w = Math.max(32, Math.round(Math.sqrt(target * ratio) / 32) * 32);
+    h = Math.max(32, Math.round(Math.sqrt(target / ratio) / 32) * 32);
+  } else {
+    w = Math.max(32, Math.round((Number(width) || 1024) / 32) * 32);
+    h = Math.max(32, Math.round((Number(height) || 1024) / 32) * 32);
+  }
+  let capped = w * h > IMG_MAX_MP * 1e6;
+  if (capped) {
+    const scale = Math.sqrt((IMG_MAX_MP * 1e6) / (w * h));
+    w = floor32(w * scale);
+    h = floor32(h * scale);
+    if (w * h > IMG_MAX_MP * 1e6) {
+      const shrink = Math.sqrt((IMG_MAX_MP * 1e6) / (w * h));
+      w = floor32(w * shrink);
+      h = floor32(h * shrink);
+    }
+  }
+  return { width: w, height: h, megapixels: (w * h) / 1e6, capped };
 }

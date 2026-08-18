@@ -34,16 +34,16 @@ Official MiniMax H3 files from [Comfy-Org/MiniMax-H3](https://huggingface.co/Com
 | Preset | Packs you need |
 |--------|----------------|
 | Turbo | [ComfyUI-MiniMax-H3-Turbo](https://github.com/Larryvrh/ComfyUI-MiniMax-H3-Turbo) + a Turbo LoRA (below) |
-| Speed | [ComfyUI-SolAttn_triton](https://github.com/kijai/ComfyUI-SolAttn_triton) + [ComfyUI-MiniMaxH3-Cache](https://github.com/lihaoyun6/ComfyUI-MiniMaxH3-Cache) |
+| Speed | [ComfyUI-SolAttn_triton](https://github.com/kijai/ComfyUI-SolAttn_triton) |
 | Balanced | [ComfyUI-SolAttn_triton](https://github.com/kijai/ComfyUI-SolAttn_triton) |
 | High | [ComfyUI-KJNodes](https://github.com/kijai/ComfyUI-KJNodes) (SageAttention) |
 | Native | — (ComfyUI core only) |
 
-Each accelerator also has an on/off chip under the Quality dropdown (SolAttn / H3 Cache / SageAttn) — flip them for any mix; the preset label switches to **Custom**. Accelerators that are switched off are not even written into the workflow, so their packs don't need to be installed.
+Each accelerator also has an on/off chip under the Quality dropdown (SolAttn / SageAttn) — flip them for any mix; the preset label switches to **Custom**. Accelerators that are switched off are not even written into the workflow, so their packs don't need to be installed.
 
 **Preview without saving** (auto-save off): [ComfyUI-VideoHelperSuite](https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite)
 
-**Live Preview** (the toggle under the video): [ComfyUI-KJNodes](https://github.com/kijai/ComfyUI-KJNodes) plus `taeh3.safetensors` in `ComfyUI/models/vae_approx/` ([Kijai/MiniMax-H3-TAE](https://huggingface.co/Kijai/MiniMax-H3-TAE)). Powered by KJNodes Model Preview Override: the clip plays in the preview box while it samples. A quality dropdown next to the toggle picks Fast, Balanced or Detailed previews, which trade preview smoothness against generation speed. Works in every video mode, not with the Turbo preset or Image mode. Your copy can sit in a subfolder of `vae_approx`, pick it under Settings: Live Preview decoder. Tested on ComfyUI 0.32.
+**Live Preview** (the toggle under the video): [ComfyUI-KJNodes](https://github.com/kijai/ComfyUI-KJNodes) plus `taeh3.safetensors` in `ComfyUI/models/vae_approx/` ([Kijai/MiniMax-H3-TAE](https://huggingface.co/Kijai/MiniMax-H3-TAE)). Powered by KJNodes Model Preview Override: the clip plays in the preview box while it samples. A quality dropdown next to the toggle picks Fast, Balanced or Detailed previews, which trade preview smoothness against generation speed. Works in every video mode, not with the Turbo preset or Image mode. Your copy can sit in a subfolder of `vae_approx`, pick it under Settings: Live Preview decoder. Tested on ComfyUI 0.33.
 
 **Image mode prompts**: they follow the H3 Studio shape, a `summary:` line with the goal and a `detailed_description:` with the full scene. Name your references `@Image1`, `@Image2` and give each one a clear job (identity, pose, style, outfit). Edits are a semantic regeneration of the source image, not pixel inpainting, so describe what changes instead of expecting a perfect cutout. The Discover tab ships with Text to image, Image edit and Reference mix templates.
 

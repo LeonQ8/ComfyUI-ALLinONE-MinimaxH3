@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { aspect, sizeOf, sameSize, orientRes, fitResolutionToAspect, resolveFitPrimary, imgProfileShort, imgAspectName, viewQuery, inputFileExists } from "../web/h3_helpers.mjs";
+import { aspect, sizeOf, sameSize, orientRes, fitResolutionToAspect, resolveFitPrimary, imgProfileShort, imgAspectName, viewQuery, inputFileExists, clampImageMP, planImageCanvas, IMG_MAX_MP, IMG_MIN_MP, IMG_ASPECT_RATIOS } from "../web/h3_helpers.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, "..");
@@ -46,6 +46,8 @@ test("helpers file is non-trivial and exports the core helpers", () => {
   assert.ok(src.includes("export function imgAspectName"), "helpers must export imgAspectName");
   assert.ok(src.includes("export function viewQuery"), "helpers must export viewQuery");
   assert.ok(src.includes("export function inputFileExists"), "helpers must export inputFileExists");
+  assert.ok(src.includes("export function clampImageMP"), "helpers must export clampImageMP");
+  assert.ok(src.includes("export function planImageCanvas"), "helpers must export planImageCanvas");
 });
 
 test("aspect: landscape and portrait", () => {
@@ -320,6 +322,88 @@ test("inputFileExists: empty or bad input returns false", () => {
   assert.equal(inputFileExists(["a.mp3"], null), false);
   assert.equal(inputFileExists(null, "a.mp3"), false);
   assert.equal(inputFileExists(undefined, "a.mp3"), false);
+});
+
+// -- H3 Studio image canvas clamp (Image mode) --------------------------------
+
+test("clampImageMP: clamps above the 8.5 MP ceiling", () => {
+  assert.equal(clampImageMP(24.92), IMG_MAX_MP);
+  assert.equal(clampImageMP(100), IMG_MAX_MP);
+  assert.equal(clampImageMP(8.51), IMG_MAX_MP);
+});
+
+test("clampImageMP: clamps below the 0.2 MP floor", () => {
+  assert.equal(clampImageMP(0.1), IMG_MIN_MP);
+  assert.equal(clampImageMP(0.0), IMG_MIN_MP);
+  assert.equal(clampImageMP(-3), IMG_MIN_MP);
+});
+
+test("clampImageMP: keeps in-range values and falls back on garbage", () => {
+  assert.equal(clampImageMP(1.5), 1.5);
+  assert.equal(clampImageMP(0.2), 0.2);
+  assert.equal(clampImageMP(8.5), 8.5);
+  assert.equal(clampImageMP(NaN), 1.0);
+  assert.equal(clampImageMP(undefined), 1.0);
+  assert.equal(clampImageMP("oops"), 1.0);
+});
+
+test("planImageCanvas: custom dims over the ceiling are scaled down to 8.5 MP", () => {
+  const p = planImageCanvas({ mode: "custom", width: 4992, height: 4992 });
+  assert.ok(p.width * p.height <= IMG_MAX_MP * 1e6, "area must fit the ceiling");
+  assert.ok(p.width % 32 === 0 && p.height % 32 === 0, "dims stay on the 32 grid");
+  assert.equal(p.capped, true);
+  assert.ok(p.megapixels > 8.0 && p.megapixels <= IMG_MAX_MP, `megapixels must land near the ceiling, got ${p.megapixels}`);
+  assert.ok(Math.abs(Math.log(p.width / p.height)) < 0.001, "aspect ratio preserved");
+});
+
+test("planImageCanvas: custom dims under the ceiling pass through aligned", () => {
+  const p = planImageCanvas({ mode: "custom", width: 1024, height: 1024 });
+  assert.equal(p.width, 1024);
+  assert.equal(p.height, 1024);
+  assert.equal(p.capped, false);
+  assert.equal(p.megapixels, 1024 * 1024 / 1e6);
+});
+
+test("planImageCanvas: ratio mode never exceeds the ceiling even at max MP", () => {
+  for (const aspect of Object.keys(IMG_ASPECT_RATIOS)) {
+    const p = planImageCanvas({ mode: "ratio", aspect, megapixels: 24.92 });
+    assert.ok(p.width * p.height <= IMG_MAX_MP * 1e6, `${aspect} must fit the ceiling`);
+    assert.ok(p.width % 32 === 0 && p.height % 32 === 0, `${aspect} stays on the 32 grid`);
+    const drift = Math.abs(Math.log((p.width / p.height) / IMG_ASPECT_RATIOS[aspect]));
+    assert.ok(drift < 0.05, `${aspect} keeps its ratio (drift ${drift})`);
+  }
+});
+
+test("planImageCanvas: ratio mode honors an in-range megapixel request", () => {
+  const p = planImageCanvas({ mode: "ratio", aspect: "1:1", megapixels: 1.0 });
+  assert.ok(p.width >= 960 && p.width <= 1024, `1MP square lands near 1024 (got ${p.width})`);
+  assert.equal(Math.abs(p.width - p.height) < 2, true);
+  assert.equal(p.capped, false);
+});
+
+test("planImageCanvas: garbage inputs fall back to a sane 1024 canvas", () => {
+  const p = planImageCanvas({ mode: "custom", width: NaN, height: undefined });
+  assert.equal(p.width, 1024);
+  assert.equal(p.height, 1024);
+  assert.ok(p.megapixels <= IMG_MAX_MP);
+  const q = planImageCanvas({ mode: "ratio", aspect: "nope", megapixels: "x" });
+  assert.ok(q.width >= 32 && q.height >= 32);
+  assert.ok(q.width * q.height <= IMG_MAX_MP * 1e6);
+});
+
+test("planImageCanvas: tiny custom dims snap up to 32", () => {
+  const p = planImageCanvas({ mode: "custom", width: 10, height: 10 });
+  assert.equal(p.width, 32);
+  assert.equal(p.height, 32);
+  assert.equal(p.capped, false);
+});
+
+test("planImageCanvas: extreme portrait custom dims keep ratio and cap", () => {
+  const p = planImageCanvas({ mode: "custom", width: 1024, height: 12000 });
+  assert.ok(p.width * p.height <= IMG_MAX_MP * 1e6);
+  assert.ok(p.width < p.height, "stays portrait");
+  const ratio = p.height / p.width;
+  assert.ok(Math.abs(Math.log(ratio / (12000 / 1024))) < 0.05, "portrait ratio preserved");
 });
 
 // -- Build-order regression guard --------------------------------------------
