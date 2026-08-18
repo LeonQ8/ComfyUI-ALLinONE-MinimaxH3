@@ -189,6 +189,18 @@ function resolveFitPrimary(cfg, slots){
   return { key, label: slot.label, mode: "fit", size: slot.size };
 }
 
+function imgProfileShort(key){
+  if(!key||key==="custom") return "Custom";
+  const k=String(key);
+  if(k.includes("ref2v")) return "REF2V";
+  if(k.includes("fl2v_8")) return "FL2VA 8";
+  if(k.includes("fl2v_4")) return "FL2VA 4";
+  if(k.includes("sa_solver")) return "SA-Solver 4";
+  if(k.includes("er_sde")) return "ER-SDE 4";
+  if(k.includes("balanced")) return "Base 12";
+  return "Base 20";
+}
+
 function _captureFileSize(file){
   return new Promise((resolve)=>{
     if(!file||!file.type||!file.type.startsWith("image/")){ resolve(null); return; }
@@ -1276,18 +1288,22 @@ function persist(){
           .h3-card{background:var(--h3-card);border:1px solid var(--h3-line);border-radius:13px;padding:11px 12px;display:flex;flex-direction:column;gap:8px;}
           .h3-ctitle{font-size:12.5px;font-weight:700;color:var(--h3-tx);}
           .h3-cdesc{font-size:10px;color:var(--h3-tx2);line-height:1.5;}
-          /* recipe line: uniform pill grid with consistent 1px hairline dividers */
-          .h3-recipe{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:1px;background:var(--h3-line);border:1px solid var(--h3-line);border-radius:10px;overflow:hidden;padding:1px;font-variant-numeric:tabular-nums;}
-          .h3-chip{display:flex;align-items:center;justify-content:center;gap:5px;background:var(--h3-field);border:none;border-radius:0;box-shadow:none;padding:4px 8px;font-size:10px;line-height:1.4;min-width:0;overflow:hidden;}
-          .h3-chip:last-child:nth-child(4n+1){grid-column:1/-1;}
-          .h3-chip .cl{font-size:8.5px;font-weight:700;letter-spacing:.04em;color:var(--h3-tx3);flex-shrink:0;}
-          .h3-chip .cv{font-weight:700;color:var(--h3-tx);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;}
+          /* recipe line: 2-line spec chips in a fixed 4-column grid with hairline dividers */
+          .h3-recipe{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));background:var(--h3-card);border:1px solid var(--h3-line);border-radius:10px;overflow:hidden;font-variant-numeric:tabular-nums;}
+          .h3-chip{display:flex;flex-direction:column;align-items:flex-start;justify-content:center;gap:1px;background:var(--h3-field);border:none;border-radius:0;box-shadow:none;padding:5px 9px;min-width:0;overflow:hidden;text-align:left;position:relative;}
+          .h3-chip:nth-child(n+2){border-left:1px solid var(--h3-line);}
+          .h3-chip:nth-child(4n+1){border-left:none;}
+          .h3-chip:nth-child(n+5){border-top:1px solid var(--h3-line);}
+          .h3-chip .cl{font-size:7px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--h3-tx3);flex-shrink:0;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+          .h3-chip .cv{font-size:10px;font-weight:700;color:var(--h3-tx);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;max-width:100%;}
+          .h3-chip.media .cl{color:rgba(var(--h3accent-rgb),.8);}
           .h3-chip.media .cv{color:var(--h3accent);}
           .h3-chip.btn{cursor:pointer;font-family:inherit;outline:none;}
+          .h3-chip.btn.hasdd{padding-right:16px;}
+          .h3-chip.btn .chev{position:absolute;right:5px;top:50%;transform:translateY(-50%);font-size:7px;color:var(--h3-tx3);pointer-events:none;}
           .h3-chip.btn:hover{background:var(--h3-hover);}
           .h3-chip.btn:hover .cv{color:var(--h3accent);}
           .h3-chip.btn:focus-visible{box-shadow:0 0 0 2px rgba(var(--h3accent-rgb),.35);}
-          .h3-gsep{display:none;}
           /* ghost remove button (LoRA / keyframe / clip rows) */
           .h3-rmbtn{width:26px;height:26px;border-radius:9px;background:var(--h3-field);border:1px solid var(--h3-line);color:var(--h3-tx3);font-size:11px;font-weight:600;line-height:1;padding:0;cursor:pointer;flex-shrink:0;display:flex;align-items:center;justify-content:center;transition:border-color .15s,color .15s,background-color .15s;}
           .h3-rmbtn:hover{border-color:rgba(255,128,128,.55);color:var(--h3-err);background:rgba(255,128,128,.07);}
@@ -4466,14 +4482,14 @@ function persist(){
         if(!recipeEl) return;
         recipeEl.innerHTML="";
         const _q=_QL[S.quality]||"Custom";
-        const chip=(label,value,media,action)=>{
+        const chip=(label,value,media,action,dd)=>{
           const isBtn=typeof action==="function";
-          const c=mk(isBtn?"button":"span",{}, {className:"h3-chip"+(isBtn?" btn":"")+(media?" media":"")});
-          if(isBtn){ c.type="button"; c.title=`${label?label+": ":""}${value}`; }
-          else c.title=`${label?label+": ":""}${value}`;
+          const c=mk(isBtn?"button":"span",{}, {className:"h3-chip"+(isBtn?" btn":"")+(media?" media":"")+(isBtn&&dd?" hasdd":"")});
+          c.title=`${label?label+": ":""}${value}`;
           if(label) c.appendChild(mk("span",{}, {className:"cl",textContent:label}));
           c.appendChild(mk("span",{}, {className:"cv",textContent:value}));
-          if(isBtn) c.onclick=(e)=>{ e.stopPropagation(); action(e.currentTarget.getBoundingClientRect()); };
+          if(isBtn&&dd) c.appendChild(mk("span",{}, {className:"chev","aria-hidden":"true",textContent:"▾"}));
+          if(isBtn){ c.type="button"; c.onclick=(e)=>{ e.stopPropagation(); action(e.currentTarget.getBoundingClientRect()); }; }
           recipeEl.appendChild(c);
         };
         const focusNI=(ni)=>{ ni._inp.focus(); ni._inp.select(); };
@@ -4493,27 +4509,25 @@ function persist(){
           else focusNI(seedNI);
         };
         if(S.mode==="image"){
-          chip(null,_imgModeKey[S.imgSub]||"Text to Image",true,(r)=>imgSubDD.open(r));
-          chip(null,S.imgAspect==="Custom"?`${S.imgW}×${S.imgH}`:`${S.imgAspect} · ${S.imgMP}MP`,true,(r)=>imgAspectDD.open(r));
-          recipeEl.appendChild(mk("span",{}, {className:"h3-gsep","aria-hidden":"true"}));
-          chip(null,_imgProfLabel(),false,(r)=>imgProfDD.open(r));
-          chip("seed",S.randomizeSeed?"random":String(S.seed||0),false,editSeed);
-          chip(null,`×${S.batch||1}`,false,()=>editField(batchNI));
+          chip("Mode",_imgModeKey[S.imgSub]||"Text to Image",true,(r)=>imgSubDD.open(r),true);
+          chip("Aspect",S.imgAspect==="Custom"?`${S.imgW}×${S.imgH}`:`${S.imgAspect} · ${S.imgMP}MP`,true,(r)=>imgAspectDD.open(r),true);
+          chip("Profile",imgProfileShort(S.imgProfile),false,(r)=>imgProfDD.open(r),true);
+          chip("Seed",S.randomizeSeed?"random":String(S.seed||0),false,editSeed);
+          chip("Batch",`×${S.batch||1}`,false,()=>editField(batchNI));
           return;
         }
         const r=_resolveRes();
         const p=_fitPrimary(S);
-        const fitTag=p?` (${p.mode==="custom"?"Custom":(p.mode==="normal"?"Normal":"Fit")} · ${p.label})`:"";
-        chip(null,`${r.width}×${r.height}${fitTag}`,true,(rect)=>resDD.open(rect));
-        if(S.mode==="chain") chip(null,`${S.chainClips.length} clips`,true);
-        else chip(null,`${S.duration}s`,true,()=>editField(durNI));
-        recipeEl.appendChild(mk("span",{}, {className:"h3-gsep","aria-hidden":"true"}));
-        chip("steps",String(S.steps),false,()=>editField(stepsNI));
-        chip(null,_q,false,(rect)=>qualDD.open(rect));
-        chip(null,S.samplerName||"res_multistep",false,(rect)=>samplerDD.open(rect));
-        chip(null,S.schedulerName||"simple",false,(rect)=>schedDD.open(rect));
-        chip("seed",S.randomizeSeed?"random":String(S.seed||0),false,editSeed);
-        chip(null,`×${S.batch||1}`,false,()=>editField(batchNI));
+        const fitTag=p?(p.mode==="custom"?"Custom":(p.mode==="normal"?"Normal":"Fit")):"";
+        chip(fitTag?`Res · ${fitTag}`:"Res",`${r.width}×${r.height}`,true,(rect)=>resDD.open(rect),true);
+        if(S.mode==="chain") chip("Clips",String(S.chainClips.length),true);
+        else chip("Length",`${S.duration}s`,true,()=>editField(durNI));
+        chip("Steps",String(S.steps),false,()=>editField(stepsNI));
+        chip("Quality",_q,false,(rect)=>qualDD.open(rect),true);
+        chip("Sampler",S.samplerName||"res_multistep",false,(rect)=>samplerDD.open(rect),true);
+        chip("Sched",S.schedulerName||"simple",false,(rect)=>schedDD.open(rect),true);
+        chip("Seed",S.randomizeSeed?"random":String(S.seed||0),false,editSeed);
+        chip("Batch",`×${S.batch||1}`,false,()=>editField(batchNI));
       };
       _updRecipe();
       _updRecipeFn=_updRecipe;

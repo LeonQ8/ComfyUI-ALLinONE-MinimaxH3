@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { aspect, sizeOf, sameSize, orientRes, fitResolutionToAspect, resolveFitPrimary } from "../web/h3_helpers.mjs";
+import { aspect, sizeOf, sameSize, orientRes, fitResolutionToAspect, resolveFitPrimary, imgProfileShort } from "../web/h3_helpers.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, "..");
@@ -37,11 +37,12 @@ test("bundle is non-trivial and registers an extension", () => {
   );
 });
 
-test("helpers file is non-trivial and exports the three helpers", () => {
+test("helpers file is non-trivial and exports the core helpers", () => {
   const src = readFileSync(helpersPath, "utf8");
   assert.ok(src.includes("export function aspect"), "helpers must export aspect");
   assert.ok(src.includes("export function sizeOf"), "helpers must export sizeOf");
   assert.ok(src.includes("export function sameSize"), "helpers must export sameSize");
+  assert.ok(src.includes("export function imgProfileShort"), "helpers must export imgProfileShort");
 });
 
 test("aspect: landscape and portrait", () => {
@@ -229,6 +230,30 @@ test("resolveFitPrimary: normal mode returns the native slot size", () => {
 test("resolveFitPrimary: normal mode with no explicit key picks the first slot", () => {
   const p = resolveFitPrimary({ key: null, mode: "normal", custom: null }, SLOTS);
   assert.deepEqual(p, { key: "first", label: "First Frame", mode: "normal", size: { width: 1080, height: 1920 } });
+});
+
+test("imgProfileShort: base profiles get short tokens", () => {
+  assert.equal(imgProfileShort("base_quality_20"), "Base 20");
+  assert.equal(imgProfileShort("base_balanced_12"), "Base 12");
+});
+
+test("imgProfileShort: lightx profiles get step-coded tokens", () => {
+  assert.equal(imgProfileShort("lightx_v1_fl2v_8"), "FL2VA 8");
+  assert.equal(imgProfileShort("lightx_v1_fl2v_4_pruned"), "FL2VA 4");
+  assert.equal(imgProfileShort("lightx_sa_solver_4"), "SA-Solver 4");
+  assert.equal(imgProfileShort("lightx_er_sde_4"), "ER-SDE 4");
+});
+
+test("imgProfileShort: ref2v keys win over the sampler prefix", () => {
+  assert.equal(imgProfileShort("lightx_v01_ref2v_er_sde_4_pruned"), "REF2V");
+  assert.equal(imgProfileShort("lightx_v01_ref2v_sa_solver_4_pruned"), "REF2V");
+});
+
+test("imgProfileShort: custom and unknown keys fall back safely", () => {
+  assert.equal(imgProfileShort("custom"), "Custom");
+  assert.equal(imgProfileShort(null), "Custom");
+  assert.equal(imgProfileShort(""), "Custom");
+  assert.equal(imgProfileShort("not_a_real_profile"), "Base 20");
 });
 
 // -- Build-order regression guard --------------------------------------------

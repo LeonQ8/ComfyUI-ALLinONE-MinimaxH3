@@ -95,3 +95,17 @@ export function resolveFitPrimary(cfg, slots) {
   }
   return { key, label: slot.label, mode: "fit", size: slot.size };
 }
+
+// Compact display name for an image sampling profile key so the recipe line
+// stays short. "custom" and unknown keys fall back to a plain token.
+export function imgProfileShort(key) {
+  if (!key || key === "custom") return "Custom";
+  const k = String(key);
+  if (k.includes("ref2v")) return "REF2V";
+  if (k.includes("fl2v_8")) return "FL2VA 8";
+  if (k.includes("fl2v_4")) return "FL2VA 4";
+  if (k.includes("sa_solver")) return "SA-Solver 4";
+  if (k.includes("er_sde")) return "ER-SDE 4";
+  if (k.includes("balanced")) return "Base 12";
+  return "Base 20";
+}
