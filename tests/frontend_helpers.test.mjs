@@ -182,3 +182,63 @@ test("fitResolutionToAspect: respects a smaller area budget", () => {
   assert.ok(r.width * r.height <= 800 * 450 + 1);
   assert.ok(r.width % 32 === 0 && r.height % 32 === 0);
 });
+
+// -- Build-order regression guard --------------------------------------------
+// The bundle builds its UI inside one _buildUI function. helpers that run
+// during that build (persist) must not reference consts declared later in the
+// same scope: a `typeof _x === "function"` guard on a TDZ const throws
+// ReferenceError instead of returning undefined. Late-bound helpers must use
+// the `let _xFn = null` holder pattern (declared before persist, assigned
+// later). This test would have caught the original _syncFitRow TDZ crash.
+
+function extractNamedFnBody(src, startMarker, openBrace) {
+  const fnStart = src.indexOf(startMarker);
+  assert.notEqual(fnStart, -1, `could not find ${startMarker} in bundle`);
+  const brace = src.indexOf(openBrace, fnStart);
+  assert.notEqual(brace, -1, `no opening brace for ${startMarker}`);
+  let depth = 0;
+  for (let i = brace; i < src.length; i++) {
+    if (src[i] === "{") depth++;
+    else if (src[i] === "}") {
+      depth--;
+      if (depth === 0) return src.slice(brace + 1, i);
+    }
+  }
+  throw new Error(`unbalanced braces for ${startMarker}`);
+}
+
+function collectLocalDecls(bundle) {
+  const decls = new Set();
+  const re = /\b(?:const|let|function|var)\s+([A-Za-z_$][\w$]*)\b/g;
+  let m;
+  while ((m = re.exec(bundle))) decls.add(m[1]);
+  return decls;
+}
+
+test("persist body references only helpers declared before it", () => {
+  const bundle = readFileSync(bundlePath, "utf8");
+  const persistIdx = bundle.indexOf("function persist(){");
+  assert.notEqual(persistIdx, -1);
+  const persistBody = extractNamedFnBody(bundle, "function persist(){", "{");
+  const beforeDecls = collectLocalDecls(bundle.slice(0, persistIdx));
+  const allDecls = collectLocalDecls(bundle);
+  const used = new Set(persistBody.match(/[A-Za-z_$][\w$]*/g));
+  const offenders = [...used].filter(
+    (name) => name.startsWith("_") && allDecls.has(name) && !beforeDecls.has(name),
+  );
+  assert.deepEqual(offenders, [], "persist() references consts declared after it, which breaks TDZ at build time");
+});
+
+test("every late-bound _xFn holder is declared before persist", () => {
+  const bundle = readFileSync(bundlePath, "utf8");
+  const persistIdx = bundle.indexOf("function persist(){");
+  assert.notEqual(persistIdx, -1);
+  const holders = bundle.match(/\blet\s+(_\w+Fn)\s*=\s*null\s*;/g) || [];
+  assert.ok(holders.length >= 1, "expected at least one late-bound holder");
+  for (const h of holders) {
+    const decl = `let ${h.replace("let ", "").trim()}`;
+    const idx = bundle.indexOf(decl);
+    assert.ok(idx !== -1 && idx < persistIdx, `${decl} must be declared before persist()`);
+  }
+  assert.ok(/_syncFitRowFn/.test(bundle), "_syncFitRowFn holder must exist");
+});

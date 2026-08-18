@@ -1023,6 +1023,7 @@ app.registerExtension({
         return isNaN(n)?"192,169,150":`${(n>>16)&255},${(n>>8)&255},${n&255}`;
       };
       let _updRecipeFn=null;
+      let _syncFitRowFn=null;
       const _applyAccent=(hex)=>{
         S.accent=hex;persist();
         document.documentElement.style.setProperty("--h3accent",hex);
@@ -1060,7 +1061,7 @@ function persist(){
           imgProfile:S.imgProfile,imgRefs:S.imgRefs,imgRefsSize:S.imgRefsSize,
           resOrientation:S.resOrientation,
         });
-        if(typeof _syncFitRow==="function"){ try{ _syncFitRow(); }catch(e){} }
+        if(_syncFitRowFn){ try{ _syncFitRowFn(); }catch(e){} }
       }
 
       const _rememberFrameInfo=(orientKey,sizeKey,size)=>{
@@ -1071,7 +1072,7 @@ function persist(){
         if(orientKey) S[orientKey]=newOrient;
         S[sizeKey]=size||null;
         persist();
-        if(typeof _syncFitRow==="function") _syncFitRow();
+        if(_syncFitRowFn) _syncFitRowFn();
       };
 
       const _validSize=(size)=>!size||typeof size!=="object" ? false : (Number(size.width)>0 && Number(size.height)>0);
@@ -2577,7 +2578,7 @@ function persist(){
         else if(S.mode==="image"){ modeHdr.style.display="flex"; modeTitle.textContent="Image (H3 Studio)"; _renderImgRefs(); imgArea.style.display="flex"; if(_syncImgAdvRef) _syncImgAdvRef(); }
         else { modeHdr.style.display="none"; modeTitle.textContent="Text to Video"; }
         if(typeof _syncLiveToggle==="function") _syncLiveToggle();
-        if(typeof _syncFitRow==="function") _syncFitRow();
+        if(_syncFitRowFn) _syncFitRowFn();
       };
 
       // -- PARAMS ------------------------------------------------------------
@@ -2625,7 +2626,7 @@ function persist(){
         fitBtn.style.borderColor=on?C.lime:C.border;
         tx(fitBtn,on?"Fit: ON":"Fit");
       };
-      fitBtn.onclick=()=>{ S.resFitAspect=!S.resFitAspect; persist(); _syncFitBtn(); _syncFitRow(); _updateFramesLabel&&_updateFramesLabel(); };
+      fitBtn.onclick=()=>{ S.resFitAspect=!S.resFitAspect; persist(); _syncFitBtn(); _syncFitRowFn(); _updateFramesLabel&&_updateFramesLabel(); };
       _syncFitBtn();
       const resDDWrap=mk("div",{display:"flex",alignItems:"center",gap:"6px",width:"100%"});
       resDDWrap.append(resDD.el,swapBtn,fitBtn);
@@ -2649,7 +2650,7 @@ function persist(){
         S.resDriveFrom=S.resDriveFrom||{};
         S.resDriveFrom[S.mode]=v;
         persist();
-        _syncFitRow();
+        _syncFitRowFn();
         _updateFramesLabel&&_updateFramesLabel();
       });
       driveFromDD.el.style.display="none";
@@ -2664,7 +2665,7 @@ function persist(){
       driveFromRow.append(driveFromLbl, driveFromDD.el, fitInfo);
       resRow.appendChild(driveFromRow);
 
-      const _syncFitRow=()=>{
+      _syncFitRowFn=()=>{
         if(!S.resFitAspect||S.resolution==="Custom"){
           driveFromRow.style.display="none";
           return;
@@ -2713,7 +2714,7 @@ function persist(){
         persist();_updateFramesLabel();_updResCustom();
       };
       swapBtn.onclick=_swapRes;
-      _syncFitRow();
+      _syncFitRowFn();
       const durFpsCell=mk("div",{display:"flex",flexDirection:"column",gap:"3px"});
       const durCap=mk("div",{fontSize:"10px",color:C.text});tx(durCap,"Duration (s)");
       const durInner=mk("div",{display:"flex",alignItems:"center",gap:"8px"});
