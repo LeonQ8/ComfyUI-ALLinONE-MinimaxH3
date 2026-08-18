@@ -3013,7 +3013,6 @@ function persist(){
       seedNI.style.height="34px";seedNI.style.borderRadius="9px";seedNI.style.background="var(--h3-panel)";
       seedNI.style.border="1px solid var(--h3-line)";seedNI.style.width="auto";seedNI.style.flex="1 1 0";
       seedNI.style.minWidth="0";seedNI.style.maxWidth="150px";
-      const _rollSeed=()=>{ S.seed=Math.floor(Math.random()*(H3_SEED_MAX+1)); seedNI._inp.value=String(S.seed); persist(); };
       const randLbl=mk("span",{}, {className:"h3-slbl",textContent:"Random"});
       const randTgl=mk("button",{}, {type:"button",role:"switch",className:"h3-tgl","aria-label":"Randomize seed",title:"Randomize seed"});
       randTgl.appendChild(mk("span",{}, {className:"thumb"}));
@@ -3022,12 +3021,14 @@ function persist(){
         randTgl.setAttribute("aria-checked",S.randomizeSeed?"true":"false");
         tx(randLbl,S.randomizeSeed?"Random":"Fixed");
         randLbl.style.color=S.randomizeSeed?"var(--h3accent)":"";
-        seedNI._inp.style.color=S.randomizeSeed?C.dim:C.text;
+        seedNI._inp.disabled=!S.randomizeSeed;
+        seedNI._inp.style.color=S.randomizeSeed?C.text:C.dim;
+        seedNI._inp.style.cursor=S.randomizeSeed?"text":"not-allowed";
       };
       _updSeedUI();
       randTgl.onclick=()=>{
-        if(S.randomizeSeed){ S.randomizeSeed=false; _rollSeed(); }
-        else { S.randomizeSeed=true; persist(); }
+        S.randomizeSeed=!S.randomizeSeed;
+        persist();
         _updSeedUI();
       };
       const batchLbl=mk("span",{}, {className:"h3-slbl",textContent:"Batch"});
@@ -4058,6 +4059,7 @@ function persist(){
         dir.aspect_ratio=customAspect?"custom":S.imgAspect;
         dir.megapixels=customAspect?(w*h)/1e6:(Number(S.imgMP)||1);
         dir.seed=S.seed||0;
+        wf["5"].inputs.noise_seed=["2",5];
         dir.sampling_profile=S.imgProfile==="custom"?"base_quality_20":(S.imgProfile||"base_quality_20");
         dir.frame_profile="recommended_5";
         dir.enhance_mode="off";
@@ -4521,8 +4523,8 @@ function persist(){
         const editField=(ni)=>{ _unfoldParams(); focusNI(ni); };
         const editSeed=()=>{
           _unfoldParams();
-          if(S.randomizeSeed) randTgl.click();
-          else focusNI(seedNI);
+          if(S.randomizeSeed) focusNI(seedNI);
+          else randTgl.click();
         };
         if(S.mode==="image"){
           chip("Mode",_imgModeKey[S.imgSub]||"Text to Image",(r)=>imgSubDD.open(r),true);
