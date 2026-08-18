@@ -1276,9 +1276,10 @@ function persist(){
           .h3-card{background:var(--h3-card);border:1px solid var(--h3-line);border-radius:13px;padding:11px 12px;display:flex;flex-direction:column;gap:8px;}
           .h3-ctitle{font-size:12.5px;font-weight:700;color:var(--h3-tx);}
           .h3-cdesc{font-size:10px;color:var(--h3-tx2);line-height:1.5;}
-          /* recipe line: pill chips in two visual groups (media | sampling) */
-          .h3-recipe{display:grid;grid-template-columns:repeat(auto-fit,minmax(104px,1fr));gap:1px;background:var(--h3-line);border:1px solid var(--h3-line);border-radius:10px;overflow:hidden;padding:1px;font-variant-numeric:tabular-nums;}
-          .h3-chip{display:flex;align-items:center;justify-content:center;gap:5px;background:var(--h3-field);border:none;border-radius:0;padding:4px 8px;font-size:10px;line-height:1.4;min-width:0;overflow:hidden;}
+          /* recipe line: uniform pill grid with consistent 1px hairline dividers */
+          .h3-recipe{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:1px;background:var(--h3-line);border:1px solid var(--h3-line);border-radius:10px;overflow:hidden;padding:1px;font-variant-numeric:tabular-nums;}
+          .h3-chip{display:flex;align-items:center;justify-content:center;gap:5px;background:var(--h3-field);border:none;border-radius:0;box-shadow:none;padding:4px 8px;font-size:10px;line-height:1.4;min-width:0;overflow:hidden;}
+          .h3-chip:last-child:nth-child(4n+1){grid-column:1/-1;}
           .h3-chip .cl{font-size:8.5px;font-weight:700;letter-spacing:.04em;color:var(--h3-tx3);flex-shrink:0;}
           .h3-chip .cv{font-weight:700;color:var(--h3-tx);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;}
           .h3-chip.media .cv{color:var(--h3accent);}
@@ -1286,7 +1287,7 @@ function persist(){
           .h3-chip.btn:hover{background:var(--h3-hover);}
           .h3-chip.btn:hover .cv{color:var(--h3accent);}
           .h3-chip.btn:focus-visible{box-shadow:0 0 0 2px rgba(var(--h3accent-rgb),.35);}
-          .h3-gsep{display:block;grid-column:1/-1;height:1px;background:var(--h3-line);margin:0;}
+          .h3-gsep{display:none;}
           /* ghost remove button (LoRA / keyframe / clip rows) */
           .h3-rmbtn{width:26px;height:26px;border-radius:9px;background:var(--h3-field);border:1px solid var(--h3-line);color:var(--h3-tx3);font-size:11px;font-weight:600;line-height:1;padding:0;cursor:pointer;flex-shrink:0;display:flex;align-items:center;justify-content:center;transition:border-color .15s,color .15s,background-color .15s;}
           .h3-rmbtn:hover{border-color:rgba(255,128,128,.55);color:var(--h3-err);background:rgba(255,128,128,.07);}
