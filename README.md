@@ -26,7 +26,7 @@ No node graph to build, no wires to connect, no hunting through twelve custom no
 
 ![ALL in ONE MiniMaxH3 — T2V tab](assets/R2V2.png)
 
-**Live Preview** — searchable, with prompt reuse and per-entry preview.
+**Live Preview** — live preview of your video while sampling.
 
 ![ALL in ONE MiniMaxH3 — demo](assets/liveprev.gif)
 
