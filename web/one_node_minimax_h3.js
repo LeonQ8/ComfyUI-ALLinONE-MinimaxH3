@@ -2443,7 +2443,7 @@ app.registerExtension({
       const schedDD=DD(SCHEDULERS,S.schedulerName||"simple",v=>{S.schedulerName=v;persist();});
       schedRow.append(schedCapRow,schedDD.el);
       optRow.style.gridColumn="1 / -1";
-      params.append(resRow,durFpsCell,stepsRow,qualRow,optRow,samplerRow,schedRow);
+      params.append(resRow,qualRow,optRow,durFpsCell,stepsRow,samplerRow,schedRow);
 
       // Custom sampling controls for Image mode (shown when the profile is Custom)
       const imgAdvRow=mk("div",{display:"none",flexDirection:"column",gap:"7px"});
