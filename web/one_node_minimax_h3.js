@@ -201,6 +201,11 @@ function imgProfileShort(key){
   return "Base 20";
 }
 
+function imgAspectName(key){
+  const names={"1:1":"Square","16:9":"Widescreen","9:16":"Portrait","4:3":"Standard","3:4":"Standard Portrait","3:2":"Wide","2:3":"Tall","21:9":"Cinematic"};
+  return names[key]||key||"";
+}
+
 function _captureFileSize(file){
   return new Promise((resolve)=>{
     if(!file||!file.type||!file.type.startsWith("image/")){ resolve(null); return; }
@@ -395,15 +400,17 @@ function MiniToggle(checked,onChange,label){
 let _activeDDClose=null;
 function DD(items,selected,onChange){
   let val=selected;
+  const _lblOf=it=>{ if(it&&typeof it==="object") return it.label!=null?it.label:""; return it==null?"":it; };
+  const _valOf=it=>{ if(it&&typeof it==="object") return it.value; return it; };
   const wrap=mk("div",{position:"relative",width:"100%",minWidth:"0",overflow:"hidden"});
   const trig=mk("div",{background:C.bg3,border:`1px solid ${C.border}`,borderRadius:"7px",
     padding:"0 8px",height:"28px",display:"flex",alignItems:"center",
     justifyContent:"space-between",cursor:"pointer",boxSizing:"border-box",
     transition:"border-color .15s",userSelect:"none",overflow:"hidden"});
-  const _setTitle=v=>{ const t=v||""; trig.title=t; trigTxt.title=t; };
+  const _setTitle=v=>{ const t=_lblOf(v); trig.title=t; trigTxt.title=t; };
   const trigTxt=mk("span",{fontSize:"11px",color:C.text,overflow:"hidden",
     textOverflow:"ellipsis",whiteSpace:"nowrap",flex:"1",minWidth:"0"});
-  tx(trigTxt,val); trigTxt.style.color=val?C.lime:C.muted; _setTitle(val);
+  tx(trigTxt,_lblOf(val)); trigTxt.style.color=_lblOf(val)?C.lime:C.muted; _setTitle(val);
   const arr=mk("span",{fontSize:"8px",color:C.muted,marginLeft:"5px",flexShrink:"0",transition:"transform .18s"});
   tx(arr,"v");
   trig.append(trigTxt,arr);
@@ -418,16 +425,17 @@ function DD(items,selected,onChange){
   const _norm=(s)=>(s||"").replace(/\\/g,"/").toLowerCase();
   const render=q=>{
     list.innerHTML="";
-    items.filter(i=>!q||i.toLowerCase().includes(q.toLowerCase())).forEach(item=>{
-      const isSel=_norm(item)===_norm(val);
+    items.filter(i=>{ const l=_lblOf(i).toLowerCase(); return !q||l.includes(q.toLowerCase()); }).forEach(item=>{
+      const lbl=_lblOf(item);
+      const isSel=_norm(lbl)===_norm(_lblOf(val));
       const r=mk("div",{padding:"7px 12px",fontSize:"11px",cursor:"pointer",
         color:isSel?C.lime:C.text,background:isSel?C.bg2:"transparent",
         whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",transition:"background .1s"});
-      tx(r,item);
-      r.title=item;
+      tx(r,lbl);
+      r.title=lbl;
       r.onmouseenter=()=>r.style.background=C.bg3;
-      r.onmouseleave=()=>r.style.background=_norm(item)===_norm(val)?C.bg2:"transparent";
-      r.onclick=()=>{val=item;tx(trigTxt,item);trigTxt.style.color=item?C.lime:C.muted;_setTitle(item);close();onChange(item);};
+      r.onmouseleave=()=>r.style.background=isSel?C.bg2:"transparent";
+      r.onclick=()=>{val=item;tx(trigTxt,lbl);trigTxt.style.color=lbl?C.lime:C.muted;_setTitle(item);close();onChange(_valOf(item));};
       list.appendChild(r);
     });
   };
@@ -1294,10 +1302,8 @@ function persist(){
           .h3-chip:nth-child(n+2){border-left:1px solid var(--h3-line);}
           .h3-chip:nth-child(4n+1){border-left:none;}
           .h3-chip:nth-child(n+5){border-top:1px solid var(--h3-line);}
-          .h3-chip .cl{font-size:7px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--h3-tx3);flex-shrink:0;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
-          .h3-chip .cv{font-size:10px;font-weight:700;color:var(--h3-tx);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;max-width:100%;}
-          .h3-chip.media .cl{color:rgba(var(--h3accent-rgb),.8);}
-          .h3-chip.media .cv{color:var(--h3accent);}
+          .h3-chip .cl{font-size:7px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--h3-tx3);flex-shrink:0;width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+          .h3-chip .cv{font-size:10px;font-weight:700;color:var(--h3-tx);width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;}
           .h3-chip.btn{cursor:pointer;font-family:inherit;outline:none;}
           .h3-chip.btn.hasdd{padding-right:16px;}
           .h3-chip.btn .chev{position:absolute;right:5px;top:50%;transform:translateY(-50%);font-size:7px;color:var(--h3-tx3);pointer-events:none;}
@@ -2239,7 +2245,9 @@ function persist(){
       });
       imgSubRow.append(imgSubCapRow,imgSubDD.el);
       const imgGeomRow=mk("div",{display:"flex",alignItems:"center",gap:"8px",flexWrap:"wrap"});
-      const imgAspectDD=DD(Object.keys(IMG_ASPECTS).concat(["Custom"]),S.imgAspect||"1:1",v=>{S.imgAspect=v;persist();_updImgCustom();});
+      const _aspectItems=Object.keys(IMG_ASPECTS).map(k=>({label:`${imgAspectName(k)} (${k})`,value:k})).concat([{label:"Custom",value:"Custom"}]);
+      const _aspectSel=S.imgAspect==="Custom"?"Custom":`${imgAspectName(S.imgAspect)} (${S.imgAspect})`;
+      const imgAspectDD=DD(_aspectItems,_aspectSel,v=>{S.imgAspect=v;persist();_updImgCustom();});
       const imgMPNI=NI("",S.imgMP,0.2,4,0.05,v=>{S.imgMP=v;persist();},"62px");
       const imgMPLbl=mk("div",{fontSize:"9px",color:C.muted,flexShrink:"0"});tx(imgMPLbl,"MP");
       const imgCustom=mk("div",{display:"none",alignItems:"center",gap:"6px",width:"100%"});
@@ -4482,9 +4490,9 @@ function persist(){
         if(!recipeEl) return;
         recipeEl.innerHTML="";
         const _q=_QL[S.quality]||"Custom";
-        const chip=(label,value,media,action,dd)=>{
+        const chip=(label,value,action,dd)=>{
           const isBtn=typeof action==="function";
-          const c=mk(isBtn?"button":"span",{}, {className:"h3-chip"+(isBtn?" btn":"")+(media?" media":"")+(isBtn&&dd?" hasdd":"")});
+          const c=mk(isBtn?"button":"span",{}, {className:"h3-chip"+(isBtn?" btn":"")+(isBtn&&dd?" hasdd":"")});
           c.title=`${label?label+": ":""}${value}`;
           if(label) c.appendChild(mk("span",{}, {className:"cl",textContent:label}));
           c.appendChild(mk("span",{}, {className:"cv",textContent:value}));
@@ -4509,25 +4517,25 @@ function persist(){
           else focusNI(seedNI);
         };
         if(S.mode==="image"){
-          chip("Mode",_imgModeKey[S.imgSub]||"Text to Image",true,(r)=>imgSubDD.open(r),true);
-          chip("Aspect",S.imgAspect==="Custom"?`${S.imgW}×${S.imgH}`:`${S.imgAspect} · ${S.imgMP}MP`,true,(r)=>imgAspectDD.open(r),true);
-          chip("Profile",imgProfileShort(S.imgProfile),false,(r)=>imgProfDD.open(r),true);
-          chip("Seed",S.randomizeSeed?"random":String(S.seed||0),false,editSeed);
-          chip("Batch",`×${S.batch||1}`,false,()=>editField(batchNI));
+          chip("Mode",_imgModeKey[S.imgSub]||"Text to Image",(r)=>imgSubDD.open(r),true);
+          chip("Aspect",S.imgAspect==="Custom"?`${S.imgW}×${S.imgH}`:`${imgAspectName(S.imgAspect)} · ${S.imgMP}MP`,(r)=>imgAspectDD.open(r),true);
+          chip("Profile",imgProfileShort(S.imgProfile),(r)=>imgProfDD.open(r),true);
+          chip("Seed",S.randomizeSeed?"random":String(S.seed||0),editSeed);
+          chip("Batch",`×${S.batch||1}`,()=>editField(batchNI));
           return;
         }
         const r=_resolveRes();
         const p=_fitPrimary(S);
         const fitTag=p?(p.mode==="custom"?"Custom":(p.mode==="normal"?"Normal":"Fit")):"";
-        chip(fitTag?`Res · ${fitTag}`:"Res",`${r.width}×${r.height}`,true,(rect)=>resDD.open(rect),true);
-        if(S.mode==="chain") chip("Clips",String(S.chainClips.length),true);
-        else chip("Length",`${S.duration}s`,true,()=>editField(durNI));
-        chip("Steps",String(S.steps),false,()=>editField(stepsNI));
-        chip("Quality",_q,false,(rect)=>qualDD.open(rect),true);
-        chip("Sampler",S.samplerName||"res_multistep",false,(rect)=>samplerDD.open(rect),true);
-        chip("Sched",S.schedulerName||"simple",false,(rect)=>schedDD.open(rect),true);
-        chip("Seed",S.randomizeSeed?"random":String(S.seed||0),false,editSeed);
-        chip("Batch",`×${S.batch||1}`,false,()=>editField(batchNI));
+        chip(fitTag?`Res · ${fitTag}`:"Res",`${r.width}×${r.height}`,(rect)=>resDD.open(rect),true);
+        if(S.mode==="chain") chip("Clips",String(S.chainClips.length));
+        else chip("Length",`${S.duration}s`,()=>editField(durNI));
+        chip("Steps",String(S.steps),()=>editField(stepsNI));
+        chip("Quality",_q,(rect)=>qualDD.open(rect),true);
+        chip("Sampler",S.samplerName||"res_multistep",(rect)=>samplerDD.open(rect),true);
+        chip("Sched",S.schedulerName||"simple",(rect)=>schedDD.open(rect),true);
+        chip("Seed",S.randomizeSeed?"random":String(S.seed||0),editSeed);
+        chip("Batch",`×${S.batch||1}`,()=>editField(batchNI));
       };
       _updRecipe();
       _updRecipeFn=_updRecipe;

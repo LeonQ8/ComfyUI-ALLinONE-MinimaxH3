@@ -109,3 +109,19 @@ export function imgProfileShort(key) {
   if (k.includes("balanced")) return "Base 12";
   return "Base 20";
 }
+
+// Friendly name for an image aspect ratio key so dropdowns and the recipe
+// line read "Widescreen" instead of "16:9". Unknown keys pass through.
+export function imgAspectName(key) {
+  const names = {
+    "1:1": "Square",
+    "16:9": "Widescreen",
+    "9:16": "Portrait",
+    "4:3": "Standard",
+    "3:4": "Standard Portrait",
+    "3:2": "Wide",
+    "2:3": "Tall",
+    "21:9": "Cinematic",
+  };
+  return names[key] || key || "";
+}

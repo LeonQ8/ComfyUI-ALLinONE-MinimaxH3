@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { aspect, sizeOf, sameSize, orientRes, fitResolutionToAspect, resolveFitPrimary, imgProfileShort } from "../web/h3_helpers.mjs";
+import { aspect, sizeOf, sameSize, orientRes, fitResolutionToAspect, resolveFitPrimary, imgProfileShort, imgAspectName } from "../web/h3_helpers.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, "..");
@@ -43,6 +43,7 @@ test("helpers file is non-trivial and exports the core helpers", () => {
   assert.ok(src.includes("export function sizeOf"), "helpers must export sizeOf");
   assert.ok(src.includes("export function sameSize"), "helpers must export sameSize");
   assert.ok(src.includes("export function imgProfileShort"), "helpers must export imgProfileShort");
+  assert.ok(src.includes("export function imgAspectName"), "helpers must export imgAspectName");
 });
 
 test("aspect: landscape and portrait", () => {
@@ -254,6 +255,24 @@ test("imgProfileShort: custom and unknown keys fall back safely", () => {
   assert.equal(imgProfileShort(null), "Custom");
   assert.equal(imgProfileShort(""), "Custom");
   assert.equal(imgProfileShort("not_a_real_profile"), "Base 20");
+});
+
+test("imgAspectName: every aspect key gets a friendly name", () => {
+  assert.equal(imgAspectName("1:1"), "Square");
+  assert.equal(imgAspectName("16:9"), "Widescreen");
+  assert.equal(imgAspectName("9:16"), "Portrait");
+  assert.equal(imgAspectName("4:3"), "Standard");
+  assert.equal(imgAspectName("3:4"), "Standard Portrait");
+  assert.equal(imgAspectName("3:2"), "Wide");
+  assert.equal(imgAspectName("2:3"), "Tall");
+  assert.equal(imgAspectName("21:9"), "Cinematic");
+});
+
+test("imgAspectName: custom and unknown keys pass through", () => {
+  assert.equal(imgAspectName("Custom"), "Custom");
+  assert.equal(imgAspectName("17:5"), "17:5");
+  assert.equal(imgAspectName(null), "");
+  assert.equal(imgAspectName(undefined), "");
 });
 
 // -- Build-order regression guard --------------------------------------------
