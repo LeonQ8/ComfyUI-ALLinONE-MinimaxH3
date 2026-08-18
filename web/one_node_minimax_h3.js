@@ -101,6 +101,14 @@ function snapFrames(seconds, fps=24){
   return base + ((5 - (base % 17)) + 17) % 17;
 }
 
+function mediaKey(item){
+  if(!item) return "output||";
+  const sub = String(item.subfolder || "").replace(/\\/g, "/");
+  const typ = String(item.type || "output");
+  const name = String(item.filename || item.video || "").split(/[\\/]/).pop();
+  return `${typ}|${sub}|${name}`;
+}
+
 // -- DOM helpers (adapted from the One Node family) ----------------------------
 const mk = (tag,css={},props={}) => { const e=document.createElement(tag); Object.assign(e.style,css); Object.assign(e,props); return e; };
 const tx = (e,t) => { e.textContent=t; return e; };
@@ -1592,20 +1600,21 @@ app.registerExtension({
         tx(lbTimeVal,"?");
         tx(lbPromptBox,"");
         lbPromptReuse.style.display="none";
-        if(_seedByFile[item.filename]!==undefined){
-          tx(lbSeedVal,String(_seedByFile[item.filename]));
+        const _lbKey=mediaKey(item);
+        if(_seedByFile[_lbKey]!==undefined){
+          tx(lbSeedVal,String(_seedByFile[_lbKey]));
         }
-        if(_genTimeByFile[item.filename]){
-          tx(lbTimeVal,fmtDur(_genTimeByFile[item.filename]));
+        if(_genTimeByFile[_lbKey]){
+          tx(lbTimeVal,fmtDur(_genTimeByFile[_lbKey]));
         }
         try{
           const r=await fetch("/h3one/history");
           const d=await r.json();
-          const hit=(d.items||[]).find(it=>it.video===item.filename);
+          const hit=(d.items||[]).find(it=>it.media_key&&it.media_key===_lbKey);
           if(hit){
-            if(hit.seed!==undefined&&hit.seed!==null){ _seedByFile[item.filename]=hit.seed; tx(lbSeedVal,String(hit.seed)); }
+            if(hit.seed!==undefined&&hit.seed!==null){ _seedByFile[_lbKey]=hit.seed; tx(lbSeedVal,String(hit.seed)); }
             if(hit.mode){ tx(lbModeVal,_LIB_MODE_LBL[hit.mode]||hit.mode); }
-            if(hit.gen_time){ _genTimeByFile[item.filename]=hit.gen_time; tx(lbTimeVal,fmtDur(hit.gen_time)); }
+            if(hit.gen_time){ _genTimeByFile[_lbKey]=hit.gen_time; tx(lbTimeVal,fmtDur(hit.gen_time)); }
             if(hit.prompt&&hit.prompt.trim()){
               tx(lbPromptBox,hit.prompt);
               lbPromptReuse.style.display="inline-block";
@@ -1632,7 +1641,7 @@ app.registerExtension({
       };
       lbFav.onclick=async()=>{
         if(!_libCur)return;
-        await fetch("/h3one/favorite",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({filename:_libCur.filename,favorite:!_libCur.favorite})}).catch(()=>{});
+        await fetch("/h3one/favorite",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({filename:_libCur.filename,subfolder:_libCur.subfolder||"",type:_libCur.type||"output",favorite:!_libCur.favorite})}).catch(()=>{});
         _libCur.favorite=!_libCur.favorite;
         tx(lbFav,_libCur.favorite?"Unfavorite":"Favorite");
         _renderLibrary();
@@ -2930,17 +2939,17 @@ app.registerExtension({
       const timeLbl=mk("span",{fontSize:"9px",fontWeight:"700",letterSpacing:".05em",textTransform:"uppercase",color:C.muted});tx(timeLbl,"Generation time");
       const timeVal=mk("span",{fontSize:"11px",fontWeight:"700",color:C.lime,fontVariantNumeric:"tabular-nums"});tx(timeVal,"0s");
       timeBar.append(timeIco,timeLbl,timeVal);
-      const _updateTimeBar=(filename)=>{
-        const t=_genTimeByFile[filename];
+      const _updateTimeBar=(key)=>{
+        const t=_genTimeByFile[key];
         if(t){
           tx(timeVal,fmtDur(t));
           timeBar.style.display="flex";
           return;
         }
         timeBar.style.display="none";
-        _fetchTimeFromHistory(filename).then(t=>{
-          if(t && _curItem && _curItem.filename===filename){
-            _genTimeByFile[filename]=t;
+        _fetchTimeFromHistory(key).then(t=>{
+          if(t && _curItem && mediaKey(_curItem)===key){
+            _genTimeByFile[key]=t;
             tx(timeVal,fmtDur(t));
             timeBar.style.display="flex";
           }
@@ -2951,7 +2960,7 @@ app.registerExtension({
           const lastShown=_activeShownFiles[_activeShownFiles.length-1];
           _genTimeByFile[lastShown]=ms;
         }
-        if(_curItem) _updateTimeBar(_curItem.filename);
+        if(_curItem) _updateTimeBar(mediaKey(_curItem));
       };
       const galleryBox=mk("div",{display:"flex",gap:"8px",overflowX:"auto",paddingBottom:"4px",scrollbarWidth:"thin"});
       const galleryHdr=mk("div",{display:"flex",alignItems:"center",justifyContent:"space-between",gap:"6px",padding:"2px 0 5px"});
@@ -3120,7 +3129,7 @@ app.registerExtension({
         _curItem=item;
         if(_cmpMode) _exitCompare();
         const imageCompare=S.mode==="image"&&["edit","refmix"].includes(S.imgSub)&&_cmpImageRefs.length>0&&_isImageItem(item);
-        const upscaleCompare=!!(_upResult&&item.filename===_upResult.filename);
+        const upscaleCompare=!!(_upResult&&mediaKey(item)===_upResult.media_key);
         cmpBtn.style.display=imageCompare||upscaleCompare?"block":"none";
         cmpSourceSelect.style.display="none";
         resolutionChip.style.display="none";
@@ -3131,18 +3140,20 @@ app.registerExtension({
           imgEl.onload=()=>_updateResolutionChip(imgEl.naturalWidth,imgEl.naturalHeight);
           imgEl.src=url;imgEl.style.display="block";
           placeholder.style.display="none";errorBox.style.display="none";
-          _updateSeedChip(item.filename);
-          if(_seedByFile[item.filename]===undefined) _showSeedFromHistory(item.filename);
-          _updateTimeBar(item.filename);
+          const _pvKey=mediaKey(item);
+          _updateSeedChip(_pvKey);
+          if(_seedByFile[_pvKey]===undefined) _showSeedFromHistory(_pvKey);
+          _updateTimeBar(_pvKey);
           return;
         }
         vidEl.onloadedmetadata=()=>_updateResolutionChip(vidEl.videoWidth,vidEl.videoHeight);
         vidEl.controls=true;vidEl.muted=false;vidEl.loop=false;
         vidEl.src=url;vidEl.style.display="block";imgEl.style.display="none";
         placeholder.style.display="none";errorBox.style.display="none";
-        _updateSeedChip(item.filename);
-        if(_seedByFile[item.filename]===undefined) _showSeedFromHistory(item.filename);
-        _updateTimeBar(item.filename);
+        const _pvKey=mediaKey(item);
+        _updateSeedChip(_pvKey);
+        if(_seedByFile[_pvKey]===undefined) _showSeedFromHistory(_pvKey);
+        _updateTimeBar(_pvKey);
         if(fromFinish&&S.playOnFinish===false){
           vidEl.muted=false;
           vidEl.load();
@@ -3172,7 +3183,7 @@ app.registerExtension({
       const _favCurrent=async()=>{
         if(!_curItem) return;
         const nf=!_curItem.favorite;
-        await fetch("/h3one/favorite",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({filename:_curItem.filename,favorite:nf})}).catch(()=>{});
+        await fetch("/h3one/favorite",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({filename:_curItem.filename,subfolder:_curItem.subfolder||"",type:_curItem.type||"output",favorite:nf})}).catch(()=>{});
         _loadGallery();
       };
       const _openCurrent=()=>{
@@ -3310,24 +3321,25 @@ app.registerExtension({
       _h3ShowError=showError;
       const showOutput=(item)=>{
         errorBox.style.display="none";
-        if(S.seed!==undefined&&S.seed!==null&&S.seed!=="") _seedByFile[item.filename]=S.seed;
+        const _soKey=mediaKey(item);
+        if(S.seed!==undefined&&S.seed!==null&&S.seed!=="") _seedByFile[_soKey]=S.seed;
         const genMs=Date.now()-_activeGenStartTs;
-        _genTimeByFile[item.filename]=genMs;
+        _genTimeByFile[_soKey]=genMs;
         const wasUpscale=_upscaleRun;
         if(_upscaleRun&&_upOrig){
-          _upResult={filename:item.filename,subfolder:item.subfolder||""};
+          _upResult={filename:item.filename,subfolder:item.subfolder||"",type:item.type||"output",media_key:_soKey};
         }
         _showVideo(item,true);
-        if(_upResult&&_upResult.filename===item.filename){
+        if(_upResult&&_upResult.media_key===_soKey){
           cmpBtn.style.display="block";
         }
         _upscaleRun="";
-        _activeShownFiles.push(item.filename);
+        _activeShownFiles.push(_soKey);
         const isTemp=item.type==="temp";
         if(!isTemp){
           if(S.mode==="extend"&&!wasUpscale) _stageVideoForExtend(item,false);
           fetch("/h3one/set_output",{method:"POST",headers:{"Content-Type":"application/json"},
-            body:JSON.stringify({node_id:self.id,info:{filename:item.filename,subfolder:item.subfolder||""}})}).catch(()=>{});
+            body:JSON.stringify({node_id:self.id,info:{filename:item.filename,subfolder:item.subfolder||"",type:item.type||"output"}})}).catch(()=>{});
           const histMode=wasUpscale?("Upscale "+S.upscaleFactor+"x ("+(wasUpscale==="upscale-rtx"?"RTX VSR":"SeedVR2")+")"):S.mode;
           const histRes=wasUpscale?(S.upscaleFactor+"x upscale"):(S.mode==="image"?(S.imgLastW+"x"+S.imgLastH):S.resolution);
            fetch("/h3one/history",{method:"POST",headers:{"Content-Type":"application/json"},
@@ -3341,8 +3353,8 @@ app.registerExtension({
       };
       const _genTimeByFile={};
       const _seedByFile={};
-      const _updateSeedChip=(filename)=>{
-        let seed=_seedByFile[filename];
+      const _updateSeedChip=(key)=>{
+        let seed=_seedByFile[key];
         if(seed===undefined||seed===null||seed===""){
           seedChip.style.display="none";
           return;
@@ -3358,22 +3370,22 @@ app.registerExtension({
         tx(resolutionChipVal,`${width}×${height}`);
         resolutionChip.style.display="flex";
       };
-      const _showSeedFromHistory=async(filename)=>{
+      const _showSeedFromHistory=async(key)=>{
         try{
           const r=await fetch("/h3one/history");
           const d=await r.json();
-          const hit=(d.items||[]).find(it=>it.video===filename);
+          const hit=(d.items||[]).find(it=>it.media_key&&it.media_key===key);
           if(hit&&hit.seed!==undefined&&hit.seed!==null){
-            _seedByFile[filename]=hit.seed;
-            _updateSeedChip(filename);
+            _seedByFile[key]=hit.seed;
+            _updateSeedChip(key);
           }
         }catch(e){}
       };
-      const _fetchTimeFromHistory=async(filename)=>{
+      const _fetchTimeFromHistory=async(key)=>{
         try{
           const r=await fetch("/h3one/history");
           const d=await r.json();
-          const hit=(d.items||[]).find(it=>it.video===filename);
+          const hit=(d.items||[]).find(it=>it.media_key&&it.media_key===key);
           return hit&&hit.gen_time? hit.gen_time : null;
         }catch(e){ return null; }
       };

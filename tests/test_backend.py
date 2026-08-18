@@ -7,12 +7,14 @@ backend (path safety, history, favorites, config, model scan).
 Run from repo root: `python -m unittest discover -s tests -p 'test_*.py'`.
 """
 
+import asyncio
 import importlib.util
 import json
 import os
 import shutil
 import sys
 import tempfile
+import threading
 import types
 import unittest
 from pathlib import Path
@@ -213,6 +215,257 @@ class TestScan(_NodesTestBase):
 
     def test_empty_when_missing_dir(self):
         self.assertEqual(self.nodes._scan("nonexistent", [".safetensors"]), [])
+
+
+class _FakeRequest:
+    def __init__(self, payload):
+        self._payload = payload
+        self.match_info = {}
+
+    async def json(self):
+        return self._payload
+
+
+def _run(coro):
+    loop = asyncio.new_event_loop()
+    try:
+        return loop.run_until_complete(coro)
+    finally:
+        loop.close()
+
+
+class TestMediaKey(_NodesTestBase):
+    def test_basic_shape(self):
+        self.assertEqual(
+            self.nodes._media_key("video.mp4", "chain", "output"),
+            "output|chain|video.mp4",
+        )
+
+    def test_empty_subfolder(self):
+        self.assertEqual(
+            self.nodes._media_key("video.mp4", "", "output"),
+            "output||video.mp4",
+        )
+
+    def test_normalizes_windows_backslashes(self):
+        self.assertEqual(
+            self.nodes._media_key("video.mp4", "chain\\0001", "output"),
+            "output|chain/0001|video.mp4",
+        )
+
+    def test_strips_path_components_in_filename(self):
+        self.assertEqual(
+            self.nodes._media_key("..\\..\\evil.exe", "chain", "output"),
+            "output|chain|evil.exe",
+        )
+
+    def test_collisions_resolved_by_subfolder(self):
+        a = self.nodes._media_key("video.mp4", "chain", "output")
+        b = self.nodes._media_key("video.mp4", "", "output")
+        self.assertNotEqual(a, b)
+
+    def test_collisions_resolved_by_type(self):
+        a = self.nodes._media_key("video.mp4", "", "output")
+        b = self.nodes._media_key("video.mp4", "", "temp")
+        self.assertNotEqual(a, b)
+
+
+class TestScanOutputVideos(_NodesTestBase):
+    def _make_output(self, *files):
+        out_root = Path(self.nodes._get_output_dir())
+        sub = out_root / "one-node-minimax-h3"
+        sub.mkdir(parents=True, exist_ok=True)
+        for rel in files:
+            full = sub / rel
+            full.parent.mkdir(parents=True, exist_ok=True)
+            full.write_bytes(b"\x00")
+
+    def test_includes_media_key_and_type(self):
+        self._make_output("a.mp4")
+        vids = self.nodes._scan_output_videos()
+        self.assertEqual(len(vids), 1)
+        v = vids[0]
+        self.assertEqual(v["filename"], "a.mp4")
+        self.assertEqual(v["type"], "output")
+        self.assertEqual(v["subfolder"], "one-node-minimax-h3")
+        self.assertEqual(v["media_key"], "output|one-node-minimax-h3|a.mp4")
+
+    def test_subfolder_appears_in_media_key(self):
+        self._make_output("chain/a.mp4")
+        vids = self.nodes._scan_output_videos()
+        keys = {v["media_key"] for v in vids}
+        self.assertIn("output|one-node-minimax-h3/chain|a.mp4", keys)
+
+    def test_ignores_non_media(self):
+        self._make_output("a.mp4", "b.txt", "c.png")
+        vids = self.nodes._scan_output_videos()
+        names = {v["filename"] for v in vids}
+        self.assertIn("a.mp4", names)
+        self.assertIn("c.png", names)
+        self.assertNotIn("b.txt", names)
+
+
+class TestAtomicSave(_NodesTestBase):
+    def test_no_tmp_leftover_on_success(self):
+        self.nodes._save_favorites({"a.mp4", "b.mp4"})
+        leftovers = list(self.user_dir().glob("favorites.json.*.tmp"))
+        self.assertEqual(leftovers, [])
+
+    def test_no_tmp_leftover_on_replace_failure(self):
+        def boom(*_args, **_kwargs):
+            raise OSError("simulated replace failure")
+        original_replace = self.nodes.os.replace
+        self.nodes.os.replace = boom
+        try:
+            try:
+                self.nodes._save_favorites({"x.mp4"})
+            except OSError:
+                pass
+        finally:
+            self.nodes.os.replace = original_replace
+        leftovers = list(self.user_dir().glob("favorites.json.*.tmp"))
+        self.assertEqual(leftovers, [])
+
+    def test_atomic_save_concurrency(self):
+        self.nodes._save_favorites({"seed.mp4"})
+        errors = []
+        successes = []
+
+        def hammer(idx):
+            try:
+                for i in range(15):
+                    payload = {"filename": f"file_{idx}_{i}.mp4", "subfolder": "", "type": "output", "favorite": True}
+                    _run(self.nodes.toggle_favorite(_FakeRequest(payload)))
+                    successes.append((idx, i))
+            except Exception as e:
+                errors.append(e)
+
+        threads = [threading.Thread(target=hammer, args=(i,)) for i in range(4)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=30)
+
+        self.assertEqual(errors, [], f"unexpected errors: {errors}")
+        self.assertGreater(len(successes), 0)
+        leftovers = list(self.user_dir().glob("favorites.json.*.tmp"))
+        self.assertEqual(leftovers, [], "atomic write left .tmp files behind")
+        favs = self.nodes._load_favorites()
+        self.assertGreater(len(favs), 0)
+
+
+class TestFavoriteToggle(_NodesTestBase):
+    def _make_output(self, *files):
+        out_root = Path(self.nodes._get_output_dir())
+        sub = out_root / "one-node-minimax-h3"
+        sub.mkdir(parents=True, exist_ok=True)
+        for rel in files:
+            full = sub / rel
+            full.parent.mkdir(parents=True, exist_ok=True)
+            full.write_bytes(b"\x00")
+
+    def test_toggle_stores_media_key(self):
+        resp = _run(self.nodes.toggle_favorite(
+            _FakeRequest({"filename": "video.mp4", "subfolder": "", "type": "output", "favorite": True})
+        ))
+        self.assertIn("media_key", resp.kwargs["data"])
+        self.assertEqual(resp.kwargs["data"]["media_key"], "output||video.mp4")
+        self.assertIn("output||video.mp4", self.nodes._load_favorites())
+
+    def test_toggle_strips_path_components(self):
+        _run(self.nodes.toggle_favorite(
+            _FakeRequest({"filename": "..\\..\\evil.exe", "subfolder": "", "type": "output", "favorite": True})
+        ))
+        favs = self.nodes._load_favorites()
+        self.assertIn("output||evil.exe", favs)
+        self.assertNotIn("..\\..\\evil.exe", favs)
+
+    def test_toggle_distinguishes_subfolders(self):
+        _run(self.nodes.toggle_favorite(
+            _FakeRequest({"filename": "video.mp4", "subfolder": "chain", "type": "output", "favorite": True})
+        ))
+        _run(self.nodes.toggle_favorite(
+            _FakeRequest({"filename": "video.mp4", "subfolder": "", "type": "output", "favorite": True})
+        ))
+        favs = self.nodes._load_favorites()
+        self.assertIn("output|chain|video.mp4", favs)
+        self.assertIn("output||video.mp4", favs)
+
+
+class TestGalleryMigration(_NodesTestBase):
+    def _make_output(self, *files):
+        out_root = Path(self.nodes._get_output_dir())
+        sub = out_root / "one-node-minimax-h3"
+        sub.mkdir(parents=True, exist_ok=True)
+        for rel in files:
+            full = sub / rel
+            full.parent.mkdir(parents=True, exist_ok=True)
+            full.write_bytes(b"\x00")
+
+    def test_legacy_favorite_migrates_to_media_key(self):
+        self._make_output("a.mp4")
+        path = self.user_dir() / "favorites.json"
+        path.write_text(json.dumps(["a.mp4"]), encoding="utf-8")
+        resp = _run(self.nodes.get_gallery(_FakeRequest({})))
+        vids = resp.kwargs["data"]["videos"]
+        self.assertEqual(len(vids), 1)
+        self.assertTrue(vids[0]["favorite"])
+        persisted = self.nodes._load_favorites()
+        self.assertIn("output|one-node-minimax-h3|a.mp4", persisted)
+        self.assertNotIn("a.mp4", persisted)
+
+    def test_legacy_ambiguous_filename_migrates_to_all(self):
+        self._make_output("chain/dup.mp4", "dup.mp4")
+        path = self.user_dir() / "favorites.json"
+        path.write_text(json.dumps(["dup.mp4"]), encoding="utf-8")
+        resp = _run(self.nodes.get_gallery(_FakeRequest({})))
+        vids = resp.kwargs["data"]["videos"]
+        self.assertEqual(len(vids), 2)
+        self.assertTrue(all(v["favorite"] for v in vids))
+        persisted = self.nodes._load_favorites()
+        self.assertIn("output|one-node-minimax-h3|dup.mp4", persisted)
+        self.assertIn("output|one-node-minimax-h3/chain|dup.mp4", persisted)
+        self.assertNotIn("dup.mp4", persisted)
+
+    def test_stale_favorite_evicted(self):
+        self._make_output("a.mp4")
+        path = self.user_dir() / "favorites.json"
+        path.write_text(
+            json.dumps(["a.mp4", "ghost.mp4", "output||nonexistent.mp4"]),
+            encoding="utf-8",
+        )
+        resp = _run(self.nodes.get_gallery(_FakeRequest({})))
+        vids = resp.kwargs["data"]["videos"]
+        self.assertTrue(vids[0]["favorite"])
+        persisted = self.nodes._load_favorites()
+        self.assertEqual(persisted, {"output|one-node-minimax-h3|a.mp4"})
+
+    def test_gallery_returns_favorite_flag(self):
+        self._make_output("a.mp4", "chain/b.mp4")
+        self.nodes._save_favorites({"output|one-node-minimax-h3|a.mp4"})
+        resp = _run(self.nodes.get_gallery(_FakeRequest({})))
+        vids = {v["filename"]: v for v in resp.kwargs["data"]["videos"]}
+        self.assertTrue(vids["a.mp4"]["favorite"])
+        self.assertFalse(vids["b.mp4"]["favorite"])
+
+
+class TestSetOutputPersistsMediaKey(_NodesTestBase):
+    def test_set_output_writes_media_key(self):
+        _run(self.nodes.set_output(_FakeRequest({
+            "node_id": "42",
+            "info": {"filename": "video.mp4", "subfolder": "chain", "type": "output"},
+        })))
+        self.assertEqual(
+            self.nodes._last_output_by_node["42"]["media_key"],
+            "output|chain|video.mp4",
+        )
+
+    def test_add_history_persists_media_key(self):
+        _run(self.nodes.add_history(_FakeRequest({
+            "mode": "t2v", "video": "video.mp4", "subfolder": "chain", "type": "output",
+        })))
+        items = self.nodes._load_history()
+        self.assertEqual(items[0]["media_key"], "output|chain|video.mp4")
 
 
 if __name__ == "__main__":

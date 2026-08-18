@@ -6,6 +6,7 @@ import uuid
 import shutil
 import subprocess
 import hashlib
+import threading
 from pathlib import Path
 
 import folder_paths
@@ -127,15 +128,33 @@ def _load_config():
     return merged
 
 
+def _atomic_write_json(path, data):
+    """Write `data` as JSON to `path` atomically.
+
+    Writes to a UUID-suffixed sibling `.tmp`, replaces the target with
+    `os.replace`, and cleans up the tmp in `finally` so a crash mid-write
+    never leaves a stray file. Concurrent calls cannot trample each other
+    because the tmp name is unique per call.
+    """
+    tmp = f"{path}.{uuid.uuid4().hex}.tmp"
+    try:
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        os.replace(tmp, path)
+    finally:
+        try:
+            if os.path.exists(tmp):
+                os.remove(tmp)
+        except OSError:
+            pass
+
+
 def _save_config(patch):
     user = _load_user_config()
     for k, v in patch.items():
         user[k] = v
     os.makedirs(USER_CONFIG_DIR, exist_ok=True)
-    tmp = USER_CONFIG_PATH + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(user, f, ensure_ascii=False, indent=2)
-    os.replace(tmp, USER_CONFIG_PATH)
+    _atomic_write_json(USER_CONFIG_PATH, user)
 
 
 # ---------------------------------------------------------------------------
@@ -152,10 +171,7 @@ def _load_history():
 
 def _save_history(items):
     os.makedirs(USER_CONFIG_DIR, exist_ok=True)
-    tmp = USER_HISTORY_PATH + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(items, f, ensure_ascii=False, indent=2)
-    os.replace(tmp, USER_HISTORY_PATH)
+    _atomic_write_json(USER_HISTORY_PATH, items)
 
 
 # ---------------------------------------------------------------------------
@@ -176,8 +192,10 @@ def _load_favorites():
 
 def _save_favorites(favset):
     os.makedirs(USER_CONFIG_DIR, exist_ok=True)
-    with open(_favorites_path(), "w", encoding="utf-8") as f:
-        json.dump(sorted(favset), f, ensure_ascii=False, indent=2)
+    _atomic_write_json(_favorites_path(), sorted(favset))
+
+
+_favorite_lock = threading.Lock()
 
 
 # ---------------------------------------------------------------------------
@@ -275,6 +293,19 @@ def _safe_join(base, *parts):
     return str(target)
 
 
+def _media_key(filename, subfolder="", file_type="output"):
+    """Stable identity for any media file: `type|subfolder|filename`.
+
+    `subfolder` is normalized so Windows backslashes do not desync Linux servers.
+    `filename` is reduced to its basename so a path-traversal payload in the
+    client cannot leak across files.
+    """
+    name = Path(str(filename or "")).name
+    sub = str(subfolder or "").replace("\\", "/")
+    typ = str(file_type or "output")
+    return f"{typ}|{sub}|{name}"
+
+
 def _find_ffmpeg():
     try:
         import custom_nodes.ComfyUI_VideoHelperSuite.videohelpersuite.ffmpeg_path as vhs_fp  # noqa
@@ -345,11 +376,14 @@ def _scan_output_videos():
             if kind is None:
                 continue
             full = os.path.join(root, fn)
+            sub = os.path.relpath(os.path.dirname(full), str(base)).replace("\\", "/")
             found.append({
                 "filename": fn,
-                "subfolder": os.path.relpath(os.path.dirname(full), str(base)).replace("\\", "/"),
+                "subfolder": sub,
+                "type": "output",
                 "mtime": os.path.getmtime(full),
                 "kind": kind,
+                "media_key": _media_key(fn, sub, "output"),
             })
     found.sort(key=lambda x: x["mtime"], reverse=True)
     return found
@@ -567,6 +601,8 @@ async def add_history(request):
         file_type = str(data.get("type", "output") or "output")
         if file_type not in ("output", "temp", "input"):
             file_type = "output"
+        subfolder = str(data.get("subfolder", "") or "")
+        filename = str(data.get("video", "") or "")
         entry = {
             "id": str(uuid.uuid4()),
             "timestamp": int(time.time()),
@@ -577,10 +613,11 @@ async def add_history(request):
             "resolution": data.get("resolution", ""),
             "seed": data.get("seed", 0),
             "gen_time": data.get("gen_time", 0),
-            "video": data.get("video", ""),
-            "subfolder": data.get("subfolder", ""),
+            "video": filename,
+            "subfolder": subfolder,
             "type": file_type,
             "kind": data.get("kind", "video"),
+            "media_key": _media_key(filename, subfolder, file_type),
         }
         items = _load_history()
         items.insert(0, entry)
@@ -604,11 +641,37 @@ async def delete_history(request):
 
 @PromptServer.instance.routes.get("/h3one/gallery")
 async def get_gallery(request):
-    favs = _load_favorites()
-    videos = _scan_output_videos()
-    for v in videos:
-        v["favorite"] = v["filename"] in favs
-    return web.json_response({"videos": videos})
+    try:
+        with _favorite_lock:
+            favs = _load_favorites()
+            videos = _scan_output_videos()
+            video_keys = {v["media_key"] for v in videos}
+            by_filename = {}
+            for v in videos:
+                by_filename.setdefault(v["filename"], []).append(v["media_key"])
+
+            new_favs = set()
+            for entry in favs:
+                if "|" in entry:
+                    if entry in video_keys:
+                        new_favs.add(entry)
+                else:
+                    matches = by_filename.get(entry, [])
+                    if matches:
+                        for k in matches:
+                            new_favs.add(k)
+                    else:
+                        pass
+            if new_favs != favs:
+                _save_favorites(new_favs)
+            favs = new_favs
+
+        for v in videos:
+            v["favorite"] = v["media_key"] in favs
+        return web.json_response({"videos": videos})
+    except Exception as e:
+        print(f"[H3One] gallery error: {e}")
+        return web.json_response({"ok": False, "error": str(e), "videos": []}, status=500)
 
 
 @PromptServer.instance.routes.post("/h3one/stage_input")
@@ -643,16 +706,27 @@ async def toggle_favorite(request):
     try:
         data = await request.json()
         filename = data.get("filename", "")
+        subfolder = data.get("subfolder", "")
+        file_type = str(data.get("type", "output") or "output")
         fav = bool(data.get("favorite", False))
-        if not filename:
-            return web.json_response({"ok": False, "error": "no filename"}, status=400)
-        favs = _load_favorites()
-        if fav:
-            favs.add(filename)
-        else:
-            favs.discard(filename)
-        _save_favorites(favs)
-        return web.json_response({"ok": True})
+        key = _media_key(filename, subfolder, file_type)
+        if not key.endswith("|") or key.endswith("||"):
+            bare = Path(str(filename or "")).name
+            if not bare:
+                return web.json_response({"ok": False, "error": "no filename"}, status=400)
+        with _favorite_lock:
+            favs = _load_favorites()
+            bare = Path(str(filename or "")).name
+            if fav:
+                favs.add(key)
+                if bare and bare != key:
+                    favs.discard(bare)
+            else:
+                favs.discard(key)
+                if bare:
+                    favs.discard(bare)
+            _save_favorites(favs)
+        return web.json_response({"ok": True, "media_key": key})
     except Exception as e:
         return web.json_response({"ok": False, "error": str(e)}, status=500)
 
@@ -707,9 +781,14 @@ async def set_output(request):
         node_id = str(data.get("node_id", ""))
         info = data.get("info") or {}
         if node_id:
+            filename = info.get("filename", "")
+            subfolder = info.get("subfolder", "")
+            file_type = str(info.get("type", "output") or "output")
             _last_output_by_node[node_id] = {
-                "filename": info.get("filename", ""),
-                "subfolder": info.get("subfolder", ""),
+                "filename": filename,
+                "subfolder": subfolder,
+                "type": file_type,
+                "media_key": _media_key(filename, subfolder, file_type),
             }
         return web.json_response({"ok": True})
     except Exception as e:
