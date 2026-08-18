@@ -2666,8 +2666,11 @@ function persist(){
       resRow.appendChild(driveFromRow);
 
       _syncFitRowFn=()=>{
-        if(!S.resFitAspect||S.resolution==="Custom"){
+        const src=_fitSourceSize(S);
+        const fitActive=!!(S.resFitAspect&&S.resolution!=="Custom"&&src);
+        if(!fitActive){
           driveFromRow.style.display="none";
+          resDD.set(S.resolution);
           return;
         }
         const opts=_driveFromOptions(S);
@@ -2686,8 +2689,8 @@ function persist(){
         driveFromRow.style.display="flex";
         driveFromDD.updateItems(opts.map(o=>o.label));
         driveFromDD.set(opts.find(o=>o.value===cur).label);
-        const src=_fitSourceSize(S);
         const r=_resolveRes();
+        resDD.set(r.label);
         if(src){
           const mp=(r.width*r.height/1000000).toFixed(2);
           tx(fitInfo, `${src.label} ${src.width}x${src.height} -> canvas ${r.width}x${r.height} (${mp}MP)`);
