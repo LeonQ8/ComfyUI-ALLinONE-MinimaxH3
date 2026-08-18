@@ -17,9 +17,22 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
       - name: Compile check
         run: |
-          python -m py_compile nodes.py
-      - name: JSON check (workflow templates)
+          python -m py_compile nodes.py tests/test_backend.py tests/validate_workflows.py
+      - name: Backend tests
         run: |
-          python -c "import json,glob,sys; [json.load(open(f,encoding='utf-8')) for f in glob.glob('workflows/*.json')]; print('all workflow JSON valid')"
+          python -m unittest discover -s tests -p 'test_*.py' -v
+      - name: Workflow template validator
+        run: |
+          python tests/validate_workflows.py
+      - name: Frontend helpers (smoke)
+        run: |
+          node --test tests/frontend_helpers.test.mjs
+      - name: Frontend bundle syntax
+        run: |
+          node --check web/one_node_minimax_h3.js
