@@ -321,7 +321,14 @@ function DD(items,selected,onChange){
     panel.style.left=rect.left+"px";
     panel.style.width=Math.max(rect.width,140)+"px";
     const ph=Math.min(items.length*28+44,220);
-    panel.style.top=(rect.top-ph-4>8?rect.top-ph-4:rect.bottom+4)+"px";
+    let top;
+    if(anchorRect){
+      top=rect.bottom+4;
+      if(top+ph+8>window.innerHeight&&rect.top-ph-4>8) top=rect.top-ph-4;
+    } else {
+      top=(rect.top-ph-4>8?rect.top-ph-4:rect.bottom+4);
+    }
+    panel.style.top=top+"px";
   };
   const open=(anchorRect)=>{
     if(_activeDDClose&&_activeDDClose!==close) _activeDDClose();
