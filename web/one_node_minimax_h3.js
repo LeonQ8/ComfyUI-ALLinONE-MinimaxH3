@@ -1024,6 +1024,8 @@ app.registerExtension({
       };
       let _updRecipeFn=null;
       let _syncFitRowFn=null;
+      let _updateFramesLabel=null;
+      let _syncLiveToggle=null;
       const _applyAccent=(hex)=>{
         S.accent=hex;persist();
         document.documentElement.style.setProperty("--h3accent",hex);
@@ -3406,7 +3408,7 @@ function persist(){
       lpModeSel.value=(S.livePreviewMode&&LP_PRESETS[S.livePreviewMode])?S.livePreviewMode:"balanced";
       lpModeSel.title="Live Preview quality. Fast: 384px, 6 frames, lightest. Balanced: 512px, 10 frames. Detailed: 768px, 10 frames, heaviest.";
       lpModeSel.onchange=()=>{ S.livePreviewMode=lpModeSel.value; persist(); };
-      const _syncLiveToggle=()=>{
+      _syncLiveToggle=()=>{
         const hidden=S.mode==="image";
         liveTogWrap.style.display=hidden?"none":"flex";
         const blocked=(S.quality==="turbo"&&S.mode!=="chain"&&S.mode!=="image");
@@ -4419,7 +4421,7 @@ function persist(){
           _discTmpl=d.prompt_templates||{};
         }catch(e){console.warn("[H3One] load config:",e);}
       };
-      const _updateFramesLabel=()=>{ tx(framesLbl,outputFrameLabel(S.duration,S.fps,(seconds)=>snapFrames(seconds,S.fps))); };
+      _updateFramesLabel=()=>{ tx(framesLbl,outputFrameLabel(S.duration,S.fps,(seconds)=>snapFrames(seconds,S.fps))); };
       _updateFramesLabel();
       _loadModels();
       _loadConfig();

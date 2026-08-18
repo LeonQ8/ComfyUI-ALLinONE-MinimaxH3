@@ -185,48 +185,50 @@ test("fitResolutionToAspect: respects a smaller area budget", () => {
 
 // -- Build-order regression guard --------------------------------------------
 // The bundle builds its UI inside one _buildUI function. helpers that run
-// during that build (persist) must not reference consts declared later in the
-// same scope: a `typeof _x === "function"` guard on a TDZ const throws
-// ReferenceError instead of returning undefined. Late-bound helpers must use
-// the `let _xFn = null` holder pattern (declared before persist, assigned
-// later). This test would have caught the original _syncFitRow TDZ crash.
-
-function extractNamedFnBody(src, startMarker, openBrace) {
-  const fnStart = src.indexOf(startMarker);
-  assert.notEqual(fnStart, -1, `could not find ${startMarker} in bundle`);
-  const brace = src.indexOf(openBrace, fnStart);
-  assert.notEqual(brace, -1, `no opening brace for ${startMarker}`);
-  let depth = 0;
-  for (let i = brace; i < src.length; i++) {
-    if (src[i] === "{") depth++;
-    else if (src[i] === "}") {
-      depth--;
-      if (depth === 0) return src.slice(brace + 1, i);
-    }
-  }
-  throw new Error(`unbalanced braces for ${startMarker}`);
-}
+// during that build (persist, _syncFitRowFn, driveFromDD.onChange) must not
+// reference consts declared later in the same scope: a `typeof _x === "function"`
+// or `_x && _x()` guard on a TDZ const throws ReferenceError instead of
+// returning undefined, because TDZ makes even a read of the identifier throw.
+// Late-bound helpers must use the `let _x = null` holder pattern: declared
+// early (before persist), assigned to the real function later. This invariant
+// would have caught the _syncFitRow TDZ crash, the _updateFramesLabel crash
+// via driveFromDD.updateItems, and the latent _syncLiveToggle hazard.
 
 function collectLocalDecls(bundle) {
-  const decls = new Set();
+  const decls = new Map(); // name -> first declaration offset
   const re = /\b(?:const|let|function|var)\s+([A-Za-z_$][\w$]*)\b/g;
   let m;
-  while ((m = re.exec(bundle))) decls.add(m[1]);
+  while ((m = re.exec(bundle))) {
+    if (!decls.has(m[1])) decls.set(m[1], m.index);
+  }
   return decls;
 }
 
-test("persist body references only helpers declared before it", () => {
+function guardOffenders(bundle) {
+  const decls = collectLocalDecls(bundle);
+  const offenders = [];
+  const pushOff = (name, offset, reason) => {
+    const declAt = decls.get(name);
+    if (name.startsWith("_") && declAt !== undefined && declAt > offset) {
+      offenders.push(`${name} (guarded at ${offset}, declared at ${declAt}: ${reason})`);
+    }
+  };
+  const typeofRe = /typeof\s+([A-Za-z_$][\w$]*)\s*===/g;
+  let m;
+  while ((m = typeofRe.exec(bundle))) pushOff(m[1], m.index, "typeof guard");
+  const andRe = /\b([A-Za-z_$][\w$]*)\s*&&\s*\1\s*\(/g;
+  while ((m = andRe.exec(bundle))) pushOff(m[1], m.index, "&& short-circuit");
+  return [...new Set(offenders)];
+}
+
+test("no guard may reference a helper declared later as const", () => {
   const bundle = readFileSync(bundlePath, "utf8");
-  const persistIdx = bundle.indexOf("function persist(){");
-  assert.notEqual(persistIdx, -1);
-  const persistBody = extractNamedFnBody(bundle, "function persist(){", "{");
-  const beforeDecls = collectLocalDecls(bundle.slice(0, persistIdx));
-  const allDecls = collectLocalDecls(bundle);
-  const used = new Set(persistBody.match(/[A-Za-z_$][\w$]*/g));
-  const offenders = [...used].filter(
-    (name) => name.startsWith("_") && allDecls.has(name) && !beforeDecls.has(name),
+  const offenders = guardOffenders(bundle);
+  assert.deepEqual(
+    offenders,
+    [],
+    "typeof/&& guards on later-declared consts throw in the temporal dead zone during _buildUI; use the let _x = null holder pattern instead",
   );
-  assert.deepEqual(offenders, [], "persist() references consts declared after it, which breaks TDZ at build time");
 });
 
 test("every late-bound _xFn holder is declared before persist", () => {
