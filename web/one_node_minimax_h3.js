@@ -35,7 +35,7 @@ function setVideoMuted(m){
   _videoMuteListeners.forEach(f=>{ try{ f(_videoMuted); }catch(e){} });
 }
 
-const NODE_W = 1200;
+const NODE_W = 1360;
 const NODE_H = 700;
 const H3_SEED_MAX = 1125899906842623;
 const LS_KEY = "one_node_minimax_h3_state";
@@ -1279,8 +1279,8 @@ function persist(){
           .h3-ctitle{font-size:12.5px;font-weight:700;color:var(--h3-tx);}
           .h3-cdesc{font-size:10px;color:var(--h3-tx2);line-height:1.5;}
           /* recipe line: pill chips in two visual groups (media | sampling) */
-          .h3-recipe{display:flex;align-items:center;flex-wrap:nowrap;gap:5px;overflow:hidden;font-variant-numeric:tabular-nums;}
-          .h3-chip{display:inline-flex;align-items:center;gap:5px;background:var(--h3-field);border:1px solid var(--h3-line);border-radius:20px;padding:3px 9px;font-size:10px;line-height:1.4;flex-shrink:0;max-width:150px;overflow:hidden;}
+          .h3-recipe{display:flex;align-items:center;flex-wrap:nowrap;gap:5px;overflow-x:auto;overflow-y:hidden;font-variant-numeric:tabular-nums;scrollbar-width:thin;scrollbar-color:var(--h3-line) transparent;padding-bottom:2px;}
+          .h3-chip{display:inline-flex;align-items:center;gap:5px;background:var(--h3-field);border:1px solid var(--h3-line);border-radius:20px;padding:3px 9px;font-size:10px;line-height:1.4;flex-shrink:0;max-width:240px;overflow:hidden;}
           .h3-chip .cl{font-size:8.5px;font-weight:700;letter-spacing:.04em;color:var(--h3-tx3);flex-shrink:0;}
           .h3-chip .cv{font-weight:700;color:var(--h3-tx);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;}
           .h3-chip.media .cv{color:var(--h3accent);}
@@ -4443,7 +4443,7 @@ function persist(){
 
       // -- Assemble ----------------------------------------------------------
       const mainRow=mk("div",{display:"flex",gap:"12px",alignItems:"stretch",flex:"1",minHeight:"0"});
-      const leftPanel=mk("div",{display:"flex",flexDirection:"column",gap:"9px",width:"420px",flexShrink:"0",overflowY:"auto",minHeight:"0",paddingRight:"4px",boxSizing:"border-box",scrollbarWidth:"thin",scrollbarColor:`${C.border} transparent`});
+      const leftPanel=mk("div",{display:"flex",flexDirection:"column",gap:"9px",width:"500px",flexShrink:"0",overflowY:"auto",minHeight:"0",paddingRight:"4px",boxSizing:"border-box",scrollbarWidth:"thin",scrollbarColor:`${C.border} transparent`});
       modeArea.append(i2vArea,refArea,kfArea,adArea,exArea,chainArea,imgArea);
       // -- Card assembly -----------------------------------------------------
       const promptCard=mk("div",{}, {className:"h3-card"});
