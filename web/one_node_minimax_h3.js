@@ -220,6 +220,40 @@ function inputFileExists(files,name){
   return (Array.isArray(files)?files:[]).some(f=>String(f).replace(/\\/g,"/").split("/").pop()===base);
 }
 
+const IMG_MIN_MP=0.2;
+const IMG_MAX_MP=8.5;
+const IMG_ASPECT_RATIOS={"1:1":1,"16:9":16/9,"9:16":9/16,"4:3":4/3,"3:4":3/4,"3:2":3/2,"2:3":2/3,"21:9":21/9};
+function _floor32(v){ return Math.max(32,Math.floor(v/32)*32); }
+function clampImageMP(value){
+  const n=Number(value);
+  if(!Number.isFinite(n)) return 1.0;
+  return Math.min(IMG_MAX_MP,Math.max(IMG_MIN_MP,n));
+}
+function planImageCanvas({mode="custom",width=1024,height=1024,megapixels=1.0,aspect="1:1"}={}){
+  const target=mode==="ratio"?clampImageMP(megapixels)*1e6:Math.max(32,Number(width)||1024)*Math.max(32,Number(height)||1024);
+  const ratio=IMG_ASPECT_RATIOS[aspect]||1;
+  let w,h;
+  if(mode==="ratio"){
+    w=Math.max(32,Math.round(Math.sqrt(target*ratio)/32)*32);
+    h=Math.max(32,Math.round(Math.sqrt(target/ratio)/32)*32);
+  }else{
+    w=Math.max(32,Math.round((Number(width)||1024)/32)*32);
+    h=Math.max(32,Math.round((Number(height)||1024)/32)*32);
+  }
+  let capped=w*h>IMG_MAX_MP*1e6;
+  if(capped){
+    const scale=Math.sqrt((IMG_MAX_MP*1e6)/(w*h));
+    w=_floor32(w*scale);
+    h=_floor32(h*scale);
+    if(w*h>IMG_MAX_MP*1e6){
+      const shrink=Math.sqrt((IMG_MAX_MP*1e6)/(w*h));
+      w=_floor32(w*shrink);
+      h=_floor32(h*shrink);
+    }
+  }
+  return {width:w,height:h,megapixels:(w*h)/1e6,capped};
+}
+
 function _captureFileSize(file){
   return new Promise((resolve)=>{
     if(!file||!file.type||!file.type.startsWith("image/")){ resolve(null); return; }
@@ -546,10 +580,11 @@ function mkRmBtn(){
   return b;
 }
 
-function ImgSlot(optional,onFile,onDimensions){
+function ImgSlot(optional,onFile,onDimensions,fixed){
   const PREVIEW_LONG=192;
   const resetSize=()=>{wrap.style.width="72px";wrap.style.height="72px";};
   const fitSize=(width,height)=>{
+    if(fixed) return;
     if(!width||!height) return;
     const ratio=Number(width)/Number(height);
     if(!Number.isFinite(ratio)||ratio<=0) return;
@@ -984,24 +1019,24 @@ app.registerExtension({
       const self=this;
       const saved=loadState();
       const _QF={
-        turbo:{sol:false,cache:false,sage:false},
-        speed:{sol:true,cache:true,sage:false},
-        balanced:{sol:true,cache:false,sage:false},
-        high:{sol:false,cache:false,sage:true},
-        native:{sol:false,cache:false,sage:false},
+        turbo:{sol:false,sage:false},
+        speed:{sol:true,sage:false},
+        balanced:{sol:true,sage:false},
+        high:{sol:false,sage:true},
+        native:{sol:false,sage:false},
       };
       const _QL={balanced:"Balanced",speed:"Speed",high:"High Quality",turbo:"Turbo (Speed LoRA)",native:"Native",custom:"Custom"};
       const _matchQ=()=>{
         for(const k of ["speed","balanced","high","native"]){
           const p=_QF[k];
-          if(!!S.optSol===p.sol&&!!S.optCache===p.cache&&!!S.optSage===p.sage) return k;
+          if(!!S.optSol===p.sol&&!!S.optSage===p.sage) return k;
         }
         return "custom";
       };
 
       if(!self._h3_S){
         const _sq=(saved.quality==="custom"||(saved.quality&&_QF[saved.quality]))?saved.quality:"balanced";
-        const _qf=_QF[_sq]||{sol:false,cache:false,sage:false};
+        const _qf=_QF[_sq]||{sol:false,sage:false};
         self._h3_S={
           mode:            saved.mode||"t2v",
           prompt:          saved.prompt!==undefined?saved.prompt:"",
@@ -1010,7 +1045,6 @@ app.registerExtension({
           steps:           (saved.steps&&saved.steps!==30)?saved.steps:20,
           quality:         _sq,
           optSol:          (saved.quality==="custom")?(saved.optSol!==undefined?saved.optSol:false):_qf.sol,
-          optCache:        (saved.quality==="custom")?(saved.optCache!==undefined?saved.optCache:false):_qf.cache,
           optSage:         (saved.quality==="custom")?(saved.optSage!==undefined?saved.optSage:false):_qf.sage,
           samplerName:     saved.samplerName||"res_multistep",
           schedulerName:   saved.schedulerName||"simple",
@@ -1056,11 +1090,12 @@ app.registerExtension({
           folded:          (saved.folded&&typeof saved.folded==="object")?saved.folded:{},
           imgSub:          saved.imgSub||"t2i",
           imgAspect:       saved.imgAspect||"1:1",
-          imgMP:           saved.imgMP!==undefined?saved.imgMP:1.0,
-          imgW:            saved.imgW||1024,
-          imgH:            saved.imgH||1024,
+          imgMP:           clampImageMP(saved.imgMP),
+          imgW:            planImageCanvas({mode:"custom",width:saved.imgW||1024,height:saved.imgH||1024}).width,
+          imgH:            planImageCanvas({mode:"custom",width:saved.imgW||1024,height:saved.imgH||1024}).height,
           imgProfile:      saved.imgProfile||"base_quality_20",
           imgRefs:         Array.isArray(saved.imgRefs)?saved.imgRefs:[],
+          imgEditSrc:      typeof saved.imgEditSrc==="string"?saved.imgEditSrc:((saved.imgSub==="edit"&&saved.imgRefs&&saved.imgRefs[0])||null),
           imgRefsSize:     (saved.imgRefsSize&&typeof saved.imgRefsSize==="object"&&!Array.isArray(saved.imgRefsSize))?saved.imgRefsSize:{},
           resOrientation:  ["auto","landscape","portrait"].includes(saved.resOrientation)?saved.resOrientation:"auto",
         };
@@ -1083,6 +1118,7 @@ app.registerExtension({
       };
       let _updRecipeFn=null;
       let _syncFitRowFn=null;
+      let _updPlaceholderLabelFn=null;
       let _updateFramesLabel=null;
       let _syncLiveToggle=null;
       const _applyAccent=(hex)=>{
@@ -1097,11 +1133,11 @@ function persist(){
         // quality/resolution/loras survive workflow-tab switches (they used to be
         // captured only when switching mode tabs, so a stale snapshot overwrote
         // the just-changed value on rebuild).
-        S.modeSettings[S.mode]={prompt:S.prompt,steps:S.steps,quality:S.quality,resolution:S.resolution,duration:S.duration,loras:JSON.parse(JSON.stringify(S.loras||[])),optSol:S.optSol,optCache:S.optCache,optSage:S.optSage};
+        S.modeSettings[S.mode]={prompt:S.prompt,steps:S.steps,quality:S.quality,resolution:S.resolution,duration:S.duration,loras:JSON.parse(JSON.stringify(S.loras||[])),optSol:S.optSol,optSage:S.optSage};
         if(_updRecipeFn){ try{ _updRecipeFn(); }catch(e){} }
         saveState({
           mode:S.mode,prompt:S.prompt,resolution:S.resolution,duration:S.duration,
-          steps:S.steps,quality:S.quality,optSol:S.optSol,optCache:S.optCache,optSage:S.optSage,samplerName:S.samplerName,schedulerName:S.schedulerName,randomizeSeed:S.randomizeSeed,seed:S.seed,batch:S.batch,
+          steps:S.steps,quality:S.quality,optSol:S.optSol,optSage:S.optSage,samplerName:S.samplerName,schedulerName:S.schedulerName,randomizeSeed:S.randomizeSeed,seed:S.seed,batch:S.batch,
           loras:S.loras,chainClips:S.chainClips.map(c=>({prompt:c.prompt,duration:c.duration})),
           firstFrame:S.firstFrame,lastFrame:S.lastFrame,
           firstFrameSize:S.firstFrameSize,lastFrameSize:S.lastFrameSize,
@@ -1119,7 +1155,7 @@ function persist(){
           playOnFinish:S.playOnFinish,folded:S.folded,livePreview:S.livePreview,
           livePreviewMode:S.livePreviewMode,
           imgSub:S.imgSub,imgAspect:S.imgAspect,imgMP:S.imgMP,imgW:S.imgW,imgH:S.imgH,
-          imgProfile:S.imgProfile,imgRefs:S.imgRefs,imgRefsSize:S.imgRefsSize,
+          imgProfile:S.imgProfile,imgRefs:S.imgRefs,imgEditSrc:S.imgEditSrc,imgRefsSize:S.imgRefsSize,
           resOrientation:S.resOrientation,
         });
         if(_syncFitRowFn){ try{ _syncFitRowFn(); }catch(e){} }
@@ -2273,11 +2309,12 @@ function persist(){
       const _alignImgDimension=v=>Math.max(32,Math.round(v/32)*32);
       const _syncImgCustomMP=()=>{
         if(S.imgAspect!=="Custom") return;
-        const w=_alignImgDimension(S.imgW||1024),h=_alignImgDimension(S.imgH||1024);
-        imgMPNI.setVal(((w*h)/1e6).toFixed(2));
+        const p=planImageCanvas({mode:"custom",width:S.imgW||1024,height:S.imgH||1024});
+        S.imgW=p.width;S.imgH=p.height;
+        imgMPNI.setVal(p.megapixels.toFixed(2));
       };
-      const imgCW=NI("",S.imgW,32,16384,32,v=>{S.imgW=_alignImgDimension(v);_syncImgCustomMP();persist();},"62px");
-      const imgCH=NI("",S.imgH,32,16384,32,v=>{S.imgH=_alignImgDimension(v);_syncImgCustomMP();persist();},"62px");
+      const imgCW=NI("",S.imgW,32,16384,32,v=>{const p=planImageCanvas({mode:"custom",width:_alignImgDimension(v),height:S.imgH});S.imgW=p.width;S.imgH=p.height;_syncImgCustomMP();persist();},"62px");
+      const imgCH=NI("",S.imgH,32,16384,32,v=>{const p=planImageCanvas({mode:"custom",width:S.imgW,height:_alignImgDimension(v)});S.imgW=p.width;S.imgH=p.height;_syncImgCustomMP();persist();},"62px");
       const imgX=mk("div",{fontSize:"10px",color:C.muted,flexShrink:"0"});tx(imgX,"x");
       imgCustom.append(imgCW,imgX,imgCH,mk("div",{fontSize:"9px",color:C.muted}, {textContent:"px (custom)"}));
       const _updImgCustom=()=>{
@@ -2313,26 +2350,41 @@ function persist(){
         imgRefsBox.innerHTML="";
         const sub=S.imgSub;
         if(sub==="t2i") return;
-        const maxRefs=sub==="edit"?1:9;
-        const capLbl=sub==="edit"?"Source image":"Reference images ("+S.imgRefs.length+"/"+maxRefs+")";
+        const isEdit=sub==="edit";
+        const maxRefs=isEdit?1:9;
+        const capLbl=isEdit?"Source image":("Reference images ("+S.imgRefs.length+"/"+maxRefs+")");
         const capE=mk("div",{fontSize:"9px",fontWeight:"700",color:C.muted,textTransform:"uppercase",letterSpacing:".07em"});
         tx(capE,capLbl);
         imgRefsBox.appendChild(capE);
-        const row=mk("div",{display:"flex",gap:"8px",flexWrap:"wrap"});
-        (sub==="edit"?[S.imgRefs[0]||""]:S.imgRefs.slice(0,maxRefs)).forEach((name,idx)=>{
-          const slot=ImgSlot(false,n=>{ if(n===null){S.imgRefs.splice(idx,1);} else { S.imgRefs[idx]=n; persist(); } _renderImgRefs(); },(name,size)=>{
+        const row=mk("div",{display:"grid",gridTemplateColumns:"repeat(auto-fill, 76px)",gap:"8px",alignItems:"start",justifyContent:"start"});
+        if(isEdit){
+          const name=S.imgEditSrc||"";
+          const slot=ImgSlot(false,n=>{ if(n===null){S.imgEditSrc=null;} else { S.imgEditSrc=n; persist(); } _renderImgRefs(); },(name,size)=>{
             if(name&&size){ S.imgRefsSize[name]=size; persist(); }
-            if(sub==="edit"&&size&&size.width>0&&size.height>0){
+            if(size&&size.width>0&&size.height>0){
               const fit=fitResolutionToAspect(size.width,size.height,1344,768);
               S.imgAspect="Custom"; S.imgW=fit.width; S.imgH=fit.height;
               persist();
             }
-          });
+          },true);
           const card=mk("div",{display:"flex",flexDirection:"column",gap:"3px",alignItems:"center"});
           card.appendChild(slot.el);
           row.appendChild(card);
           if(name) slot._restorePreview(name);
-        });
+        } else {
+          S.imgRefs.slice(0,maxRefs).forEach((name,idx)=>{
+            const slot=ImgSlot(false,n=>{ if(n===null){S.imgRefs.splice(idx,1);} else { S.imgRefs[idx]=n; persist(); } _renderImgRefs(); },(name,size)=>{
+              if(name&&size){ S.imgRefsSize[name]=size; persist(); }
+            },true);
+            const card=mk("div",{display:"flex",flexDirection:"column",gap:"3px",alignItems:"center"});
+            const num=mk("div",{fontSize:"8px",fontWeight:"700",color:C.muted});
+            tx(num,`@Image${idx+1}`);
+            card.appendChild(num);
+            card.appendChild(slot.el);
+            row.appendChild(card);
+            if(name) slot._restorePreview(name);
+          });
+        }
         if(sub==="refmix"&&S.imgRefs.length<9){
           const addImg=mk("div",{width:"72px",height:"72px",borderRadius:"12px",border:"1.5px dashed rgba(90,168,255,.4)",background:"rgba(90,168,255,.05)",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",color:"rgba(90,168,255,.8)",fontSize:"18px",fontWeight:"700",flexShrink:"0"});
           tx(addImg,"+");
@@ -2671,6 +2723,7 @@ function persist(){
         else { modeHdr.style.display="none"; modeTitle.textContent="Text to Video"; }
         if(typeof _syncLiveToggle==="function") _syncLiveToggle();
         if(_syncFitRowFn) _syncFitRowFn();
+        if(_updPlaceholderLabelFn) _updPlaceholderLabelFn();
       };
 
       // -- PARAMS ------------------------------------------------------------
@@ -2806,13 +2859,13 @@ function persist(){
       const qualRow=mk("div",{display:"flex",flexDirection:"column",gap:"3px"});
       const qualCapRow=mk("div",{display:"flex",alignItems:"center",gap:"4px"});
       const qualCap=mk("div",{fontSize:"10px",color:C.text});tx(qualCap,"Quality");
-      qualCapRow.append(qualCap,infoIcon("The sampling pipeline, not the pixel size. Use the chips below to switch each accelerator on or off - Quality follows, and any manual mix shows as Custom.\nTurbo: Turbo LoRA + 6-step distilled sampler. Fastest, visibly lower quality - needs the Turbo LoRA set in Settings.\nSpeed: SolAttn + H3 block cache. Fastest normal pipeline, tiny quality tradeoff.\nBalanced: SolAttn sparse attention only.\nHigh Quality: full SageAttention only - slowest, maximum fidelity.\nNative: core ComfyUI H3 pipeline, no accelerators - needs no extra packs."));
+      qualCapRow.append(qualCap,infoIcon("The sampling pipeline, not the pixel size. Use the chips below to switch each accelerator on or off - Quality follows, and any manual mix shows as Custom.\nTurbo: Turbo LoRA + 6-step distilled sampler. Fastest, visibly lower quality - needs the Turbo LoRA set in Settings.\nSpeed: SolAttn sparse attention only. Fastest normal pipeline, tiny quality tradeoff.\nBalanced: SolAttn sparse attention only.\nHigh Quality: full SageAttention only - slowest, maximum fidelity.\nNative: core ComfyUI H3 pipeline, no accelerators - needs no extra packs."));
       const qualDD=DD(["Turbo (Speed LoRA)","Speed","Balanced","High Quality","Native","Custom"],_QL[S.quality]||"Custom",v=>{
         const key=Object.keys(_QL).find(k=>_QL[k]===v)||"custom";
         if(key!=="custom"){
           S.quality=key;
-          const f=_QF[key]||{sol:false,cache:false,sage:false};
-          S.optSol=f.sol;S.optCache=f.cache;S.optSage=f.sage;
+          const f=_QF[key]||{sol:false,sage:false};
+          S.optSol=f.sol;S.optSage=f.sage;
           _syncOptChips();
         } else {
           S.quality="custom";
@@ -2846,7 +2899,7 @@ function persist(){
         return chip;
       };
       const _syncOptChips=()=>_optChipSyncs.forEach(f=>f());
-      optRow.append(_mkOptChip("optSol","SolAttn"),_mkOptChip("optCache","H3 Cache"),_mkOptChip("optSage","SageAttn"));
+      optRow.append(_mkOptChip("optSol","SolAttn"),_mkOptChip("optSage","SageAttn"));
       const SAMPLERS=["euler","euler_cfg_pp","euler_ancestral","euler_ancestral_cfg_pp","heun","heunpp2","exp_heun_2_x0","exp_heun_2_x0_sde","dpm_2","dpm_2_ancestral","lms","dpm_fast","dpm_adaptive","dpmpp_2s_ancestral","dpmpp_2s_ancestral_cfg_pp","dpmpp_sde","dpmpp_sde_gpu","dpmpp_2m","dpmpp_2m_cfg_pp","dpmpp_2m_sde","dpmpp_2m_sde_gpu","dpmpp_2m_sde_heun","dpmpp_2m_sde_heun_gpu","dpmpp_3m_sde","dpmpp_3m_sde_gpu","ddpm","lcm","ipndm","ipndm_v","deis","res_multistep","res_multistep_cfg_pp","res_multistep_ancestral","res_multistep_ancestral_cfg_pp","gradient_estimation","gradient_estimation_cfg_pp","er_sde","seeds_2","seeds_3","sa_solver","sa_solver_pece","ddim","uni_pc","uni_pc_bh2","legacy_rk","rk","rk_beta","deis_3m_ode","deis_2m_ode","deis_3m","deis_2m","res_6s_ode","res_5s_ode","res_3s_ode","res_2s_ode","res_3m_ode","res_2m_ode","res_6s","res_5s","res_3s","res_2s","res_3m","res_2m"];
       const SCHEDULERS=["simple","sgm_uniform","karras","exponential","ddim_uniform","beta","normal","linear_quadratic","kl_optimal","bong_tangent","beta57"];
       const samplerRow=mk("div",{display:"flex",flexDirection:"column",gap:"3px"});
@@ -2888,7 +2941,7 @@ function persist(){
         S.modeSettings[S.mode]={
           prompt:S.prompt,steps:S.steps,quality:S.quality,resolution:S.resolution,duration:S.duration,
           loras:JSON.parse(JSON.stringify(S.loras)),
-          optSol:S.optSol,optCache:S.optCache,optSage:S.optSage,
+          optSol:S.optSol,optSage:S.optSage,
         };
       };
       const _restoreModeState=()=>{
@@ -2900,11 +2953,10 @@ function persist(){
           S.quality=ms.quality;
           if(ms.quality==="custom"){
             if(ms.optSol!==undefined) S.optSol=ms.optSol;
-            if(ms.optCache!==undefined) S.optCache=ms.optCache;
             if(ms.optSage!==undefined) S.optSage=ms.optSage;
           } else {
-            const f=_QF[ms.quality]||{sol:false,cache:false,sage:false};
-            S.optSol=f.sol;S.optCache=f.cache;S.optSage=f.sage;
+            const f=_QF[ms.quality]||{sol:false,sage:false};
+            S.optSol=f.sol;S.optSage=f.sage;
           }
           _syncOptChips();
           qualDD.set(_QL[ms.quality]||"Custom");
@@ -3059,6 +3111,16 @@ function persist(){
       const placeholder=mk("div",{position:"absolute",inset:"0",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:"8px"});
       const phIco=mk("div",{fontSize:"28px",opacity:".25"});tx(phIco,"video");
       const phLbl=mk("div",{fontSize:"11px",color:C.muted});tx(phLbl,"Generated videos appear here");
+      const _updPlaceholderLabel=()=>{
+        if(S.mode==="image"){
+          tx(phIco,"image");
+          tx(phLbl,"Generated images appear here");
+        } else {
+          tx(phIco,"video");
+          tx(phLbl,"Generated videos appear here");
+        }
+      };
+      _updPlaceholderLabelFn=_updPlaceholderLabel;
       placeholder.append(phIco,phLbl);
       const vidEl=mk("video",{position:"absolute",inset:"0",width:"100%",height:"100%",objectFit:"contain",display:"none",background:"#000"},{controls:true});
       const imgEl=mk("img",{position:"absolute",inset:"0",width:"100%",height:"100%",objectFit:"contain",display:"none",background:"#000"});
@@ -3901,7 +3963,7 @@ function persist(){
           wf["10"]=wf[ts];delete wf[ts];
           wf["9"].inputs.steps=S.steps||6;
         } else {
-          const useSol=!!S.optSol, useCache=!!S.optCache, useSage=!!S.optSage;
+          const useSol=!!S.optSol, useSage=!!S.optSage;
           const insSol=()=>{
             const sol=newId();
             wf[sol]={class_type:"SolAttnPatch",inputs:{
@@ -3911,27 +3973,17 @@ function persist(){
             },_meta:{title:"Sol-Attn"}};
             modelSrc=[sol,0];
           };
-          const insCache=()=>{
-            const cache=newId();
-            wf[cache]={class_type:"MiniMaxH3Cache",inputs:{
-              model:modelSrc,resuse_threshold:0.1,start_percent:0.15,end_percent:0.9,
-              max_steps:2,device:"auto",verbose:false,
-            },_meta:{title:"H3 Cache"}};
-            modelSrc=[cache,0];
-          };
           const insSage=()=>{
             const sage=newId();
             wf[sage]={class_type:"MiniMaxH3MemoryEfficientSageAttentionPatch",inputs:{model:modelSrc},_meta:{title:"SageAttn"}};
             modelSrc=[sage,0];
           };
           if(useSage&&useSol){
-            // Sol + Sage together: follow the tested ordering (cache -> sage -> sol)
-            if(useCache) insCache();
+            // Sol + Sage together: follow the tested ordering (sage -> sol)
             insSage();insSol();
           } else {
-            // Preset combos keep their exact historical order (sol -> cache -> sage)
+            // Preset combos keep their exact historical order (sol -> sage)
             if(useSol) insSol();
-            if(useCache) insCache();
             if(useSage) insSage();
           }
           wf["9"].inputs.steps=S.steps;
@@ -4021,7 +4073,7 @@ function persist(){
 
       const _buildImage=async()=>{
         const sub=S.imgSub;
-        const refs=(S.imgRefs||[]).slice(0,sub==="edit"?1:9);
+        const refs=sub==="t2i"?[]:(sub==="edit"?(S.imgEditSrc?[S.imgEditSrc]:[]):(S.imgRefs||[]).slice(0,9));
         if(sub==="edit"&&!refs.length) throw new Error("Image Edit needs a source image. Drop one into the source slot, or switch to Text to Image.");
         if(sub==="refmix"&&!refs.length) throw new Error("Reference Mix needs at least one reference image. Add images to the slots, or switch to Text to Image.");
         if(S.imgProfile!=="custom"&&IMG_PROFILE_LORAS[S.imgProfile]){
@@ -4054,21 +4106,15 @@ function persist(){
         const dir=wf["2"].inputs;
         dir.prompt=S.prompt||"";
         dir.mode=sub==="refmix"?"reference":"image";
-        let w,h;
-        if(S.imgAspect==="Custom"){
-          w=Math.max(32,Math.round((S.imgW||1024)/32)*32);
-          h=Math.max(32,Math.round((S.imgH||1024)/32)*32);
-        } else {
-          const r=(IMG_ASPECTS[S.imgAspect]||1);
-          const total=Math.max(0.2,Number(S.imgMP)||1)*1e6;
-          w=Math.round(Math.sqrt(total*r));h=Math.round(Math.sqrt(total/r));
-          w=Math.max(32,Math.round(w/32)*32);h=Math.max(32,Math.round(h/32)*32);
-        }
+        const customAspect=S.imgAspect==="Custom";
+        const _imgPlan=customAspect
+          ?planImageCanvas({mode:"custom",width:S.imgW,height:S.imgH})
+          :planImageCanvas({mode:"ratio",aspect:S.imgAspect,megapixels:S.imgMP});
+        const w=_imgPlan.width,h=_imgPlan.height;
         S.imgLastW=w;S.imgLastH=h;
         dir.width=w;dir.height=h;
-        const customAspect=S.imgAspect==="Custom";
         dir.aspect_ratio=customAspect?"custom":S.imgAspect;
-        dir.megapixels=customAspect?(w*h)/1e6:(Number(S.imgMP)||1);
+        dir.megapixels=_imgPlan.megapixels;
         dir.seed=S.seed||0;
         wf["5"].inputs.noise_seed=["2",5];
         dir.sampling_profile=S.imgProfile==="custom"?"base_quality_20":(S.imgProfile||"base_quality_20");
@@ -4300,7 +4346,7 @@ function persist(){
           modelSrc=[id,0];
         });
         {
-          const useSol=!!S.optSol, useCache=!!S.optCache, useSage=!!S.optSage;
+          const useSol=!!S.optSol, useSage=!!S.optSage;
           const insSol=()=>{
             const sol=newId();
             wf[sol]={class_type:"SolAttnPatch",inputs:{
@@ -4310,25 +4356,15 @@ function persist(){
             },_meta:{title:"Sol-Attn"}};
             modelSrc=[sol,0];
           };
-          const insCache=()=>{
-            const cache=newId();
-            wf[cache]={class_type:"MiniMaxH3Cache",inputs:{
-              model:modelSrc,resuse_threshold:0.1,start_percent:0.15,end_percent:0.9,
-              max_steps:2,device:"auto",verbose:false,
-            },_meta:{title:"H3 Cache"}};
-            modelSrc=[cache,0];
-          };
           const insSage=()=>{
             const sage=newId();
             wf[sage]={class_type:"MiniMaxH3MemoryEfficientSageAttentionPatch",inputs:{model:modelSrc},_meta:{title:"SageAttn"}};
             modelSrc=[sage,0];
           };
           if(useSage&&useSol){
-            if(useCache) insCache();
             insSage();insSol();
           } else {
             if(useSol) insSol();
-            if(useCache) insCache();
             if(useSage) insSage();
           }
         }
@@ -4370,7 +4406,7 @@ function persist(){
         if(S.generating) return;
         _upOrig=null;_upResult=null;
         if(_cmpMode) _exitCompare();
-        _cmpImageRefs=S.mode==="image"&&["edit","refmix"].includes(S.imgSub)?(S.imgRefs||[]).filter(Boolean).slice(0,S.imgSub==="edit"?1:9):[];
+        _cmpImageRefs=S.mode==="image"&&["edit","refmix"].includes(S.imgSub)?(S.imgSub==="edit"?(S.imgEditSrc?[S.imgEditSrc]:[]):(S.imgRefs||[]).filter(Boolean).slice(0,9)):[];
         _cmpImageRefIndex=0;
         _syncCompareSourceSelect();
         cmpBtn.style.display="none";
@@ -4556,7 +4592,10 @@ function persist(){
         };
         if(S.mode==="image"){
           chip("Mode",_imgModeKey[S.imgSub]||"Text to Image",(r)=>imgSubDD.open(r),true);
-          chip("Aspect",S.imgAspect==="Custom"?`${S.imgW}×${S.imgH}`:`${imgAspectName(S.imgAspect)} · ${S.imgMP}MP`,(r)=>imgAspectDD.open(r),true);
+          const _imgChipPlan=S.imgAspect==="Custom"
+            ?planImageCanvas({mode:"custom",width:S.imgW,height:S.imgH})
+            :planImageCanvas({mode:"ratio",aspect:S.imgAspect,megapixels:S.imgMP});
+          chip("Aspect",`${_imgChipPlan.width}×${_imgChipPlan.height}${_imgChipPlan.capped?" · capped":""}`,(r)=>imgAspectDD.open(r),true);
           chip("Profile",imgProfileShort(S.imgProfile),(r)=>imgProfDD.open(r),true);
           chip("Seed",S.randomizeSeed?"random":String(S.seed||0),editSeed);
           chip("Batch",`×${S.batch||1}`,()=>editField(batchNI));

@@ -2,6 +2,18 @@
 
 Newest first.
 
+## 0.6.4 (2026-08-19)
+
+ - Updated the tested node packs for ComfyUI 0.33.0: KJNodes, Motion Context, Turbo and H3 Studio.
+ - Removed the H3 Cache option because its pack was not updated for newer ComfyUI and caused crashes in Chain and Extend on ComfyUI 0.33, with no fix available.
+ - Speed preset no longer needs the cache pack and now runs on SolAttn only.
+ - Fixed Extend mode for the new Motion Context update by adding the audio feather ticks input it now requires.
+ - Image mode no longer fails when a custom size goes over H3 Studio's 8.5 MP limit: the canvas is scaled down to the allowed size and the recipe chip shows a capped note.
+ - Text to Image no longer reuses reference images left over from Reference Mix or Image Edit: each image sub-mode now sends only its own images to the model.
+ - Image Edit and Reference Mix now keep separate image slots: a source image added in one mode no longer shows up in the other.
+ - Reference Mix slots now sit in a fixed grid with @Image numbers, so adding images no longer reflows the row.
+ - Compatibility docs now list ComfyUI 0.33.0 as the tested version.
+
 ## 0.6.3 (2026-08-18)
 
  - UI layout fixes and polish across the panel.
