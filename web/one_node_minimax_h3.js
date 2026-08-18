@@ -2306,9 +2306,15 @@ app.registerExtension({
       const resRow=mk("div",{display:"flex",flexDirection:"column",gap:"3px"});
       const resCapRow=mk("div",{display:"flex",alignItems:"center",gap:"4px"});
       const resCap=mk("div",{fontSize:"10px",color:C.text});tx(resCap,"Resolution");
-      resCapRow.append(resCap,infoIcon("The output pixel grid (width x height).\nHigher = sharper detail and more VRAM + time.\nPick Custom to set any size - snapped to multiples of 32.\nMiniMax H3 recommends up to 1344x768 (short edge <= 768, long edge <= 1344). Above that the model may repeat content or distort."));
+      resCapRow.append(resCap,infoIcon("The output pixel grid (width x height).\nHigher = sharper detail and more VRAM + time.\nThe swap button flips between landscape and portrait.\nPick Custom to set any size - snapped to multiples of 32.\nMiniMax H3 recommends up to 1344x768 (short edge <= 768, long edge <= 1344). Above that the model may repeat content or distort."));
       const resDD=DD([],S.resolution,v=>{S.resolution=v;persist();_updateFramesLabel();_updResCustom();});
-      resRow.append(resCapRow,resDD.el);
+      const swapBtn=mk("button",{width:"32px",height:"28px",flexShrink:"0",background:C.bg3,border:`1px solid ${C.border}`,borderRadius:"7px",color:C.muted,fontSize:"13px",lineHeight:"1",cursor:"pointer",outline:"none",transition:"border-color .15s,color .15s",boxSizing:"border-box"},{type:"button",title:"Swap width and height","aria-label":"Swap width and height"});
+      tx(swapBtn,"\u21C4");
+      swapBtn.onmouseenter=()=>{swapBtn.style.borderColor=C.lime;swapBtn.style.color=C.lime;};
+      swapBtn.onmouseleave=()=>{swapBtn.style.borderColor=C.border;swapBtn.style.color=C.muted;};
+      const resDDWrap=mk("div",{display:"flex",alignItems:"center",gap:"6px",width:"100%"});
+      resDDWrap.append(resDD.el,swapBtn);
+      resRow.append(resCapRow,resDDWrap);
       const resCustom=mk("div",{display:"none",alignItems:"center",gap:"6px"});
       const resCW=NI("",S.customW,32,16384,32,v=>{S.customW=Math.max(32,Math.min(16384,Math.round(v/32)*32));persist();_updResMP();},"58px");
       const resCH=NI("",S.customH,32,16384,32,v=>{S.customH=Math.max(32,Math.min(16384,Math.round(v/32)*32));persist();_updResMP();},"58px");
@@ -2323,6 +2329,22 @@ app.registerExtension({
       resCustom.append(resCW,resX,resCH,resMPLbl);
       resRow.appendChild(resCustom);
       const _updResCustom=()=>{ resCustom.style.display=S.resolution==="Custom"?"flex":"none"; _updResMP(); };
+      const _swapRes=()=>{
+        const r=_resolveRes();
+        const flip=_resItems.find(p=>p.width===r.height&&p.height===r.width&&p.width!==r.width);
+        if(flip){
+          S.resolution=flip.label; resDD.set(flip.label);
+        } else {
+          S.resolution="Custom";
+          S.customW=Math.max(32,Math.min(16384,Math.round(r.height/32)*32));
+          S.customH=Math.max(32,Math.min(16384,Math.round(r.width/32)*32));
+          resDD.set("Custom");
+          resCW._inp.value=String(S.customW);
+          resCH._inp.value=String(S.customH);
+        }
+        persist();_updateFramesLabel();_updResCustom();
+      };
+      swapBtn.onclick=_swapRes;
       const durRow=mk("div",{display:"flex",flexDirection:"column",gap:"3px"});
       const durCap=mk("div",{fontSize:"10px",color:C.text});tx(durCap,"Duration (s)");
       const durInner=mk("div",{display:"flex",alignItems:"center",gap:"8px"});
