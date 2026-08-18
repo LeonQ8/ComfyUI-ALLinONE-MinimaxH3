@@ -2668,6 +2668,8 @@ function persist(){
       resRow.appendChild(driveFromRow);
 
       _syncFitRowFn=()=>{
+        const noFitMode=(S.mode==="t2v"||S.mode==="chain");
+        fitBtn.style.display=noFitMode?"none":"";
         const src=_fitSourceSize(S);
         const fitActive=!!(S.resFitAspect&&S.resolution!=="Custom"&&src);
         if(!fitActive){
@@ -2675,6 +2677,8 @@ function persist(){
           resDD.set(S.resolution);
           return;
         }
+        const r=_resolveRes();
+        resDD.set(r.label);
         const opts=_driveFromOptions(S);
         const drive=(S.resDriveFrom&&S.resDriveFrom[S.mode])||null;
         const active=drive && opts.some(o=>o.value===drive);
@@ -2686,13 +2690,20 @@ function persist(){
         }
         if(!opts.length){
           driveFromRow.style.display="none";
+          if(src){
+            const mp=(r.width*r.height/1000000).toFixed(2);
+            tx(fitInfo, `${src.label} ${src.width}x${src.height} -> canvas ${r.width}x${r.height} (${mp}MP)`);
+            const over=Math.min(r.width,r.height)>768||Math.max(r.width,r.height)>1344;
+            fitInfo.style.color=over?C.warn:C.muted;
+          } else {
+            tx(fitInfo, "Upload a primary image or video to drive the fit.");
+            fitInfo.style.color=C.warn;
+          }
           return;
         }
         driveFromRow.style.display="flex";
         driveFromDD.updateItems(opts.map(o=>o.label));
         driveFromDD.set(opts.find(o=>o.value===cur).label);
-        const r=_resolveRes();
-        resDD.set(r.label);
         if(src){
           const mp=(r.width*r.height/1000000).toFixed(2);
           tx(fitInfo, `${src.label} ${src.width}x${src.height} -> canvas ${r.width}x${r.height} (${mp}MP)`);
@@ -2708,14 +2719,20 @@ function persist(){
           S.resFitAspect=false;
           _syncFitBtn();
         }
-        const r=_resolveRes();
-        const flip=_resItems.find(p=>p.width===r.height&&p.height===r.width&&p.width!==r.width);
-        if(flip){
-          S.resolution=flip.label; resDD.set(flip.label);
+        let base;
+        if(S.resolution==="Custom"){
+          base={width:Math.max(32,Math.round(S.customW/32)*32),height:Math.max(32,Math.round(S.customH/32)*32)};
+        } else {
+          base=_resItems.find(r=>r.label===S.resolution)||{width:960,height:544};
+        }
+        const flipped={width:base.height,height:base.width};
+        const match=_resItems.find(p=>p.width===flipped.width&&p.height===flipped.height);
+        if(match){
+          S.resolution=match.label; resDD.set(match.label);
         } else {
           S.resolution="Custom";
-          S.customW=Math.max(32,Math.min(16384,Math.round(r.height/32)*32));
-          S.customH=Math.max(32,Math.min(16384,Math.round(r.width/32)*32));
+          S.customW=Math.max(32,Math.min(16384,Math.round(flipped.width/32)*32));
+          S.customH=Math.max(32,Math.min(16384,Math.round(flipped.height/32)*32));
           resDD.set("Custom");
           resCW._inp.value=String(S.customW);
           resCH._inp.value=String(S.customH);
