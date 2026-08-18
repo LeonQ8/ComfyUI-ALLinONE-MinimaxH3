@@ -1,7 +1,7 @@
 [project]
 name = "one-node-minimax-h3"
 description = "All-in-one MiniMax H3 video generation for ComfyUI: T2V, I2V, R2V, audio drive, custom keyframes, video extension and Motion Context chains in a single node."
-version = "0.6.2"
+version = "0.6.3"
 # The Motion Context / keyframes / extension wiring is derived from the GPL-3.0
 # ComfyUI-H3-Motion-Context-MultiRef fork, so this pack ships GPL-3.0.
 license = { file = "LICENSE" }
