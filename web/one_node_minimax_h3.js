@@ -2649,7 +2649,7 @@ function persist(){
       // -- PARAMS ------------------------------------------------------------
       const paramsHdr=mk("div",{display:"flex",alignItems:"center",gap:"10px",cursor:"pointer",userSelect:"none"});
       const phLineL=mk("div",{flex:"1",height:"1px",background:C.border,flexShrink:"1",minWidth:"0"});
-      const phTitle=mk("span",{fontSize:"10px",fontWeight:"700",letterSpacing:".14em",textTransform:"uppercase",color:C.muted,flexShrink:"0",background:C.bg0,padding:"0 6px"});
+      const phTitle=mk("span",{fontSize:"10px",fontWeight:"700",letterSpacing:".14em",textTransform:"uppercase",color:C.lime,flexShrink:"0"});
       tx(phTitle,"Tune");
       const phLineR=mk("div",{flex:"1",height:"1px",background:C.border,flexShrink:"1",minWidth:"0"});
       const paramsChev=mk("span",{color:C.dim,fontSize:"10px",flexShrink:"0"});
