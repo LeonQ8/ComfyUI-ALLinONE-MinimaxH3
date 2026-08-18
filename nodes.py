@@ -300,7 +300,7 @@ def _media_key(filename, subfolder="", file_type="output"):
     `filename` is reduced to its basename so a path-traversal payload in the
     client cannot leak across files.
     """
-    name = Path(str(filename or "")).name
+    name = Path(str(filename or "").replace("\\", "/")).name
     sub = str(subfolder or "").replace("\\", "/")
     typ = str(file_type or "output")
     return f"{typ}|{sub}|{name}"
