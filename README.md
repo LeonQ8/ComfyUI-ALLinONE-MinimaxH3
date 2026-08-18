@@ -32,15 +32,15 @@ No node graph to build, no wires to connect, no hunting through twelve custom no
 
 **History** — searchable, with prompt reuse and per-entry preview.
 
-![History](assets/History.png)
+![History](assets/history.png)
 
 **Library** — every output in one place: inline preview, favorites, open-folder, delete, RTX upscale hook.
 
-![Library](assets/Library.png)
+![Library](assets/library.png)
 
 **Settings** — theme accent, sounds, models.
 
-![Settings](assets/settings.png)
+![Settings](assets/settings2.png)
 
 ## Requirements
 
