@@ -73,7 +73,7 @@ export function fitResolutionToAspect(sourceWidth, sourceHeight, targetWidth, ta
 // Resolve which source slot drives the canvas fit for a mode.
 //
 // `cfg` is the per-mode object saved as state.fitCfg[mode]:
-//   { key: "first"|"last"|"ref:0"|"video:0"|"kf:0"|"imgRef:0"|"src"|null,
+//   { key: "first"|"last"|"ref:0"|"video:0"|"kf:0"|"src"|null,
 //     mode: "fit"|"custom"|"normal", custom: {width,height}|null }
 // `slots` is the ordered list of available sources for that mode:
 //   [{ key, label, size: {width,height} }, ...]

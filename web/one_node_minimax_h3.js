@@ -1141,8 +1141,6 @@ function persist(){
           (state.refVideos||[]).forEach((v,i)=>{ const r=_refVideoSize(state,i); if(r) push(`video:${i}`,r.label,r); });
         } else if(mode==="keyframes"){
           (state.kf||[]).forEach((k,i)=>{ const r=_kfSize(state,i); if(r) push(`kf:${i}`,r.label,r); });
-        } else if(mode==="image"){
-          (state.imgRefs||[]).forEach((n,i)=>{ const r=_imgRefSize(state,i); if(r) push(`imgRef:${i}`,r.label,r); });
         } else if(mode==="extend"){
           push("src","Source video",state.extendVideoSize);
         }
@@ -1279,16 +1277,16 @@ function persist(){
           .h3-ctitle{font-size:12.5px;font-weight:700;color:var(--h3-tx);}
           .h3-cdesc{font-size:10px;color:var(--h3-tx2);line-height:1.5;}
           /* recipe line: pill chips in two visual groups (media | sampling) */
-          .h3-recipe{display:flex;flex-wrap:wrap;gap:5px;font-variant-numeric:tabular-nums;}
-          .h3-chip{display:inline-flex;align-items:center;gap:5px;background:var(--h3-field);border:1px solid var(--h3-line);border-radius:20px;padding:3px 9px;font-size:10px;line-height:1.4;flex-shrink:0;max-width:100%;overflow:hidden;}
+          .h3-recipe{display:grid;grid-template-columns:repeat(auto-fit,minmax(104px,1fr));gap:1px;background:var(--h3-line);border:1px solid var(--h3-line);border-radius:10px;overflow:hidden;padding:1px;font-variant-numeric:tabular-nums;}
+          .h3-chip{display:flex;align-items:center;justify-content:center;gap:5px;background:var(--h3-field);border:none;border-radius:0;padding:4px 8px;font-size:10px;line-height:1.4;min-width:0;overflow:hidden;}
           .h3-chip .cl{font-size:8.5px;font-weight:700;letter-spacing:.04em;color:var(--h3-tx3);flex-shrink:0;}
           .h3-chip .cv{font-weight:700;color:var(--h3-tx);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;}
           .h3-chip.media .cv{color:var(--h3accent);}
           .h3-chip.btn{cursor:pointer;font-family:inherit;outline:none;}
-          .h3-chip.btn:hover{border-color:var(--h3-line2);}
+          .h3-chip.btn:hover{background:var(--h3-hover);}
           .h3-chip.btn:hover .cv{color:var(--h3accent);}
           .h3-chip.btn:focus-visible{box-shadow:0 0 0 2px rgba(var(--h3accent-rgb),.35);}
-          .h3-gsep{display:none;}
+          .h3-gsep{display:block;grid-column:1/-1;height:1px;background:var(--h3-line);margin:0;}
           /* ghost remove button (LoRA / keyframe / clip rows) */
           .h3-rmbtn{width:26px;height:26px;border-radius:9px;background:var(--h3-field);border:1px solid var(--h3-line);color:var(--h3-tx3);font-size:11px;font-weight:600;line-height:1;padding:0;cursor:pointer;flex-shrink:0;display:flex;align-items:center;justify-content:center;transition:border-color .15s,color .15s,background-color .15s;}
           .h3-rmbtn:hover{border-color:rgba(255,128,128,.55);color:var(--h3-err);background:rgba(255,128,128,.07);}
@@ -2278,10 +2276,16 @@ function persist(){
         imgRefsBox.appendChild(capE);
         const row=mk("div",{display:"flex",gap:"8px",flexWrap:"wrap"});
         (sub==="edit"?[S.imgRefs[0]||""]:S.imgRefs.slice(0,maxRefs)).forEach((name,idx)=>{
-          const slot=ImgSlot(false,n=>{ if(n===null){S.imgRefs.splice(idx,1);} else { S.imgRefs[idx]=n; persist(); } _renderImgRefs(); },(name,size)=>{ if(name&&size){ S.imgRefsSize[name]=size; persist(); } });
+          const slot=ImgSlot(false,n=>{ if(n===null){S.imgRefs.splice(idx,1);} else { S.imgRefs[idx]=n; persist(); } _renderImgRefs(); },(name,size)=>{
+            if(name&&size){ S.imgRefsSize[name]=size; persist(); }
+            if(sub==="edit"&&size&&size.width>0&&size.height>0){
+              const fit=fitResolutionToAspect(size.width,size.height,1344,768);
+              S.imgAspect="Custom"; S.imgW=fit.width; S.imgH=fit.height;
+              persist();
+            }
+          });
           const card=mk("div",{display:"flex",flexDirection:"column",gap:"3px",alignItems:"center"});
           card.appendChild(slot.el);
-          card.appendChild(_mkFitChip(`imgRef:${idx}`,`Image ref ${idx+1}`));
           row.appendChild(card);
           if(name) slot._restorePreview(name);
         });
@@ -2318,7 +2322,7 @@ function persist(){
           imgRefsBox.appendChild(hint);
         } else {
           const hint=mk("div",{fontSize:"8px",color:C.muted,lineHeight:"1.5"});
-          tx(hint,"The source image is the canvas - the prompt describes what changes.");
+          tx(hint,"The source image is the canvas - the output size follows the source image automatically. The prompt describes what changes.");
           imgRefsBox.appendChild(hint);
         }
       };
