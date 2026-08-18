@@ -137,3 +137,11 @@ export function viewQuery(item, type) {
   const m = src.mtime || Date.now();
   return `filename=${encodeURIComponent(name)}&type=${encodeURIComponent(t)}&subfolder=${encodeURIComponent(src.subfolder || "")}&m=${m}`;
 }
+
+// Whether a media file is present in a listing returned by /h3one/input_files.
+// Compares basenames so a subfolder prefix on either side does not matter.
+export function inputFileExists(files, name) {
+  const base = String(name || "").replace(/\\/g, "/").split("/").pop();
+  if (!base) return false;
+  return (Array.isArray(files) ? files : []).some((f) => String(f).replace(/\\/g, "/").split("/").pop() === base);
+}

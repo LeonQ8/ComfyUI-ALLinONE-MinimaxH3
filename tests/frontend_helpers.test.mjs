@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { aspect, sizeOf, sameSize, orientRes, fitResolutionToAspect, resolveFitPrimary, imgProfileShort, imgAspectName, viewQuery } from "../web/h3_helpers.mjs";
+import { aspect, sizeOf, sameSize, orientRes, fitResolutionToAspect, resolveFitPrimary, imgProfileShort, imgAspectName, viewQuery, inputFileExists } from "../web/h3_helpers.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, "..");
@@ -45,6 +45,7 @@ test("helpers file is non-trivial and exports the core helpers", () => {
   assert.ok(src.includes("export function imgProfileShort"), "helpers must export imgProfileShort");
   assert.ok(src.includes("export function imgAspectName"), "helpers must export imgAspectName");
   assert.ok(src.includes("export function viewQuery"), "helpers must export viewQuery");
+  assert.ok(src.includes("export function inputFileExists"), "helpers must export inputFileExists");
 });
 
 test("aspect: landscape and portrait", () => {
@@ -302,6 +303,23 @@ test("viewQuery: encodes special characters", () => {
 test("viewQuery: empty item produces empty filename", () => {
   const q = viewQuery(null);
   assert.match(q, /^filename=&type=output&subfolder=&m=\d+$/);
+});
+
+test("inputFileExists: matches a file in the listing", () => {
+  assert.equal(inputFileExists(["a.mp3", "b.mp3"], "b.mp3"), true);
+  assert.equal(inputFileExists(["a.mp3", "b.mp3"], "c.mp3"), false);
+});
+
+test("inputFileExists: compares basenames, ignoring subfolder prefixes", () => {
+  assert.equal(inputFileExists(["sub/a.mp3"], "a.mp3"), true);
+  assert.equal(inputFileExists(["a.mp3"], "sub\\a.mp3"), true);
+});
+
+test("inputFileExists: empty or bad input returns false", () => {
+  assert.equal(inputFileExists(["a.mp3"], ""), false);
+  assert.equal(inputFileExists(["a.mp3"], null), false);
+  assert.equal(inputFileExists(null, "a.mp3"), false);
+  assert.equal(inputFileExists(undefined, "a.mp3"), false);
 });
 
 // -- Build-order regression guard --------------------------------------------

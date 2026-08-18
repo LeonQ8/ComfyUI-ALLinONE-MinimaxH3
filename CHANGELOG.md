@@ -2,6 +2,15 @@
 
 Newest first.
 
+## 0.6.3 (2026-08-18)
+
+ - UI layout fixes and polish across the panel.
+ - Videos and images can now fit to a chosen source frame, with a custom size option per media slot.
+ - Fixed a bug where a freshly generated image could show an older one when the file name got reused.
+ - Generated images now show in the History page instead of a black box.
+
+Known issues: R2V has a bug following the reference video's motion, will be investigated and fixed in the next release.
+
 ## 0.6.2 (2026-08-18)
 
  - The resolution dropdown got a swap button that flips any size between landscape and portrait, and custom sizes now round to the 32-pixel grid when you leave the field.

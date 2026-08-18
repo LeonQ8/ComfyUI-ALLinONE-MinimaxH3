@@ -214,6 +214,12 @@ function viewQuery(item,type){
   return `filename=${encodeURIComponent(name)}&type=${encodeURIComponent(t)}&subfolder=${encodeURIComponent(src.subfolder||"")}&m=${m}`;
 }
 
+function inputFileExists(files,name){
+  const base=String(name||"").replace(/\\/g,"/").split("/").pop();
+  if(!base) return false;
+  return (Array.isArray(files)?files:[]).some(f=>String(f).replace(/\\/g,"/").split("/").pop()===base);
+}
+
 function _captureFileSize(file){
   return new Promise((resolve)=>{
     if(!file||!file.type||!file.type.startsWith("image/")){ resolve(null); return; }
@@ -4093,6 +4099,21 @@ function persist(){
         return wf;
       };
 
+      const _checkInputFile=async(type,name)=>{
+        if(!name) return false;
+        try{
+          const r=await fetch(`/h3one/input_files?type=${type}`);
+          const d=await r.json();
+          return inputFileExists(d.files,name);
+        }catch(e){ return true; }
+      };
+      const _checkInputFiles=async(type,names,label)=>{
+        for(const name of names){
+          const ok=await _checkInputFile(type,name);
+          if(!ok) throw new Error(`The ${label} "${name}" is missing from ComfyUI's input folder. Drop it into the slot again to re-upload it.`);
+        }
+      };
+
       const _buildWorkflow=async()=>{
         const mode=S.mode;
         if(mode==="chain") return _buildChain();
@@ -4153,6 +4174,7 @@ function persist(){
             });
           }
           if(S.refAudios.length){
+            await _checkInputFiles("audio",S.refAudios,"reference audio");
             S.refAudios.forEach((name,idx)=>{
               const id=newId();
               wf[id]={class_type:"LoadAudio",inputs:{audio:name},_meta:{title:"Ref Audio"}};
@@ -4163,6 +4185,7 @@ function persist(){
           }
         } else if(mode==="audio_drive"){
           if(!S.audioFile) throw new Error("Audio Drive needs an audio track. Drop a file in the Audio track slot - the audio drives the mouth movements and timing.");
+          await _checkInputFiles("audio",[S.audioFile],"audio track");
           wf["16"].inputs.audio=S.audioFile;
           {
             const trimId=newId();
