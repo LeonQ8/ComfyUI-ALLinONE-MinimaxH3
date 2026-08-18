@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { aspect, sizeOf, sameSize, orientRes, fitResolutionToAspect } from "../web/h3_helpers.mjs";
+import { aspect, sizeOf, sameSize, orientRes, fitResolutionToAspect, resolveFitPrimary } from "../web/h3_helpers.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, "..");
@@ -181,6 +181,44 @@ test("fitResolutionToAspect: respects a smaller area budget", () => {
   const r = fitResolutionToAspect(1920, 1080, 800, 450);
   assert.ok(r.width * r.height <= 800 * 450 + 1);
   assert.ok(r.width % 32 === 0 && r.height % 32 === 0);
+});
+
+// -- Per-slot fit primary -----------------------------------------------------
+
+const SLOTS = [
+  { key: "first", label: "First Frame", size: { width: 1080, height: 1920 } },
+  { key: "last", label: "Last Frame", size: { width: 720, height: 1280 } },
+];
+
+test("resolveFitPrimary: defaults to the first available slot", () => {
+  const p = resolveFitPrimary(null, SLOTS);
+  assert.deepEqual(p, { key: "first", label: "First Frame", mode: "fit", size: { width: 1080, height: 1920 } });
+});
+
+test("resolveFitPrimary: honors an explicit slot key", () => {
+  const p = resolveFitPrimary({ key: "last", mode: "fit", custom: null }, SLOTS);
+  assert.deepEqual(p, { key: "last", label: "Last Frame", mode: "fit", size: { width: 720, height: 1280 } });
+});
+
+test("resolveFitPrimary: custom mode returns the custom size", () => {
+  const p = resolveFitPrimary({ key: "last", mode: "custom", custom: { width: 640, height: 640 } }, SLOTS);
+  assert.deepEqual(p, { key: "last", label: "Last Frame", mode: "custom", size: { width: 640, height: 640 } });
+});
+
+test("resolveFitPrimary: stale key falls back to first slot", () => {
+  const p = resolveFitPrimary({ key: "gone", mode: "fit", custom: null }, SLOTS);
+  assert.deepEqual(p, { key: "first", label: "First Frame", mode: "fit", size: { width: 1080, height: 1920 } });
+});
+
+test("resolveFitPrimary: empty or all-unfit slots return null", () => {
+  assert.equal(resolveFitPrimary({ key: "x", mode: "fit", custom: null }, []), null);
+  assert.equal(resolveFitPrimary(null, [{ key: "a", label: "A", size: null }]), null);
+  assert.equal(resolveFitPrimary(null, [{ key: "a", label: "A", size: { width: 0, height: 100 } }]), null);
+});
+
+test("resolveFitPrimary: custom mode with invalid custom falls back to fit", () => {
+  const p = resolveFitPrimary({ key: "last", mode: "custom", custom: null }, SLOTS);
+  assert.deepEqual(p, { key: "last", label: "Last Frame", mode: "fit", size: { width: 720, height: 1280 } });
 });
 
 // -- Build-order regression guard --------------------------------------------

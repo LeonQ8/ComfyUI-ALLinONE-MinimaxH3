@@ -173,6 +173,19 @@ function fitResolutionToAspect(sourceWidth, sourceHeight, targetWidth, targetHei
   return { width: best.width, height: best.height };
 }
 
+function resolveFitPrimary(cfg, slots){
+  const list = Array.isArray(slots) ? slots.filter((s)=>s&&s.size&&s.size.width>0&&s.size.height>0) : [];
+  if (!list.length) return null;
+  const c = (cfg && typeof cfg==="object") ? cfg : {};
+  let key = c.key || null;
+  if (!key || !list.some((s)=>s.key===key)) key = list[0].key;
+  const slot = list.find((s)=>s.key===key);
+  if (c.mode==="custom" && c.custom && c.custom.width>0 && c.custom.height>0) {
+    return { key, label: slot.label, mode: "custom", size: c.custom };
+  }
+  return { key, label: slot.label, mode: "fit", size: slot.size };
+}
+
 function _captureFileSize(file){
   return new Promise((resolve)=>{
     if(!file||!file.type||!file.type.startsWith("image/")){ resolve(null); return; }
@@ -995,6 +1008,7 @@ app.registerExtension({
           customH:         saved.customH||544,
           resFitAspect:    saved.resFitAspect!==undefined?saved.resFitAspect:true,
           resDriveFrom:    (saved.resDriveFrom&&typeof saved.resDriveFrom==="object"&&!Array.isArray(saved.resDriveFrom))?saved.resDriveFrom:{},
+          fitCfg:          (saved.fitCfg&&typeof saved.fitCfg==="object"&&!Array.isArray(saved.fitCfg))?saved.fitCfg:{},
           upscaleFactor:   saved.upscaleFactor||2,
           upscaleMethod:   saved.upscaleMethod||"seedvr",
           modeSettings:    (saved.modeSettings&&typeof saved.modeSettings==="object")?saved.modeSettings:{},
@@ -1016,6 +1030,15 @@ app.registerExtension({
         };
       }
       const S=self._h3_S;
+      const _fitCfgFor=(state=S)=>{
+        if(!state.fitCfg||typeof state.fitCfg!=="object") state.fitCfg={};
+        if(!state.fitCfg[state.mode]||typeof state.fitCfg[state.mode]!=="object") state.fitCfg[state.mode]={key:null,mode:"fit",custom:null};
+        const cfg=state.fitCfg[state.mode];
+        if(!("key" in cfg)) cfg.key=null;
+        if(!("mode" in cfg)) cfg.mode="fit";
+        if(!("custom" in cfg)) cfg.custom=null;
+        return cfg;
+      };
       const _hexToRgb=(hex)=>{
         const h=String(hex||"").replace("#","");
         if(h.length===3) return h.split("").map(x=>parseInt(x+x,16)).join(",");
@@ -1056,7 +1079,7 @@ function persist(){
           upscaleFactor:S.upscaleFactor,upscaleMethod:S.upscaleMethod,
           modeSettings:S.modeSettings,
           autoSave:S.autoSave,customW:S.customW,customH:S.customH,
-          resFitAspect:S.resFitAspect,resDriveFrom:S.resDriveFrom,
+          resFitAspect:S.resFitAspect,resDriveFrom:S.resDriveFrom,fitCfg:S.fitCfg,
           playOnFinish:S.playOnFinish,folded:S.folded,livePreview:S.livePreview,
           livePreviewMode:S.livePreviewMode,
           imgSub:S.imgSub,imgAspect:S.imgAspect,imgMP:S.imgMP,imgW:S.imgW,imgH:S.imgH,
@@ -1104,65 +1127,39 @@ function persist(){
         return _validSize(sz) ? _labelSize(sz, `Image ref ${idx+1}`) : null;
       };
 
-      const _fitSourceSize=(state=S)=>{
+      const _fitSlots=(state=S)=>{
         const mode=state.mode;
-        const drive=(state.resDriveFrom&&state.resDriveFrom[mode])||null;
-        if(mode==="t2v"||mode==="chain") return null;
+        const out=[];
+        const push=(key,label,size)=>{ if(_validSize(size)) out.push({key,label,size}); };
         if(mode==="i2v"){
-          if(drive==="last"&&_validSize(state.lastFrameSize)) return _labelSize(state.lastFrameSize,"Last Frame");
-          if(_validSize(state.firstFrameSize)) return _labelSize(state.firstFrameSize,"First Frame");
-          if(_validSize(state.lastFrameSize)) return _labelSize(state.lastFrameSize,"Last Frame");
-          return null;
+          push("first","First Frame",state.firstFrameSize);
+          push("last","Last Frame",state.lastFrameSize);
+        } else if(mode==="r2v"||mode==="audio_drive"){
+          (state.refImages||[]).forEach((n,i)=>{ const r=_refImageSize(state,i); if(r) push(`ref:${i}`,r.label,r); });
+          (state.refVideos||[]).forEach((v,i)=>{ const r=_refVideoSize(state,i); if(r) push(`video:${i}`,r.label,r); });
+        } else if(mode==="keyframes"){
+          (state.kf||[]).forEach((k,i)=>{ const r=_kfSize(state,i); if(r) push(`kf:${i}`,r.label,r); });
+        } else if(mode==="image"){
+          (state.imgRefs||[]).forEach((n,i)=>{ const r=_imgRefSize(state,i); if(r) push(`imgRef:${i}`,r.label,r); });
+        } else if(mode==="extend"){
+          push("src","Source video",state.extendVideoSize);
         }
-        if(mode==="r2v"||mode==="audio_drive"){
-          if(drive){
-            const m=drive.match(/^(ref|video):(\d+)$/);
-            if(m){
-              const r=m[1]==="ref" ? _refImageSize(state,+m[2]) : _refVideoSize(state,+m[2]);
-              if(r) return r;
-            }
-          }
-          if(state.refImages&&state.refImages.length){
-            for(let i=0;i<state.refImages.length;i++){
-              const r=_refImageSize(state,i);
-              if(r) return r;
-            }
-          }
-          if(state.refVideos&&state.refVideos.length){
-            for(let i=0;i<state.refVideos.length;i++){
-              const r=_refVideoSize(state,i);
-              if(r) return r;
-            }
-          }
-          return null;
-        }
-        if(mode==="keyframes"){
-          const kfs=(state.kf||[]).filter(k=>k&&k.img&&_validSize({width:k.width,height:k.height}));
-          if(!kfs.length) return null;
-          if(drive&&drive.startsWith("kf:")){
-            const r=_kfSize(state,parseInt(drive.slice(3),10));
-            if(r) return r;
-          }
-          kfs.sort((a,b)=>(a.pos||0)-(b.pos||0));
-          return _labelSize({width:kfs[0].width,height:kfs[0].height}, `Keyframe ${kfs[0].pos}`);
-        }
-        if(mode==="extend"){
-          return _validSize(state.extendVideoSize) ? _labelSize(state.extendVideoSize,"Source video") : null;
-        }
-        if(mode==="image"){
-          if(drive&&drive.startsWith("imgRef:")){
-            const r=_imgRefSize(state,parseInt(drive.slice(7),10));
-            if(r) return r;
-          }
-          if(state.imgRefs&&state.imgRefs.length){
-            for(let i=0;i<state.imgRefs.length;i++){
-              const r=_imgRefSize(state,i);
-              if(r) return r;
-            }
-          }
-          return null;
-        }
-        return null;
+        return out;
+      };
+
+      const _fitSlotSize=(state=S,key)=>{
+        const s=_fitSlots(state).find(o=>o.key===key);
+        return s? s.size : null;
+      };
+
+      const _fitPrimary=(state=S)=>{
+        return resolveFitPrimary(_fitCfgFor(state), _fitSlots(state));
+      };
+
+      const _fitSourceSize=(state=S)=>{
+        const p=_fitPrimary(state);
+        if(!p) return null;
+        return _labelSize(p.size,p.mode==="custom"?`${p.label} (custom)`:p.label);
       };
 
       const _effectiveResOrientation=(state=S)=>{
@@ -1172,31 +1169,62 @@ function persist(){
         return aspect(src.width,src.height)||"landscape";
       };
 
-      const _driveFromOptions=(state=S)=>{
-        const mode=state.mode;
-        const opts=[];
-        if(mode==="i2v"){
-          if(_validSize(state.firstFrameSize)) opts.push({value:"first",label:"First Frame"});
-          if(_validSize(state.lastFrameSize)) opts.push({value:"last",label:"Last Frame"});
-        } else if(mode==="r2v"||mode==="audio_drive"){
-          (state.refImages||[]).forEach((n,i)=>{
-            const sz=state.refImageSizes&&state.refImageSizes[n];
-            if(_validSize(sz)) opts.push({value:`ref:${i}`,label:`Reference ${i+1}`});
-          });
-          (state.refVideos||[]).forEach((v,i)=>{
-            if(v&&v.width>0) opts.push({value:`video:${i}`,label:`Video ${i+1}`});
-          });
-        } else if(mode==="keyframes"){
-          (state.kf||[]).forEach((k,i)=>{
-            if(k&&k.img&&k.width>0&&k.height>0) opts.push({value:`kf:${i}`,label:`Keyframe ${k.pos}`});
-          });
-        } else if(mode==="image"){
-          (state.imgRefs||[]).forEach((n,i)=>{
-            const sz=state.imgRefsSize&&state.imgRefsSize[n];
-            if(_validSize(sz)) opts.push({value:`imgRef:${i}`,label:`Image ref ${i+1}`});
-          });
-        }
-        return opts;
+      const _setFitPrimary=(state=S,key,mode,custom)=>{
+        const cfg=_fitCfgFor(state);
+        cfg.key=key;
+        cfg.mode=mode||"fit";
+        cfg.custom=(mode==="custom"&&custom&&_validSize(custom))?{width:Math.max(32,Math.round(custom.width/32)*32),height:Math.max(32,Math.round(custom.height/32)*32)}:null;
+      };
+
+      const _clearFitPrimary=(state=S)=>{
+        const cfg=_fitCfgFor(state);
+        cfg.key=null; cfg.mode="fit"; cfg.custom=null;
+      };
+
+      let _fitChipRefreshes=[];
+      const _mkFitChip=(slotKey,label)=>{
+        const chip=mk("button",{background:"transparent",border:`1px solid ${C.border}`,borderRadius:"5px",padding:"1px 6px",fontSize:"8px",fontWeight:"700",color:C.muted,cursor:"pointer",outline:"none",transition:"all .15s",whiteSpace:"nowrap"},{type:"button"});
+        tx(chip,"Fit");
+        chip.title=`Set the video canvas from this ${label}. Click to cycle: Fit (auto aspect) -> Custom size -> Off.`;
+        const wrap=mk("div",{display:"flex",flexDirection:"column",gap:"2px",alignItems:"center"});
+        const sizeRow=mk("div",{display:"none",alignItems:"center",gap:"2px"});
+        const cw=NI("",960,32,16384,32,v=>{ const p=_fitPrimary(S); if(p&&p.key===slotKey){ _setFitPrimary(S,slotKey,"custom",{width:v,height:(p.custom?p.custom.height:544)}); persist(); _syncFitRowFn(); } },"42px");
+        const chh=NI("",544,32,16384,32,v=>{ const p=_fitPrimary(S); if(p&&p.key===slotKey){ _setFitPrimary(S,slotKey,"custom",{width:(p.custom?p.custom.width:960),height:v}); persist(); _syncFitRowFn(); } },"42px");
+        const xsep=mk("div",{fontSize:"8px",color:C.muted});tx(xsep,"x");
+        sizeRow.append(cw,xsep,chh);
+        wrap.append(chip,sizeRow);
+        const refresh=()=>{
+          if(!wrap.isConnected) return;
+          const p=_fitPrimary(S);
+          const isPrimary=!!p&&p.key===slotKey;
+          const isCustom=isPrimary&&p.mode==="custom";
+          chip.style.borderColor=isPrimary?C.lime:C.border;
+          chip.style.color=isPrimary?C.lime:C.muted;
+          chip.style.background=isPrimary?"rgba(var(--h3accent-rgb),.10)":"transparent";
+          tx(chip,isCustom?"Custom":(isPrimary?"Fit: ON":"Fit"));
+          sizeRow.style.display=isCustom?"flex":"none";
+          if(isCustom&&p.custom){
+            cw._inp.value=String(Math.round(p.custom.width/32)*32);
+            chh._inp.value=String(Math.round(p.custom.height/32)*32);
+          }
+        };
+        chip.onclick=()=>{
+          const p=_fitPrimary(S);
+          if(p&&p.key===slotKey){
+            if(p.mode==="fit"){ _setFitPrimary(S,slotKey,"custom",p.size); }
+            else { _clearFitPrimary(S); }
+          } else {
+            const sz=_fitSlotSize(S,slotKey);
+            _setFitPrimary(S,slotKey,"fit",sz);
+          }
+          persist();
+          _syncFitRowFn();
+          _fitChipRefreshes.forEach(r=>{try{r();}catch(e){}});
+          _updateFramesLabel&&_updateFramesLabel();
+        };
+        refresh();
+        _fitChipRefreshes.push(refresh);
+        return wrap;
       };
 
       const _foldState=S.folded||{};
@@ -2252,7 +2280,10 @@ function persist(){
         const row=mk("div",{display:"flex",gap:"8px",flexWrap:"wrap"});
         (sub==="edit"?[S.imgRefs[0]||""]:S.imgRefs.slice(0,maxRefs)).forEach((name,idx)=>{
           const slot=ImgSlot(false,n=>{ if(n===null){S.imgRefs.splice(idx,1);} else { S.imgRefs[idx]=n; persist(); } _renderImgRefs(); },(name,size)=>{ if(name&&size){ S.imgRefsSize[name]=size; persist(); } });
-          row.appendChild(slot.el);
+          const card=mk("div",{display:"flex",flexDirection:"column",gap:"3px",alignItems:"center"});
+          card.appendChild(slot.el);
+          card.appendChild(_mkFitChip(`imgRef:${idx}`,`Image ref ${idx+1}`));
+          row.appendChild(card);
           if(name) slot._restorePreview(name);
         });
         if(sub==="refmix"&&S.imgRefs.length<9){
@@ -2305,7 +2336,12 @@ function persist(){
       // I2V slots
       const firstSlot=ImgSlot(true,n=>{S.firstFrame=n;persist();},(name,size)=>_rememberFrameInfo("firstFrameOrientation","firstFrameSize",size));
       const lastSlot=ImgSlot(true,n=>{S.lastFrame=n;persist();},(name,size)=>_rememberFrameInfo("lastFrameOrientation","lastFrameSize",size));
-      i2vArea.append(_mkSlotCard("First frame",firstSlot.el),_mkSlotCard("Last frame",lastSlot.el));
+      const _i2vCard=(labelTxt,slot)=>{
+        const card=_mkSlotCard(labelTxt,slot);
+        card.appendChild(_mkFitChip(labelTxt==="First frame"?"first":"last",labelTxt));
+        return card;
+      };
+      i2vArea.append(_i2vCard("First frame",firstSlot.el),_i2vCard("Last frame",lastSlot.el));
       if(S.firstFrame) firstSlot._restorePreview(S.firstFrame);
       if(S.lastFrame) lastSlot._restorePreview(S.lastFrame);
 
@@ -2318,7 +2354,10 @@ function persist(){
         const imgRow=mk("div",{display:"flex",gap:"8px",flexWrap:"wrap"});
         S.refImages.forEach((name,idx)=>{
           const slot=ImgSlot(false,n=>{ if(n===null){S.refImages.splice(idx,1);} else { S.refImages[idx]=n; persist(); } _renderRefs(); },(nm,size)=>{ if(nm&&size){ S.refImageSizes[nm]=size; persist(); } });
-          imgRow.appendChild(slot.el);
+          const card=mk("div",{display:"flex",flexDirection:"column",gap:"3px",alignItems:"center"});
+          card.appendChild(slot.el);
+          card.appendChild(_mkFitChip(`ref:${idx}`,`Reference ${idx+1}`));
+          imgRow.appendChild(card);
           if(name) slot._restorePreview(name);
         });
         const addImg=mk("div",{width:"72px",height:"72px",borderRadius:"12px",border:`1.5px dashed rgba(90,168,255,.4)`,background:"rgba(90,168,255,.05)",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",color:"rgba(90,168,255,.8)",fontSize:"18px",fontWeight:"700",flexShrink:"0"});
@@ -2393,6 +2432,7 @@ function persist(){
             };
             card.appendChild(tgl);
           }
+          card.appendChild(_mkFitChip(`video:${idx}`,`Video ${idx+1}`));
           vidRow.appendChild(card);
         });
         const anyVideoAudio=S.refVideos.some(v=>v&&v.useAudio);
@@ -2475,6 +2515,7 @@ function persist(){
           if(!k.img) rm.style.display="none";
           rm.onclick=()=>{ if(S.kf.length>1){ S.kf.splice(idx,1); persist(); _renderKf(); } };
           row.append(posCap,posNI,rm);
+          row.appendChild(_mkFitChip(`kf:${idx}`,`Keyframe ${k.pos}`));
           kfArea.appendChild(row);
         });
         const addRow=mk("div",{display:"flex",gap:"6px"});
@@ -2493,7 +2534,9 @@ function persist(){
 
       // Extend video slot
       const exSlot=MediaSlot("video",n=>{S.extendVideo=n;persist();},(name,size)=>_rememberFrameInfo(null,"extendVideoSize",size));
-      exArea.append(_mkSlotCard("Video to extend",exSlot));
+      const exCard=_mkSlotCard("Video to extend",exSlot);
+      exCard.appendChild(_mkFitChip("src","Source video"));
+      exArea.append(exCard);
       if(S.extendVideo) exSlot._restorePreview(S.extendVideo);
 
       // Chain clips
@@ -2602,10 +2645,15 @@ function persist(){
           base=_resItems.find(r=>r.label===S.resolution)||_resItems[0]||{width:960,height:544,label:S.resolution};
         }
         if(S.resFitAspect&&S.resolution!=="Custom"){
-          const src=_fitSourceSize(S);
-          if(src){
-            const fit=fitResolutionToAspect(src.width,src.height,base.width,base.height);
-            return {width:fit.width,height:fit.height,label:`${fit.width}x${fit.height} (Fit · ${src.label})`};
+          const p=_fitPrimary(S);
+          if(p){
+            if(p.mode==="custom"){
+              const w=Math.max(32,Math.min(16384,Math.round(p.size.width/32)*32));
+              const h=Math.max(32,Math.min(16384,Math.round(p.size.height/32)*32));
+              return {width:w,height:h,label:`${w}x${h} (Custom · ${p.label})`};
+            }
+            const fit=fitResolutionToAspect(p.size.width,p.size.height,base.width,base.height);
+            return {width:fit.width,height:fit.height,label:`${fit.width}x${fit.height} (Fit · ${p.label})`};
           }
         }
         return orientRes(base, _effectiveResOrientation(S));
@@ -2648,24 +2696,11 @@ function persist(){
       resRow.appendChild(resCustom);
       const _updResCustom=()=>{ resCustom.style.display=S.resolution==="Custom"?"flex":"none"; _updResMP(); };
 
-      const driveFromDD=DD([], "", v=>{
-        S.resDriveFrom=S.resDriveFrom||{};
-        S.resDriveFrom[S.mode]=v;
-        persist();
-        _syncFitRowFn();
-        _updateFramesLabel&&_updateFramesLabel();
-      });
-      driveFromDD.el.style.display="none";
-      driveFromDD.el.style.fontSize="9px";
-      driveFromDD.el.style.height="22px";
-      driveFromDD.el.style.padding="0 8px";
       const fitInfo=mk("div",{fontSize:"8px",color:C.muted,lineHeight:"1.4"});
       tx(fitInfo,"");
-      const driveFromRow=mk("div",{display:"none",alignItems:"center",gap:"6px",flexWrap:"wrap"});
-      const driveFromLbl=mk("div",{fontSize:"9px",color:C.muted,flexShrink:"0"});
-      tx(driveFromLbl,"Drive from");
-      driveFromRow.append(driveFromLbl, driveFromDD.el, fitInfo);
-      resRow.appendChild(driveFromRow);
+      const fitInfoRow=mk("div",{display:"none",alignItems:"center",gap:"6px",flexWrap:"wrap"});
+      fitInfoRow.appendChild(fitInfo);
+      resRow.appendChild(fitInfoRow);
 
       _syncFitRowFn=()=>{
         const noFitMode=(S.mode==="t2v"||S.mode==="chain");
@@ -2673,46 +2708,18 @@ function persist(){
         const src=_fitSourceSize(S);
         const fitActive=!!(S.resFitAspect&&S.resolution!=="Custom"&&src);
         if(!fitActive){
-          driveFromRow.style.display="none";
+          fitInfoRow.style.display="none";
           resDD.set(S.resolution);
           return;
         }
         const r=_resolveRes();
         resDD.set(r.label);
-        const opts=_driveFromOptions(S);
-        const drive=(S.resDriveFrom&&S.resDriveFrom[S.mode])||null;
-        const active=drive && opts.some(o=>o.value===drive);
-        const cur=active? drive : (opts[0]&&opts[0].value);
-        if(cur && (!active||!drive)){
-          S.resDriveFrom=S.resDriveFrom||{};
-          S.resDriveFrom[S.mode]=cur;
-          persist();
-        }
-        if(!opts.length){
-          driveFromRow.style.display="none";
-          if(src){
-            const mp=(r.width*r.height/1000000).toFixed(2);
-            tx(fitInfo, `${src.label} ${src.width}x${src.height} -> canvas ${r.width}x${r.height} (${mp}MP)`);
-            const over=Math.min(r.width,r.height)>768||Math.max(r.width,r.height)>1344;
-            fitInfo.style.color=over?C.warn:C.muted;
-          } else {
-            tx(fitInfo, "Upload a primary image or video to drive the fit.");
-            fitInfo.style.color=C.warn;
-          }
-          return;
-        }
-        driveFromRow.style.display="flex";
-        driveFromDD.updateItems(opts.map(o=>o.label));
-        driveFromDD.set(opts.find(o=>o.value===cur).label);
-        if(src){
-          const mp=(r.width*r.height/1000000).toFixed(2);
-          tx(fitInfo, `${src.label} ${src.width}x${src.height} -> canvas ${r.width}x${r.height} (${mp}MP)`);
-          const over=Math.min(r.width,r.height)>768||Math.max(r.width,r.height)>1344;
-          fitInfo.style.color=over?C.warn:C.muted;
-        } else {
-          tx(fitInfo, "Upload a primary image or video to drive the fit.");
-          fitInfo.style.color=C.warn;
-        }
+        fitInfoRow.style.display="flex";
+        const mp=(r.width*r.height/1000000).toFixed(2);
+        tx(fitInfo, `${src.label} ${src.width}x${src.height} -> canvas ${r.width}x${r.height} (${mp}MP)`);
+        const over=Math.min(r.width,r.height)>768||Math.max(r.width,r.height)>1344;
+        fitInfo.style.color=over?C.warn:C.muted;
+        _fitChipRefreshes.forEach(r=>{try{r();}catch(e){}});
       };
       const _swapRes=()=>{
         if(S.resFitAspect){

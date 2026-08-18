@@ -69,3 +69,26 @@ export function fitResolutionToAspect(sourceWidth, sourceHeight, targetWidth, ta
   if (!best) return { width: tw, height: th };
   return { width: best.width, height: best.height };
 }
+
+// Resolve which source slot drives the canvas fit for a mode.
+//
+// `cfg` is the per-mode object saved as state.fitCfg[mode]:
+//   { key: "first"|"last"|"ref:0"|"video:0"|"kf:0"|"imgRef:0"|"src"|null,
+//     mode: "fit"|"custom", custom: {width,height}|null }
+// `slots` is the ordered list of available sources for that mode:
+//   [{ key, label, size: {width,height} }, ...]
+//
+// Returns the effective primary { key, label, mode, size } or null when there
+// is nothing to fit (no slots) or the mode has no fit source.
+export function resolveFitPrimary(cfg, slots) {
+  const list = Array.isArray(slots) ? slots.filter((s) => s && s.size && s.size.width > 0 && s.size.height > 0) : [];
+  if (!list.length) return null;
+  const c = cfg && typeof cfg === "object" ? cfg : {};
+  let key = c.key || null;
+  if (!key || !list.some((s) => s.key === key)) key = list[0].key;
+  const slot = list.find((s) => s.key === key);
+  if (c.mode === "custom" && c.custom && c.custom.width > 0 && c.custom.height > 0) {
+    return { key, label: slot.label, mode: "custom", size: c.custom };
+  }
+  return { key, label: slot.label, mode: "fit", size: slot.size };
+}
