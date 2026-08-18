@@ -22,7 +22,7 @@ No node graph to build, no wires to connect, no hunting through twelve custom no
 
 ## Screenshots
 
-**History** — searchable, with prompt reuse and per-entry preview.
+**Modes** — switch between modes, R2V, T2V, T2I, I2V, Audio Drive, Keyframes, Extend, Chain.
 
 ![ALL in ONE MiniMaxH3 — T2V tab](assets/R2V2.png)
 
@@ -32,11 +32,11 @@ No node graph to build, no wires to connect, no hunting through twelve custom no
 
 **History** — searchable, with prompt reuse and per-entry preview.
 
-![History](assets/history.png)
+![History](assets/History.png)
 
 **Library** — every output in one place: inline preview, favorites, open-folder, delete, RTX upscale hook.
 
-![Library](assets/library.png)
+![Library](assets/Library.png)
 
 **Settings** — theme accent, sounds, models.
 
