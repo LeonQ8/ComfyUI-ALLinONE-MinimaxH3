@@ -884,13 +884,13 @@ class H3IdentityAnchor:
         if image is None:
             return (conditioning,)
         import comfy.utils as _cu
-        # Mirror core MiniMaxH3ImageToVideo's first-frame path exactly: stretch
-        # the image to the target canvas, then VAE-encode (BHWC is handled by
-        # the comfy VAE wrapper). The keyframe latent MUST have the canvas's
-        # latent row count or the packed layout's fixed-row bookkeeping breaks.
+        # Cover-crop the image to the target canvas (aspect preserved, no
+        # distortion), then VAE-encode (BHWC is handled by the comfy VAE
+        # wrapper). The keyframe latent MUST have the canvas's latent row
+        # count or the packed layout's fixed-row bookkeeping breaks.
         img = image[:1]
         img = img[..., :3].movedim(-1, 1)
-        img = _cu.common_upscale(img, int(width), int(height), "lanczos", "disabled")
+        img = _cu.common_upscale(img, int(width), int(height), "lanczos", "center")
         img = img.movedim(1, -1)
         z = vae.encode(img)
         idx = 0 if anchor == "first" else max(0, int(frame_count) - 1)
