@@ -35,7 +35,7 @@ function setVideoMuted(m){
   _videoMuteListeners.forEach(f=>{ try{ f(_videoMuted); }catch(e){} });
 }
 
-const NODE_W = 1360;
+const NODE_W = 1240;
 const NODE_H = 700;
 const H3_SEED_MAX = 1125899906842623;
 const LS_KEY = "one_node_minimax_h3_state";
@@ -1279,8 +1279,8 @@ function persist(){
           .h3-ctitle{font-size:12.5px;font-weight:700;color:var(--h3-tx);}
           .h3-cdesc{font-size:10px;color:var(--h3-tx2);line-height:1.5;}
           /* recipe line: pill chips in two visual groups (media | sampling) */
-          .h3-recipe{display:flex;align-items:center;flex-wrap:nowrap;gap:5px;overflow-x:auto;overflow-y:hidden;font-variant-numeric:tabular-nums;scrollbar-width:thin;scrollbar-color:var(--h3-line) transparent;padding-bottom:2px;}
-          .h3-chip{display:inline-flex;align-items:center;gap:5px;background:var(--h3-field);border:1px solid var(--h3-line);border-radius:20px;padding:3px 9px;font-size:10px;line-height:1.4;flex-shrink:0;max-width:240px;overflow:hidden;}
+          .h3-recipe{display:flex;flex-wrap:wrap;gap:5px;font-variant-numeric:tabular-nums;}
+          .h3-chip{display:inline-flex;align-items:center;gap:5px;background:var(--h3-field);border:1px solid var(--h3-line);border-radius:20px;padding:3px 9px;font-size:10px;line-height:1.4;flex-shrink:0;max-width:100%;overflow:hidden;}
           .h3-chip .cl{font-size:8.5px;font-weight:700;letter-spacing:.04em;color:var(--h3-tx3);flex-shrink:0;}
           .h3-chip .cv{font-weight:700;color:var(--h3-tx);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;}
           .h3-chip.media .cv{color:var(--h3accent);}
@@ -1288,7 +1288,7 @@ function persist(){
           .h3-chip.btn:hover{border-color:var(--h3-line2);}
           .h3-chip.btn:hover .cv{color:var(--h3accent);}
           .h3-chip.btn:focus-visible{box-shadow:0 0 0 2px rgba(var(--h3accent-rgb),.35);}
-          .h3-gsep{width:1px;height:14px;background:var(--h3-line);margin:0 3px;align-self:center;flex-shrink:0;}
+          .h3-gsep{display:none;}
           /* ghost remove button (LoRA / keyframe / clip rows) */
           .h3-rmbtn{width:26px;height:26px;border-radius:9px;background:var(--h3-field);border:1px solid var(--h3-line);color:var(--h3-tx3);font-size:11px;font-weight:600;line-height:1;padding:0;cursor:pointer;flex-shrink:0;display:flex;align-items:center;justify-content:center;transition:border-color .15s,color .15s,background-color .15s;}
           .h3-rmbtn:hover{border-color:rgba(255,128,128,.55);color:var(--h3-err);background:rgba(255,128,128,.07);}
@@ -2626,12 +2626,14 @@ function persist(){
       };
 
       // -- PARAMS ------------------------------------------------------------
-      const paramsHdr=mk("div",{display:"flex",alignItems:"center",gap:"6px",cursor:"pointer",userSelect:"none"});
-      paramsHdr.appendChild(cap("Tune"));
-      paramsHdr.lastChild.style.marginBottom="0";
-      const paramsChev=mk("span",{marginLeft:"auto",color:C.dim,fontSize:"10px",flexShrink:"0"});
+      const paramsHdr=mk("div",{display:"flex",alignItems:"center",gap:"10px",cursor:"pointer",userSelect:"none"});
+      const phLineL=mk("div",{flex:"1",height:"1px",background:C.border,flexShrink:"1",minWidth:"0"});
+      const phTitle=mk("span",{fontSize:"10px",fontWeight:"700",letterSpacing:".14em",textTransform:"uppercase",color:C.muted,flexShrink:"0",background:C.bg0,padding:"0 6px"});
+      tx(phTitle,"Tune");
+      const phLineR=mk("div",{flex:"1",height:"1px",background:C.border,flexShrink:"1",minWidth:"0"});
+      const paramsChev=mk("span",{color:C.dim,fontSize:"10px",flexShrink:"0"});
       tx(paramsChev,"▾");
-      paramsHdr.appendChild(paramsChev);
+      paramsHdr.append(phLineL,phTitle,phLineR,paramsChev);
       const params=mk("div",{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"8px"});
       let _resItems=[];
       const _resolveRes=()=>{
@@ -4443,7 +4445,7 @@ function persist(){
 
       // -- Assemble ----------------------------------------------------------
       const mainRow=mk("div",{display:"flex",gap:"12px",alignItems:"stretch",flex:"1",minHeight:"0"});
-      const leftPanel=mk("div",{display:"flex",flexDirection:"column",gap:"9px",width:"500px",flexShrink:"0",overflowY:"auto",minHeight:"0",paddingRight:"4px",boxSizing:"border-box",scrollbarWidth:"thin",scrollbarColor:`${C.border} transparent`});
+      const leftPanel=mk("div",{display:"flex",flexDirection:"column",gap:"9px",width:"460px",flexShrink:"0",overflowY:"auto",minHeight:"0",paddingRight:"4px",boxSizing:"border-box",scrollbarWidth:"thin",scrollbarColor:`${C.border} transparent`});
       modeArea.append(i2vArea,refArea,kfArea,adArea,exArea,chainArea,imgArea);
       // -- Card assembly -----------------------------------------------------
       const promptCard=mk("div",{}, {className:"h3-card"});
