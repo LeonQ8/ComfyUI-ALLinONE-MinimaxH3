@@ -16,7 +16,7 @@
   "15": { "class_type": "SaveVideo", "inputs": { "video": ["14", 0], "filename_prefix": "one-node-minimax-h3/h3_ext", "format": "auto", "codec": "auto" }, "_meta": { "title": "Save Video" } },
   "16": { "class_type": "LoadVideo", "inputs": { "file": "", "video-preview": "" }, "_meta": { "title": "Load Video" } },
   "17": { "class_type": "GetVideoComponents", "inputs": { "video": ["16", 0] }, "_meta": { "title": "Get Video Components" } },
-  "18": { "class_type": "MiniMaxH3ExistingVideoMaskedContext", "inputs": { "latent": ["6", 1], "vae": ["3", 0], "audio_vae": ["4", 0], "source_frames": ["17", 0], "source_audio": ["17", 1], "source_fps": ["17", 2], "context_length": 90, "crop": "center", "audio_feather_ticks": 8 }, "_meta": { "title": "Existing Video Masked Context" } },
+  "18": { "class_type": "MiniMaxH3ExistingVideoMaskedContext", "inputs": { "latent": ["6", 1], "vae": ["3", 0], "audio_vae": ["4", 0], "source_frames": ["17", 0], "source_audio": ["17", 1], "source_fps": ["17", 2], "context_length": 39, "crop": "center", "audio_feather_ticks": 8 }, "_meta": { "title": "Existing Video Masked Context" } },
   "19": { "class_type": "MiniMaxH3MotionContextTrim", "inputs": { "images": ["12", 0], "trim_frames": ["18", 1], "audio": ["13", 0], "fps": 24, "match_tail": true }, "_meta": { "title": "Trim Continuation" } },
   "20": { "class_type": "MiniMaxH3AssembleExtension", "inputs": { "source_frames": ["17", 0], "source_audio": ["17", 1], "source_fps": ["17", 2], "continuation_images": ["19", 0], "continuation_audio": ["19", 1], "fps": 24, "crop": "center" }, "_meta": { "title": "Assemble Extension" } }
 }

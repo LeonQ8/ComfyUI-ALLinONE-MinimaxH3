@@ -2,6 +2,13 @@
 
 Newest first.
 
+## Unreleased
+
+ - Extend mode now adds about the number of seconds you ask for. Extending a 5 second clip by 5 seconds gives roughly 10 seconds instead of growing to 16 or more, and re-extending the result keeps adding about the same amount each time.
+ - Extend mode pins a shorter tail of the source video as context, so the join keeps more of the original quality and sound.
+ - Extend matches the source video's resolution automatically, so the new part keeps the same sharpness and framing as the original instead of looking cut and lower quality.
+ - New Auto stage result toggle in Extend mode. Off keeps the same source video for every run so the length stays predictable.
+
 ## 0.7.0 (2026-08-19)
 
  - Comfy Kitchen attention is now a third toggle chip under Quality. It runs alone or together with SolAttn, and never with SageAttention. Needs `pip install comfy-kitchen` and a restart.

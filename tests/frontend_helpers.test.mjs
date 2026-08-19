@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { aspect, sizeOf, sameSize, orientRes, fitResolutionToAspect, resolveFitPrimary, imgProfileShort, imgAspectName, viewQuery, inputFileExists, clampImageMP, planImageCanvas, IMG_MAX_MP, IMG_MIN_MP, IMG_ASPECT_RATIOS, resolveQualityFlags, matchQualityPreset, QUALITY_PRESET_FLAGS } from "../web/h3_helpers.mjs";
+import { aspect, sizeOf, sameSize, orientRes, fitResolutionToAspect, resolveFitPrimary, imgProfileShort, imgAspectName, viewQuery, inputFileExists, clampImageMP, planImageCanvas, IMG_MAX_MP, IMG_MIN_MP, IMG_ASPECT_RATIOS, resolveQualityFlags, matchQualityPreset, QUALITY_PRESET_FLAGS, planExtend } from "../web/h3_helpers.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, "..");
@@ -48,6 +48,7 @@ test("helpers file is non-trivial and exports the core helpers", () => {
   assert.ok(src.includes("export function inputFileExists"), "helpers must export inputFileExists");
   assert.ok(src.includes("export function clampImageMP"), "helpers must export clampImageMP");
   assert.ok(src.includes("export function planImageCanvas"), "helpers must export planImageCanvas");
+  assert.ok(src.includes("export function planExtend"), "helpers must export planExtend");
 });
 
 test("aspect: landscape and portrait", () => {
@@ -404,6 +405,58 @@ test("planImageCanvas: extreme portrait custom dims keep ratio and cap", () => {
   assert.ok(p.width < p.height, "stays portrait");
   const ratio = p.height / p.width;
   assert.ok(Math.abs(Math.log(ratio / (12000 / 1024))) < 0.05, "portrait ratio preserved");
+});
+
+// -- Extend mode length planning ---------------------------------------------
+
+test("planExtend: 5s at 24fps plans ~5s of new content on a valid run", () => {
+  const p = planExtend(5, 24);
+  assert.equal(p.contextLength, 39);
+  assert.equal(p.newFrames % 17, 0);
+  assert.ok(Math.abs(p.newFrames - 120) <= 17, `newFrames ${p.newFrames} must be within one block of 120`);
+  assert.equal(p.targetLength, p.contextLength + p.newFrames);
+  assert.equal((p.targetLength - 5) % 17, 0, "target must be a valid H3 run");
+});
+
+test("planExtend: 10s at 24fps plans ~10s of new content", () => {
+  const p = planExtend(10, 24);
+  assert.equal(p.contextLength, 39);
+  assert.equal(p.newFrames % 17, 0);
+  assert.ok(Math.abs(p.newFrames - 240) <= 17, `newFrames ${p.newFrames} must be within one block of 240`);
+  assert.equal((p.targetLength - 5) % 17, 0);
+});
+
+test("planExtend: output length is always [source] + [new content]", () => {
+  const p = planExtend(5, 24);
+  const source = 124;
+  const total = source + p.newFrames;
+  assert.ok(total / 24 >= 4.9 && total / 24 <= 10.2, `total ${total} frames should land near 10s`);
+});
+
+test("planExtend: never plans fewer than one 17-frame block", () => {
+  const p = planExtend(0.5, 24);
+  assert.equal(p.newFrames, 17);
+  assert.equal(p.targetLength, 39 + 17);
+});
+
+test("planExtend: caps the target to the maxTarget budget", () => {
+  const p = planExtend(120, 24, { maxTarget: 736 });
+  assert.ok(p.targetLength <= 736, `target ${p.targetLength} must respect maxTarget`);
+  assert.equal(p.targetLength, 736);
+});
+
+test("planExtend: garbage inputs fall back to one block", () => {
+  for (const bad of [NaN, undefined, null, "", 0, -5]) {
+    const p = planExtend(bad, 24);
+    assert.equal(p.newFrames, 17, `bad input ${String(bad)}`);
+    assert.equal(p.contextLength, 39);
+  }
+});
+
+test("planExtend: honors a non-default fps", () => {
+  const p = planExtend(5, 30);
+  assert.ok(Math.abs(p.newFrames - 150) <= 17, `newFrames ${p.newFrames} must be within one block of 150`);
+  assert.equal((p.targetLength - 5) % 17, 0);
 });
 
 // -- Build-order regression guard --------------------------------------------

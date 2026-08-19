@@ -96,6 +96,29 @@ export function resolveFitPrimary(cfg, slots) {
   return { key, label: slot.label, mode: "fit", size: slot.size };
 }
 
+// Plan the target latent length and AV context window for Extend mode.
+//
+// Extend output is [source video] + [new content]. The new content is the
+// generated latent minus the preserved AV context prefix, so the generation
+// target must be context + requested extension. Both the target and the
+// context have to stay on H3's 17-frame grid (5 + 17k), and the context must
+// also land on a shared 24fps/40Hz video+audio boundary (39/90/141/192/...)
+// or the fork's context node snaps it to a smaller boundary and the extension
+// silently grows beyond the requested duration.
+//
+// Returns { contextLength, targetLength, newFrames } where newFrames is the
+// closest achievable continuation to duration * fps (within one 17-frame
+// block) and contextLength is the smallest AV-boundary window, which also
+// keeps the lossy decode/re-encode round trip of the source tail as short as
+// possible.
+export function planExtend(duration, fps = 24, { maxTarget = 736 } = {}) {
+  const wantNew = Math.max(1, Math.round(Number(duration) * fps));
+  const maxBlocks = Math.max(1, Math.floor((maxTarget - 39) / 17));
+  const blocks = Math.max(1, Math.min(Math.round(wantNew / 17) || 1, maxBlocks));
+  const newFrames = blocks * 17;
+  return { contextLength: 39, targetLength: 39 + newFrames, newFrames };
+}
+
 // Compact display name for an image sampling profile key so the recipe line
 // stays short. "custom" and unknown keys fall back to a plain token.
 export function imgProfileShort(key) {

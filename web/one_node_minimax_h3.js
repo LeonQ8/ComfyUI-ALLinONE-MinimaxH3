@@ -101,6 +101,22 @@ function snapFrames(seconds, fps=24){
   return base + ((5 - (base % 17)) + 17) % 17;
 }
 
+// Plan the target latent length and AV context window for Extend mode. Output
+// is [source video] + [new content], and the new content is the generated
+// latent minus the preserved AV context prefix, so the target must be context
+// + requested extension. Both the target and the context stay on H3's 17-frame
+// grid (5 + 17k); the context also lands on a shared 24fps/40Hz video+audio
+// boundary (39/90/141/192/...) or the fork's context node snaps it down and the
+// extension silently grows. Kept in sync with planExtend in h3_helpers.mjs.
+function planExtend(duration, fps=24){
+  const wantNew = Math.max(1, Math.round(Number(duration) * fps));
+  const maxTarget = 736;
+  const maxBlocks = Math.max(1, Math.floor((maxTarget - 39) / 17));
+  const blocks = Math.max(1, Math.min(Math.round(wantNew / 17) || 1, maxBlocks));
+  const newFrames = blocks * 17;
+  return { contextLength: 39, targetLength: 39 + newFrames, newFrames };
+}
+
 function mediaKey(item){
   if(!item) return "output||";
   const sub = String(item.subfolder || "").replace(/\\/g, "/");
@@ -1099,6 +1115,7 @@ app.registerExtension({
           upscaleMethod:   saved.upscaleMethod||"seedvr",
           modeSettings:    (saved.modeSettings&&typeof saved.modeSettings==="object")?saved.modeSettings:{},
           autoSave:        saved.autoSave!==undefined?saved.autoSave:true,
+          autoStage:       saved.autoStage!==undefined?saved.autoStage:true,
           livePreview:     saved.livePreview===true,
           livePreviewMode: (saved.livePreviewMode==="fast"||saved.livePreviewMode==="detailed")?saved.livePreviewMode:"balanced",
           generating:      false,
@@ -1167,6 +1184,7 @@ function persist(){
           upscaleFactor:S.upscaleFactor,upscaleMethod:S.upscaleMethod,
           modeSettings:S.modeSettings,
           autoSave:S.autoSave,customW:S.customW,customH:S.customH,
+          autoStage:S.autoStage,
           resDriveFrom:S.resDriveFrom,fitCfg:S.fitCfg,
           playOnFinish:S.playOnFinish,folded:S.folded,livePreview:S.livePreview,
           livePreviewMode:S.livePreviewMode,
@@ -2276,7 +2294,7 @@ function persist(){
       const refArea=mk("div",{display:"flex",flexDirection:"column",gap:"8px"});
       const chainArea=mk("div",{display:"flex",flexDirection:"column",gap:"6px"});
       const adArea=mk("div",{display:"flex",gap:"10px"});
-      const exArea=mk("div",{display:"flex",gap:"10px"});
+      const exArea=mk("div",{display:"flex",flexDirection:"column",gap:"6px"});
       const imgArea=mk("div",{display:"flex",flexDirection:"column",gap:"8px"});
 
       const _clearSections=()=>{
@@ -2649,9 +2667,20 @@ function persist(){
 
       // Extend video slot
       const exSlot=MediaSlot("video",n=>{S.extendVideo=n;persist();},(name,size)=>_rememberFrameInfo(null,"extendVideoSize",size));
+      const exCardRow=mk("div",{display:"flex",alignItems:"flex-start"});
       const exCard=_mkSlotCard("Video to extend",exSlot);
       exCard.appendChild(_mkFitChip("src","Source video"));
-      exArea.append(exCard);
+      exCardRow.appendChild(exCard);
+      const exOptsRow=mk("div",{display:"flex",alignItems:"center",gap:"8px",background:C.bg1,border:`1px solid ${C.border}`,borderRadius:"8px",padding:"6px 8px"});
+      const exOptsCapRow=mk("div",{display:"flex",alignItems:"center",gap:"4px",flexShrink:"0"});
+      const exOptsCap=mk("div",{fontSize:"9px",color:C.text});tx(exOptsCap,"Auto stage result");
+      const exOptsHint=mk("div",{fontSize:"8px",color:C.muted,marginLeft:"auto",flexShrink:"0"});
+      tx(exOptsHint,"Off keeps the same source every time");
+      const exToggle=MiniToggle(S.autoStage!==false,v=>{S.autoStage=v;persist();},"Send the finished extend back into the source slot so you can chain another extension. Turn off to always extend the same source video.");
+      exOptsCapRow.append(exOptsCap,infoIcon("On: the finished extend is put back into the Video to extend slot, so the next Generate keeps growing the clip.\nOff: the source stays as it is, so every run adds the same amount to the same starting video. Off keeps the length predictable."));
+      exOptsRow.append(exOptsCapRow,exOptsHint,exToggle.el);
+      exArea.append(exCardRow);
+      exArea.append(exOptsRow);
       if(S.extendVideo) exSlot._restorePreview(S.extendVideo);
 
       // Chain clips
@@ -2761,6 +2790,14 @@ function persist(){
           base={width:w,height:h,label:`${w}x${h} (custom)`};
         } else {
           base=_resItems.find(r=>r.label===S.resolution)||_resItems[0]||{width:960,height:544,label:S.resolution};
+        }
+        if(S.resolution!=="Custom"&&S.mode==="extend"&&S.extendVideoSize&&_validSize(S.extendVideoSize)){
+          const p=_fitPrimary(S);
+          if(!p||p.mode!=="custom"){
+            const src=S.extendVideoSize;
+            const fit=fitResolutionToAspect(src.width,src.height,src.width,src.height);
+            return {width:fit.width,height:fit.height,label:`${fit.width}x${fit.height} (source)`};
+          }
         }
         if(S.resolution!=="Custom"){
           const p=_fitPrimary(S);
@@ -3845,7 +3882,7 @@ function persist(){
         _activeShownFiles.push(_soKey);
         const isTemp=item.type==="temp";
         if(!isTemp){
-          if(S.mode==="extend"&&!wasUpscale) _stageVideoForExtend(item,false);
+          if(S.mode==="extend"&&!wasUpscale&&S.autoStage!==false) _stageVideoForExtend(item,false);
           fetch("/h3one/set_output",{method:"POST",headers:{"Content-Type":"application/json"},
             body:JSON.stringify({node_id:self.id,info:{filename:item.filename,subfolder:item.subfolder||"",type:item.type||"output"}})}).catch(()=>{});
           const histMode=wasUpscale?("Upscale "+S.upscaleFactor+"x ("+(wasUpscale==="upscale-rtx"?"RTX VSR":"SeedVR2")+")"):S.mode;
@@ -4095,8 +4132,11 @@ function persist(){
         const res=_resolveRes();
         let frames=snapFrames(S.duration,S.fps);
         if(S.mode==="extend"){
-          const EXT_CONTEXT=90;
-          frames=snapFrames(S.duration+EXT_CONTEXT/24,S.fps);
+          const plan=planExtend(S.duration,S.fps);
+          frames=plan.targetLength;
+          if(wf["18"]&&wf["18"].inputs&&wf["18"].class_type==="MiniMaxH3ExistingVideoMaskedContext"){
+            wf["18"].inputs.context_length=plan.contextLength;
+          }
         }
         condNode.inputs.prompt=_finalPrompt(S.prompt);
         condNode.inputs.width=res.width;
