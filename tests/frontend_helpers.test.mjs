@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { aspect, sizeOf, sameSize, orientRes, fitResolutionToAspect, resolveFitPrimary, imgProfileShort, imgAspectName, viewQuery, inputFileExists, clampImageMP, planImageCanvas, IMG_MAX_MP, IMG_MIN_MP, IMG_ASPECT_RATIOS, resolveQualityFlags, matchQualityPreset, QUALITY_PRESET_FLAGS, planExtend } from "../web/h3_helpers.mjs";
+import { aspect, sizeOf, sameSize, orientRes, fitResolutionToAspect, resolveFitPrimary, imgProfileShort, imgAspectName, viewQuery, inputFileExists, clampImageMP, planImageCanvas, IMG_MAX_MP, IMG_MIN_MP, IMG_ASPECT_RATIOS, resolveQualityFlags, matchQualityPreset, QUALITY_PRESET_FLAGS, planExtend, queuePromptPayload } from "../web/h3_helpers.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, "..");
@@ -49,6 +49,7 @@ test("helpers file is non-trivial and exports the core helpers", () => {
   assert.ok(src.includes("export function clampImageMP"), "helpers must export clampImageMP");
   assert.ok(src.includes("export function planImageCanvas"), "helpers must export planImageCanvas");
   assert.ok(src.includes("export function planExtend"), "helpers must export planExtend");
+  assert.ok(src.includes("export function queuePromptPayload"), "helpers must export queuePromptPayload");
 });
 
 test("aspect: landscape and portrait", () => {
@@ -570,4 +571,57 @@ test("every late-bound _xFn holder is declared before persist", () => {
     assert.ok(idx !== -1 && idx < persistIdx, `${decl} must be declared before persist()`);
   }
   assert.ok(/_syncFitRowFn/.test(bundle), "_syncFitRowFn holder must exist");
+});
+
+test("queuePromptPayload builds the expected /prompt body", () => {
+  const wf = { "1": { class_type: "KSampler", inputs: {} } };
+  const body = queuePromptPayload(wf, "client-abc");
+  assert.deepEqual(body, {
+    prompt: wf,
+    client_id: "client-abc",
+    extra_data: { enable_previews: true },
+  });
+});
+
+test("queuePromptPayload keeps the workflow reference and never mutates it", () => {
+  const wf = { "1": { class_type: "KSampler", inputs: {} } };
+  const body = queuePromptPayload(wf, "client-abc");
+  assert.equal(body.prompt, wf);
+  assert.deepEqual(wf, { "1": { class_type: "KSampler", inputs: {} } });
+  assert.notEqual(body, wf);
+});
+
+test("queuePromptPayload defaults previews on regardless of client id value", () => {
+  const a = queuePromptPayload({}, undefined);
+  assert.equal(a.client_id, undefined);
+  assert.deepEqual(a.extra_data, { enable_previews: true });
+});
+
+test("bundle wires the + Queue button and its queued-job tracking", () => {
+  const bundle = readFileSync(bundlePath, "utf8");
+  assert.ok(bundle.includes("+ Queue"), "bundle must render the + Queue label");
+  assert.ok(bundle.includes("queueBtn"), "bundle must create queueBtn");
+  assert.ok(bundle.includes("_queuedJobs"), "bundle must track queued prompt ids by mode");
+  assert.ok(bundle.includes("_QUEUE_MODE_SHORT"), "bundle must map modes to short labels for the badge");
+  assert.ok(bundle.includes("_activeQueueBtn"), "bundle must expose the queue button for error feedback");
+  assert.ok(bundle.includes("_activeQueueBadge"), "bundle must expose the queue counter badge");
+  assert.ok(
+    bundle.includes("!S.generating&&!_queuedJobs.size"),
+    "bundle must route + Queue to Generate when the node is idle, and stack quietly when busy",
+  );
+  assert.ok(bundle.includes("_h3_showQueued"), "bundle must surface queued outputs into the preview and gallery");
+  assert.ok(
+    bundle.includes("if(!pid||_batchIds.includes(pid)) _finishRun()"),
+    "bundle must not let queued jobs advance the Generate run state",
+  );
+  assert.ok(bundle.includes("queuePromptPayload"), "bundle must build the queue payload");
+  assert.ok(bundle.includes('api.fetchApi("/queue"'), "bundle must reconcile the queue counter against GET /queue");
+  assert.ok(
+    bundle.includes("api.fetchApi(\"/prompt\"") || bundle.includes('api.fetchApi("/prompt"'),
+    "bundle must POST queued jobs to /prompt",
+  );
+  assert.ok(
+    bundle.includes("pad.append(navRow,mainRow,genRow,queueRow)"),
+    "bundle must mount the queue row below the generate row",
+  );
 });

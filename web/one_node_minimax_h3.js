@@ -428,6 +428,9 @@ function fmtDur(ms){
   return h+"h "+String(m%60).padStart(2,"0")+"m "+String(sec).padStart(2,"0")+"s";
 }
 
+// POST body for /prompt when queueing a job. Mirrored in h3_helpers.mjs (kept in sync).
+const queuePromptPayload=(wf,clientId)=>({prompt:wf,client_id:clientId,extra_data:{enable_previews:true}});
+
 let _dim=null;
 const showDimmer=()=>{ if(!_dim){_dim=mk("div",{position:"fixed",inset:"0",background:"rgba(0,0,0,.7)",zIndex:"999990",display:"none",pointerEvents:"none"});document.body.appendChild(_dim);} _dim.style.display="block"; };
 const hideDimmer=()=>{ if(_dim)_dim.style.display="none"; };
@@ -973,6 +976,11 @@ let _batchDone=0;
 let _listenersRegistered=false;
 let _finishWatchTimer=null;
 let _finishDone=false;
+let _queuedJobs=new Map();
+let _activeQueueBtn=null;
+let _activeQueueBadge=null;
+let _queueReconcileTimer=null;
+let _queueReconcilePending=false;
 
 // -- Finish watch: polls prompt history so the end-of-run UI never depends
 // on websocket events alone. The executed / execution_success listeners stay
@@ -1023,6 +1031,52 @@ const _finishRun=async()=>{
   _activeResetBtn?.();
   const S=_activeNode?._h3_S;
   if(S && S.soundEnabled!==false && S.sound!=="off") playDone(S.sound||"chime");
+};
+
+// -- Queued-job counter: shows how many + Queue jobs are still waiting and in
+// which modes. Tracked per prompt_id; reconciled against GET /queue so external
+// clears (ComfyUI's own queue panel) are reflected instead of leaking.
+const _QUEUE_MODE_SHORT={t2v:"T2V",i2v:"I2V",r2v:"R2V",audio_drive:"Audio",keyframes:"KF",extend:"Ext",chain:"Chain",image:"Img"};
+const _renderQueueBadge=()=>{
+  const b=_activeQueueBadge;
+  if(!b) return;
+  const n=_queuedJobs.size;
+  if(!n){ b.style.display="none"; return; }
+  const modes=[...new Set([..._queuedJobs.values()].map(e=>e.mode))].map(m=>_QUEUE_MODE_SHORT[m]||m);
+  let label=n+" queued";
+  if(modes.length){
+    label+=" - "+modes.slice(0,2).join(", ");
+    if(modes.length>2) label+=" +"+(modes.length-2);
+  }
+  tx(b,label);
+  b.title=label+" - running in ComfyUI's queue. Clear them from ComfyUI's queue panel if you want to cancel.";
+  b.style.display="flex";
+};
+const _stopQueueSync=()=>{ if(_queueReconcileTimer!==null){ clearTimeout(_queueReconcileTimer); _queueReconcileTimer=null; } _queueReconcilePending=false; };
+const _queueSync=async()=>{
+  _queueReconcilePending=false;
+  if(!_queuedJobs.size) return;
+  try{
+    const r=await api.fetchApi("/queue");
+    const d=await r.json();
+    const live=new Set();
+    (d.queue_running||[]).forEach(e=>{ if(Array.isArray(e)&&e[1]) live.add(e[1]); });
+    (d.queue_pending||[]).forEach(e=>{ if(Array.isArray(e)&&e[1]) live.add(e[1]); });
+    let changed=false;
+    for(const id of _queuedJobs.keys()){ if(!live.has(id)){ _queuedJobs.delete(id); changed=true; } }
+    if(changed) _renderQueueBadge();
+  }catch(e){}
+};
+// Reconcile once, shortly after the queue changes while we track jobs (catches
+// jobs cleared from ComfyUI's own queue panel). Never a timer: /queue returns
+// the full workflow JSON per job, so polling it on an interval would waste
+// bandwidth and CPU. ComfyUI already broadcasts a cheap "status" event on every
+// queue change; we just piggyback one /queue fetch on it, throttled.
+const _armQueueSync=()=>{
+  if(_queueReconcilePending) return;
+  if(!_queuedJobs.size) return;
+  _queueReconcilePending=true;
+  _queueReconcileTimer=setTimeout(()=>{ _queueReconcileTimer=null; _queueSync(); },800);
 };
 
 app.registerExtension({
@@ -2264,6 +2318,7 @@ function persist(){
         resize:"vertical",outline:"none",fontFamily:"inherit",
         transition:"border-color .15s",lineHeight:"1.5",
         width:"100%",boxSizing:"border-box",minHeight:"70px",
+        id:"h3one-prompt-textarea","data-pa-h3-prompt":"1",
       });
       promptTA.value=S.prompt;
       promptTA.onfocus=()=>promptTA.style.borderColor=C.lime;
@@ -3993,6 +4048,10 @@ function persist(){
           galleryBox.appendChild(card);
         });
       };
+      self._h3_showQueued=(item)=>{
+        _showVideo(item,true);
+        _loadGallery();
+      };
 
       // -- GENERATE ROW ------------------------------------------------------
       const genRow=mk("div",{display:"flex",gap:"0",alignItems:"stretch",width:"100%",boxSizing:"border-box"});
@@ -4013,6 +4072,90 @@ function persist(){
       stopBtn.onmouseenter=()=>{stopBtn.style.borderColor=C.err;stopBtn.style.color=C.err;};
       stopBtn.onmouseleave=()=>{stopBtn.style.borderColor=C.border;stopBtn.style.color=C.muted;};
       genRow.append(genBtn,liveTogWrap,stopBtn);
+
+      // -- QUEUE ROW: append a job without taking over the run state ----------
+      const QUEUE_LABEL="+ Queue";
+      const _qBorder="rgba(var(--h3accent-rgb), .4)";
+      const _qBg="linear-gradient(180deg,#262626,#1a1a1a)";
+      const _qBgH="linear-gradient(180deg,#2d2d2d,#1f1f1f)";
+      const queueBtn=mk("button",{
+        display:"inline-flex",alignItems:"center",justifyContent:"center",gap:"7px",
+        background:_qBg,border:`1px solid ${_qBorder}`,borderRadius:"9px",
+        color:C.lime,fontSize:"12px",fontWeight:"700",cursor:"pointer",height:"36px",
+        padding:"0 12px",outline:"none",flex:"1",minWidth:"0",whiteSpace:"nowrap",
+        boxSizing:"border-box",boxShadow:"inset 0 1px 0 rgba(255,255,255,.05)",
+        transition:"border-color .15s, background .15s, box-shadow .15s, transform .1s",
+      },{type:"button",title:"Add this job to ComfyUI's queue. If nothing is running it starts right away with progress here; when something is busy it stacks behind and the badge shows how many are left. Queued results land in the Library; queued jobs are not recorded in History and Stop does not cancel them."});
+      const queueLbl=mk("span",{}, {textContent:QUEUE_LABEL});
+      queueBtn.append(queueLbl);
+      queueBtn.onmouseenter=()=>{
+        queueBtn.style.borderColor=C.lime;
+        queueBtn.style.background=_qBgH;
+        queueBtn.style.boxShadow=`inset 0 1px 0 rgba(255,255,255,.07), 0 0 0 1px rgba(var(--h3accent-rgb),.25), 0 2px 10px rgba(var(--h3accent-rgb),.18)`;
+        queueBtn.style.transform="translateY(-1px)";
+      };
+      queueBtn.onmouseleave=()=>{
+        queueBtn.style.borderColor=_qBorder;
+        queueBtn.style.background=_qBg;
+        queueBtn.style.boxShadow="inset 0 1px 0 rgba(255,255,255,.05)";
+        queueBtn.style.transform="";
+      };
+      let _queueBusy=false;
+      let _queueFlashToken=0;
+      const queueFlash=(t)=>{
+        const tok=++_queueFlashToken;
+        tx(queueLbl,t);
+        queueLbl.style.color=(t==="failed")?C.err:C.lime;
+        setTimeout(()=>{ if(_queueFlashToken===tok){ tx(queueLbl,QUEUE_LABEL); queueLbl.style.color=C.lime; } },1400);
+      };
+      queueBtn._flash=queueFlash;
+      _activeQueueBtn=queueBtn;
+      queueBtn.onclick=async()=>{
+        if(_queueBusy) return;
+        if(!S.generating&&!_queuedJobs.size){ genBtn.click(); return; }
+        _queueBusy=true;
+        queueBtn.disabled=true;
+        try{
+          if(_uploadsPending>0){
+            let _wait=0;
+            while(_uploadsPending>0&&_wait<200){
+              await new Promise(res=>setTimeout(res,100));
+              _wait++;
+            }
+          }
+          if(S.randomizeSeed){ S.seed=Math.floor(Math.random()*(H3_SEED_MAX+1)); seedNI._inp.value=String(S.seed); }
+          const wf=await _buildWorkflow();
+          const res=await api.fetchApi("/prompt",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(queuePromptPayload(wf,api.clientId))});
+          if(!res.ok) throw new Error("queue failed (HTTP "+res.status+")");
+          let data=null;
+          try{ data=await res.json(); }catch(e){ data=null; }
+          if(!data||data.error||!data.prompt_id){
+            throw new Error(data&&data.error?fmtErr(data.error):"queue returned no prompt id");
+          }
+          _queuedJobs.set(data.prompt_id,{mode:S.mode,node:self});
+          _renderQueueBadge();
+          _armQueueSync();
+          queueBtn.title="Job queued. It runs after the current job; results land in the Library.";
+          queueFlash("queued");
+        }catch(e){
+          queueBtn.title="Queue failed: "+fmtErr(e);
+          console.warn("[H3One] queue:",e);
+          queueFlash("failed");
+        }finally{
+          _queueBusy=false;
+          queueBtn.disabled=false;
+        }
+      };
+      const queueBadge=mk("div",{
+        display:"none",alignItems:"center",background:C.bg2,border:`1px solid rgba(var(--h3accent-rgb), .25)`,
+        borderRadius:"8px",color:C.lime,fontSize:"10px",fontWeight:"700",height:"36px",
+        padding:"0 10px",flexShrink:"0",boxSizing:"border-box",whiteSpace:"nowrap",
+        maxWidth:"220px",overflow:"hidden",textOverflow:"ellipsis",
+      });
+      _activeQueueBadge=queueBadge;
+      const queueRow=mk("div",{display:"flex",alignItems:"center",gap:"6px",width:"100%",boxSizing:"border-box"});
+      queueRow.append(queueBtn,queueBadge);
+      _renderQueueBadge();
 
       const resetBtn=()=>{
         S.generating=false;
@@ -4907,7 +5050,7 @@ function persist(){
       _applyFold("lora",loraHdr,loraBody,loraChev);
       _applyFold("outputs",galleryFoldHdr,galleryBox,outputsChev);
       mainRow.append(leftPanel,rightPanel);
-      pad.append(navRow,mainRow,genRow);
+      pad.append(navRow,mainRow,genRow,queueRow);
       scrollEl.appendChild(pad);
       root.append(scrollEl,settingsOverlay,historyOverlay,libraryOverlay,discoverOverlay);
       _updateTabs();
@@ -5023,10 +5166,35 @@ function persist(){
     if(typeof d.image==="string"){ if(node._h3_lpFrame) node._h3_lpFrame(d); }
   });
 
+  api.addEventListener("status",()=>{
+    if(_queuedJobs.size) _armQueueSync();
+  });
+
   api.addEventListener("executed",(evt)=>{
-    if(!_activeNode) return;
     const d=evt.detail;
-    if(!d||!_batchIds.includes(d.prompt_id)) return;
+    const pid=d?.prompt_id;
+    const qentry=pid?_queuedJobs.get(pid):null;
+    if(qentry){
+      _queuedJobs.delete(pid);
+      _renderQueueBadge();
+      if(!_queuedJobs.size) _stopQueueSync();
+      const out=d?.output;
+      if(out&&qentry.node&&qentry.node._h3_showQueued){
+        const vids=out.videos||out.gifs||null;
+        const imgs=out.images||null;
+        let item=null;
+        if(vids&&Array.isArray(vids)&&vids.length) item=vids[vids.length-1];
+        else if(imgs&&Array.isArray(imgs)&&imgs.length){
+          const im=imgs[imgs.length-1];
+          const animated=!!(out.animated&&out.animated.length);
+          item={filename:im.filename,subfolder:im.subfolder||"",type:im.type||"output",kind:animated?"video":"image"};
+        }
+        if(item) qentry.node._h3_showQueued(item);
+      }
+      return;
+    }
+    if(!_activeNode) return;
+    if(!d||!_batchIds.includes(pid)) return;
     const out=d.output;
     if(!out) return;
     const vids=out.videos||out.gifs||null;
@@ -5043,13 +5211,29 @@ function persist(){
     }
   });
 
-  api.addEventListener("execution_success",()=>{
-    _finishRun();
+  api.addEventListener("execution_success",(evt)=>{
+    const pid=(evt?.detail||{}).prompt_id;
+    if(pid&&_queuedJobs.has(pid)){
+      _queuedJobs.delete(pid);
+      _renderQueueBadge();
+      if(!_queuedJobs.size) _stopQueueSync();
+    }
+    if(!pid||_batchIds.includes(pid)) _finishRun();
   });
 
   api.addEventListener("execution_error",(evt)=>{
-    if(!_activeNode) return;
     const d=evt.detail;
+    if(d?.prompt_id&&_queuedJobs.has(d.prompt_id)){
+      _queuedJobs.delete(d.prompt_id);
+      _renderQueueBadge();
+      if(!_queuedJobs.size) _stopQueueSync();
+      if(_activeQueueBtn){
+        _activeQueueBtn.title="Queued job failed: "+fmtErr(d?.exception_message||d?.error||d||"Queued job failed.");
+        _activeQueueBtn._flash("failed");
+      }
+      return;
+    }
+    if(!_activeNode) return;
     if(d?.prompt_id&&_batchIds.length&&!_batchIds.includes(d.prompt_id)) return;
     const msg=fmtErr(d?.exception_message||d?.error||d||"Execution failed.");
     _activeShowError?.(msg);

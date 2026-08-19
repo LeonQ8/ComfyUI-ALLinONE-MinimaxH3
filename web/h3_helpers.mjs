@@ -268,3 +268,14 @@ export function planImageCanvas({ mode = "custom", width = 1024, height = 1024, 
   }
   return { width: w, height: h, megapixels: (w * h) / 1e6, capped };
 }
+
+// POST body for /prompt when queueing a job behind the running one. Mirrored in
+// the bundle (kept in sync). The bundle never imports this module; the mirror
+// lives in web/one_node_minimax_h3.js so it stays unit-testable here.
+export function queuePromptPayload(wf, clientId) {
+  return {
+    prompt: wf,
+    client_id: clientId,
+    extra_data: { enable_previews: true },
+  };
+}

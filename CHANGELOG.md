@@ -2,6 +2,12 @@
 
 Newest first.
 
+## 0.8.0 (2026-08-19)
+
+ - New + Queue button under Generate.
+ - The queue row shows a counter of how many jobs are still queued and their modes.
+ - This feature is in beta. If anything goes wrong, open an issue.
+
 ## 0.7.2 (2026-08-19)
 
  - The Library now has bulk management: pick Select to tick several videos & images.
