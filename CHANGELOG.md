@@ -2,7 +2,7 @@
 
 Newest first.
 
-## Unreleased
+## 0.7.1 (2026-08-19)
 
  - Extend mode now adds about the number of seconds you ask for. Extending a 5 second clip by 5 seconds gives roughly 10 seconds instead of growing to 16 or more, and re-extending the result keeps adding about the same amount each time.
  - Extend mode pins a shorter tail of the source video as context, so the join keeps more of the original quality and sound.
