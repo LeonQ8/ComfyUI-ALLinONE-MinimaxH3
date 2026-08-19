@@ -183,6 +183,14 @@ class TestConfig(_NodesTestBase):
         self.assertIn("resolution_presets", cfg)
         self.assertIsInstance(cfg["resolution_presets"], list)
 
+    def test_quality_presets_carry_accelerator_flags(self):
+        cfg = self.nodes._load_builtin_config()
+        presets = cfg.get("quality_presets", {})
+        self.assertTrue(presets, "quality_presets should exist")
+        for key, p in presets.items():
+            for flag in ("sol_attn", "sage", "kitchen"):
+                self.assertIn(flag, p, f"preset {key} missing {flag}")
+
     def test_user_overrides_builtin(self):
         user = self.user_dir()
         (user / "config.json").write_text(

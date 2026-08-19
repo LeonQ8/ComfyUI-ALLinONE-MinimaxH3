@@ -145,6 +145,42 @@ export function inputFileExists(files, name) {
   return (Array.isArray(files) ? files : []).some((f) => String(f).replace(/\\/g, "/").split("/").pop() === base);
 }
 
+// Quality preset flag table. Keys mirror config.json quality_presets; each
+// entry says which accelerators that preset turns on. Turbo is not matchable
+// by flags alone (it needs a speed LoRA), so it is excluded from matching.
+export const QUALITY_PRESET_FLAGS = {
+  turbo: { sol: false, sage: false, kitchen: false },
+  speed: { sol: true, sage: false, kitchen: false },
+  balanced: { sol: true, sage: false, kitchen: false },
+  high: { sol: false, sage: true, kitchen: false },
+  native: { sol: false, sage: false, kitchen: false },
+};
+
+export const QUALITY_PRESET_ORDER = ["speed", "balanced", "high", "native"];
+
+// Comfy Kitchen attention replaces the whole attention function, same as
+// SageAttention, so the two can never run together. SolAttn layers on top of
+// either of them. When a request would pair kitchen with sage, sage is
+// dropped, so the flag combo always stays valid.
+export function resolveQualityFlags(sol, sage, kitchen) {
+  const s = !!sol;
+  let a = !!sage;
+  const k = !!kitchen;
+  if (a && k) a = false;
+  return { sol: s, sage: a, kitchen: k };
+}
+
+// Match a (sol, sage, kitchen) combo against the quality preset table.
+// Returns the preset key, or "custom" for any mix no preset matches.
+export function matchQualityPreset(flags, table = QUALITY_PRESET_FLAGS, order = QUALITY_PRESET_ORDER) {
+  const f = resolveQualityFlags(flags && flags.sol, flags && flags.sage, flags && flags.kitchen);
+  for (const key of order) {
+    const p = table[key];
+    if (p && f.sol === !!p.sol && f.sage === !!p.sage && f.kitchen === !!p.kitchen) return key;
+  }
+  return "custom";
+}
+
 // H3 Studio image canvas limits. The H3StudioDirector node rejects megapixels
 // outside 0.2..8.5 at queue time, so any request must be clamped before the
 // workflow is submitted or generation fails validation with no render at all.

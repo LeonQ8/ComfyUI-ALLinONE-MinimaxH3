@@ -189,6 +189,33 @@ function resolveFitPrimary(cfg, slots){
   return { key, label: slot.label, mode: "fit", size: slot.size };
 }
 
+const QUALITY_PRESET_FLAGS={
+  turbo:{sol:false,sage:false,kitchen:false},
+  speed:{sol:true,sage:false,kitchen:false},
+  balanced:{sol:true,sage:false,kitchen:false},
+  high:{sol:false,sage:true,kitchen:false},
+  native:{sol:false,sage:false,kitchen:false},
+};
+const QUALITY_PRESET_ORDER=["speed","balanced","high","native"];
+
+function resolveQualityFlags(sol,sage,kitchen){
+  const s=!!sol;
+  let a=!!sage;
+  const k=!!kitchen;
+  if(a&&k) a=false;
+  return {sol:s,sage:a,kitchen:k};
+}
+
+function matchQualityPreset(flags,table,order){
+  const t=table||QUALITY_PRESET_FLAGS;
+  const f=resolveQualityFlags(flags&&flags.sol,flags&&flags.sage,flags&&flags.kitchen);
+  for(const key of (order||QUALITY_PRESET_ORDER)){
+    const p=t[key];
+    if(p&&f.sol===!!p.sol&&f.sage===!!p.sage&&f.kitchen===!!p.kitchen) return key;
+  }
+  return "custom";
+}
+
 function imgProfileShort(key){
   if(!key||key==="custom") return "Custom";
   const k=String(key);
@@ -1018,25 +1045,13 @@ app.registerExtension({
     nodeType.prototype._buildUI=function(){
       const self=this;
       const saved=loadState();
-      const _QF={
-        turbo:{sol:false,sage:false},
-        speed:{sol:true,sage:false},
-        balanced:{sol:true,sage:false},
-        high:{sol:false,sage:true},
-        native:{sol:false,sage:false},
-      };
+      const _QF=QUALITY_PRESET_FLAGS;
       const _QL={balanced:"Balanced",speed:"Speed",high:"High Quality",turbo:"Turbo (Speed LoRA)",native:"Native",custom:"Custom"};
-      const _matchQ=()=>{
-        for(const k of ["speed","balanced","high","native"]){
-          const p=_QF[k];
-          if(!!S.optSol===p.sol&&!!S.optSage===p.sage) return k;
-        }
-        return "custom";
-      };
+      const _matchQ=()=>matchQualityPreset({sol:S.optSol,sage:S.optSage,kitchen:S.optKitchen},_QF);
 
       if(!self._h3_S){
         const _sq=(saved.quality==="custom"||(saved.quality&&_QF[saved.quality]))?saved.quality:"balanced";
-        const _qf=_QF[_sq]||{sol:false,sage:false};
+        const _qf=_QF[_sq]||{sol:false,sage:false,kitchen:false};
         self._h3_S={
           mode:            saved.mode||"t2v",
           prompt:          saved.prompt!==undefined?saved.prompt:"",
@@ -1046,12 +1061,13 @@ app.registerExtension({
           quality:         _sq,
           optSol:          (saved.quality==="custom")?(saved.optSol!==undefined?saved.optSol:false):_qf.sol,
           optSage:         (saved.quality==="custom")?(saved.optSage!==undefined?saved.optSage:false):_qf.sage,
+          optKitchen:      (saved.quality==="custom")?(saved.optKitchen!==undefined?saved.optKitchen:false):_qf.kitchen,
           samplerName:     saved.samplerName||"res_multistep",
           schedulerName:   saved.schedulerName||"simple",
           seed:            (typeof saved.seed==="number")?Math.max(0,Math.min(H3_SEED_MAX,Math.round(saved.seed))):0,
           randomizeSeed:   saved.randomizeSeed!==undefined?saved.randomizeSeed:true,
           batch:           saved.batch||1,
-          loras:          (()=>{ const arr=Array.isArray(saved.loras)?saved.loras:[]; const named=arr.filter(l=>l&&l.name); return named.concat([{name:"",strength:1,enabled:true}]); })(),
+          loras:          (()=>{ const arr=Array.isArray(saved.loras)?saved.loras:[]; const named=arr.filter(l=>l&&l.name); return named.concat([{name:"",strength:1,enabled:false}]); })(),
           firstFrame:      saved.firstFrame||null,
           lastFrame:       saved.lastFrame||null,
           firstFrameSize:  (saved.firstFrameSize&&saved.firstFrameSize.width>0&&saved.firstFrameSize.height>0)?{width:Number(saved.firstFrameSize.width),height:Number(saved.firstFrameSize.height)}:null,
@@ -1133,11 +1149,11 @@ function persist(){
         // quality/resolution/loras survive workflow-tab switches (they used to be
         // captured only when switching mode tabs, so a stale snapshot overwrote
         // the just-changed value on rebuild).
-        S.modeSettings[S.mode]={prompt:S.prompt,steps:S.steps,quality:S.quality,resolution:S.resolution,duration:S.duration,loras:JSON.parse(JSON.stringify(S.loras||[])),optSol:S.optSol,optSage:S.optSage};
+        S.modeSettings[S.mode]={prompt:S.prompt,steps:S.steps,quality:S.quality,resolution:S.resolution,duration:S.duration,loras:JSON.parse(JSON.stringify(S.loras||[])),optSol:S.optSol,optSage:S.optSage,optKitchen:S.optKitchen};
         if(_updRecipeFn){ try{ _updRecipeFn(); }catch(e){} }
         saveState({
           mode:S.mode,prompt:S.prompt,resolution:S.resolution,duration:S.duration,
-          steps:S.steps,quality:S.quality,optSol:S.optSol,optSage:S.optSage,samplerName:S.samplerName,schedulerName:S.schedulerName,randomizeSeed:S.randomizeSeed,seed:S.seed,batch:S.batch,
+          steps:S.steps,quality:S.quality,optSol:S.optSol,optSage:S.optSage,optKitchen:S.optKitchen,samplerName:S.samplerName,schedulerName:S.schedulerName,randomizeSeed:S.randomizeSeed,seed:S.seed,batch:S.batch,
           loras:S.loras,chainClips:S.chainClips.map(c=>({prompt:c.prompt,duration:c.duration})),
           firstFrame:S.firstFrame,lastFrame:S.lastFrame,
           firstFrameSize:S.firstFrameSize,lastFrameSize:S.lastFrameSize,
@@ -2859,13 +2875,13 @@ function persist(){
       const qualRow=mk("div",{display:"flex",flexDirection:"column",gap:"3px"});
       const qualCapRow=mk("div",{display:"flex",alignItems:"center",gap:"4px"});
       const qualCap=mk("div",{fontSize:"10px",color:C.text});tx(qualCap,"Quality");
-      qualCapRow.append(qualCap,infoIcon("The sampling pipeline, not the pixel size. Use the chips below to switch each accelerator on or off - Quality follows, and any manual mix shows as Custom.\nTurbo: Turbo LoRA + 6-step distilled sampler. Fastest, visibly lower quality - needs the Turbo LoRA set in Settings.\nSpeed: SolAttn sparse attention only. Fastest normal pipeline, tiny quality tradeoff.\nBalanced: SolAttn sparse attention only.\nHigh Quality: full SageAttention only - slowest, maximum fidelity.\nNative: core ComfyUI H3 pipeline, no accelerators - needs no extra packs."));
+      qualCapRow.append(qualCap,infoIcon("The sampling pipeline, not the pixel size. Use the chips below to switch each accelerator on or off - Quality follows, and any manual mix shows as Custom.\nTurbo: Turbo LoRA + 6-step distilled sampler. Fastest, visibly lower quality - needs the Turbo LoRA set in Settings.\nSpeed: SolAttn sparse attention only. Fastest normal pipeline, tiny quality tradeoff.\nBalanced: SolAttn sparse attention only.\nHigh Quality: full SageAttention only - slowest, maximum fidelity.\nKitchen: ComfyUI's built-in Comfy Kitchen attention (pip install comfy-kitchen) - can run alone or with SolAttn, never with SageAttention.\nNative: core ComfyUI H3 pipeline, no accelerators - needs no extra packs."));
       const qualDD=DD(["Turbo (Speed LoRA)","Speed","Balanced","High Quality","Native","Custom"],_QL[S.quality]||"Custom",v=>{
         const key=Object.keys(_QL).find(k=>_QL[k]===v)||"custom";
         if(key!=="custom"){
           S.quality=key;
-          const f=_QF[key]||{sol:false,sage:false};
-          S.optSol=f.sol;S.optSage=f.sage;
+          const f=_QF[key]||{sol:false,sage:false,kitchen:false};
+          S.optSol=f.sol;S.optSage=f.sage;S.optKitchen=f.kitchen;
           _syncOptChips();
         } else {
           S.quality="custom";
@@ -2877,21 +2893,26 @@ function persist(){
       qualRow.append(qualCapRow,qualDD.el);
       const optRow=mk("div",{display:"flex",gap:"5px",flexWrap:"wrap"});
       const _optChipSyncs=[];
-      const _mkOptChip=(key,label)=>{
+      const _mkOptChip=(key,label,opts)=>{
+        const o=opts||{};
         const chip=mk("button",{borderRadius:"6px",padding:"3px 9px",fontSize:"9px",fontWeight:"700",cursor:"pointer",outline:"none",transition:"background .15s,color .15s,border-color .15s"});
         const _sync=()=>{
+          const dis=!!(o.disabled&&o.disabled());
           const on=!!S[key];
-          chip.style.background=on?C.lime:C.bg2;
-          chip.style.color=on?"#111":C.muted;
-          chip.style.border=`1px solid ${on?C.lime:C.border}`;
-          tx(chip,(on?"✓ ":"· ")+label);
-          chip.title=(on?"Enabled":"Disabled")+" - click to "+(on?"disable":"enable");
+          chip.style.background=dis?(on?C.bg3:C.bg2):(on?C.lime:C.bg2);
+          chip.style.color=dis?C.muted:(on?"#111":C.muted);
+          chip.style.border=`1px solid ${dis?(on?C.border:C.border):(on?C.lime:C.border)}`;
+          chip.style.cursor=dis?"not-allowed":"pointer";
+          tx(chip,(on?"✓ ":"· ")+label+(dis?" ⚠":""));
+          chip.title=dis?(o.disabledTip||label+" is not available right now"):((on?"Enabled":"Disabled")+" - click to "+(on?"disable":"enable"));
         };
         chip.onclick=()=>{
+          if(o.disabled&&o.disabled()) return;
           S[key]=!S[key];
+          if(S[key]&&Array.isArray(o.excl)) o.excl.forEach(k=>{ S[k]=false; });
           S.quality=_matchQ();
           qualDD.set(_QL[S.quality]);
-          _sync();persist();
+          _syncOptChips();persist();
           if(typeof _syncLiveToggle==="function") _syncLiveToggle();
         };
         _sync();
@@ -2899,7 +2920,27 @@ function persist(){
         return chip;
       };
       const _syncOptChips=()=>_optChipSyncs.forEach(f=>f());
-      optRow.append(_mkOptChip("optSol","SolAttn"),_mkOptChip("optSage","SageAttn"));
+      let _kitchenAvail=null;
+      const _checkKitchenAvail=async()=>{
+        try{
+          const r=await fetch("/object_info/ModelAttentionBackend");
+          const d=await r.json();
+          const n=d.ModelAttentionBackend;
+          const combo=(n&&n.input&&n.input.required&&n.input.required.attention)?n.input.required.attention[0]:[];
+          _kitchenAvail=Array.isArray(combo)&&combo.includes("comfy kitchen attention");
+        }catch(e){ _kitchenAvail=false; }
+        _syncOptChips();
+      };
+      _checkKitchenAvail();
+      optRow.append(
+        _mkOptChip("optSol","SolAttn"),
+        _mkOptChip("optSage","SageAttn",{excl:["optKitchen"]}),
+        _mkOptChip("optKitchen","Kitchen",{
+          excl:["optSage"],
+          disabled:()=>_kitchenAvail===false,
+          disabledTip:"Comfy Kitchen attention is not available - install the comfy-kitchen pip package and restart ComfyUI.",
+        })
+      );
       const SAMPLERS=["euler","euler_cfg_pp","euler_ancestral","euler_ancestral_cfg_pp","heun","heunpp2","exp_heun_2_x0","exp_heun_2_x0_sde","dpm_2","dpm_2_ancestral","lms","dpm_fast","dpm_adaptive","dpmpp_2s_ancestral","dpmpp_2s_ancestral_cfg_pp","dpmpp_sde","dpmpp_sde_gpu","dpmpp_2m","dpmpp_2m_cfg_pp","dpmpp_2m_sde","dpmpp_2m_sde_gpu","dpmpp_2m_sde_heun","dpmpp_2m_sde_heun_gpu","dpmpp_3m_sde","dpmpp_3m_sde_gpu","ddpm","lcm","ipndm","ipndm_v","deis","res_multistep","res_multistep_cfg_pp","res_multistep_ancestral","res_multistep_ancestral_cfg_pp","gradient_estimation","gradient_estimation_cfg_pp","er_sde","seeds_2","seeds_3","sa_solver","sa_solver_pece","ddim","uni_pc","uni_pc_bh2","legacy_rk","rk","rk_beta","deis_3m_ode","deis_2m_ode","deis_3m","deis_2m","res_6s_ode","res_5s_ode","res_3s_ode","res_2s_ode","res_3m_ode","res_2m_ode","res_6s","res_5s","res_3s","res_2s","res_3m","res_2m"];
       const SCHEDULERS=["simple","sgm_uniform","karras","exponential","ddim_uniform","beta","normal","linear_quadratic","kl_optimal","bong_tangent","beta57"];
       const samplerRow=mk("div",{display:"flex",flexDirection:"column",gap:"3px"});
@@ -2941,7 +2982,7 @@ function persist(){
         S.modeSettings[S.mode]={
           prompt:S.prompt,steps:S.steps,quality:S.quality,resolution:S.resolution,duration:S.duration,
           loras:JSON.parse(JSON.stringify(S.loras)),
-          optSol:S.optSol,optSage:S.optSage,
+          optSol:S.optSol,optSage:S.optSage,optKitchen:S.optKitchen,
         };
       };
       const _restoreModeState=()=>{
@@ -2954,9 +2995,12 @@ function persist(){
           if(ms.quality==="custom"){
             if(ms.optSol!==undefined) S.optSol=ms.optSol;
             if(ms.optSage!==undefined) S.optSage=ms.optSage;
+            if(ms.optKitchen!==undefined) S.optKitchen=ms.optKitchen;
+            const f=resolveQualityFlags(S.optSol,S.optSage,S.optKitchen);
+            S.optSol=f.sol;S.optSage=f.sage;S.optKitchen=f.kitchen;
           } else {
-            const f=_QF[ms.quality]||{sol:false,sage:false};
-            S.optSol=f.sol;S.optSage=f.sage;
+            const f=_QF[ms.quality]||{sol:false,sage:false,kitchen:false};
+            S.optSol=f.sol;S.optSage=f.sage;S.optKitchen=f.kitchen;
           }
           _syncOptChips();
           qualDD.set(_QL[ms.quality]||"Custom");
@@ -2964,7 +3008,7 @@ function persist(){
         if(typeof _syncLiveToggle==="function") _syncLiveToggle();
         if(ms.resolution!==undefined){ S.resolution=ms.resolution; resDD.set(ms.resolution); _updResCustom(); }
         if(ms.duration!==undefined){ S.duration=ms.duration; durNI._inp.value=String(ms.duration); _updateFramesLabel(); }
-        if(Array.isArray(ms.loras)){ const named=ms.loras.filter(l=>l&&l.name); S.loras=named.concat([{name:"",strength:1,enabled:true}]); _renderLoras(); }
+        if(Array.isArray(ms.loras)){ const named=ms.loras.filter(l=>l&&l.name); S.loras=named.concat([{name:"",strength:1,enabled:false}]); _renderLoras(); }
         if(Array.isArray(ms.refImages)) S.refImages=ms.refImages.slice();
         if(Array.isArray(ms.refVideos)) S.refVideos=ms.refVideos.map(v=>(typeof v==="string")?{name:v,useAudio:false}:{name:(v&&v.name)||"",useAudio:!!(v&&v.useAudio)});
         if(Array.isArray(ms.refAudios)) S.refAudios=ms.refAudios.slice();
@@ -3011,7 +3055,7 @@ function persist(){
       addLoraBtn.onmouseleave=()=>{addLoraBtn.style.borderColor="rgba(var(--h3accent-rgb),.4)";addLoraBtn.style.color="rgba(var(--h3accent-rgb),.7)";};
       addLoraBtn.onclick=()=>{
         if(S.loras.filter(l=>l&&l.name).length>=10) return;
-        S.loras.push({name:"",strength:1,enabled:true});
+        S.loras.push({name:"",strength:1,enabled:false});
         persist();
         _renderLoras();
       };
@@ -3024,7 +3068,10 @@ function persist(){
         S.loras.forEach((lr,idx)=>{
           const row=mk("div",{display:"flex",alignItems:"center",gap:"6px"});
           const dd=DD(_M.loras.length?_M.loras:["none"],lr.name||"none",v=>{
-            lr.name=v==="none"?"":v;persist();
+            const wasEmpty=!lr.name;
+            lr.name=v==="none"?"":v;
+            if(wasEmpty&&lr.name) lr.enabled=true;
+            persist();
             _renderLoras();
           });
           const stNI=NI("",lr.strength,-3,3,0.1,v=>{lr.strength=Math.round(v*100)/100;persist();},"52px");
@@ -3036,7 +3083,7 @@ function persist(){
           tx(rm,"x");
           rm.onclick=()=>{
             S.loras.splice(idx,1);
-            if(!S.loras.length) S.loras=[{name:"",strength:1,enabled:true}];
+            if(!S.loras.length) S.loras=[{name:"",strength:1,enabled:false}];
             persist();
             _renderLoras();
           };
@@ -3963,7 +4010,8 @@ function persist(){
           wf["10"]=wf[ts];delete wf[ts];
           wf["9"].inputs.steps=S.steps||6;
         } else {
-          const useSol=!!S.optSol, useSage=!!S.optSage;
+          const f=resolveQualityFlags(S.optSol,S.optSage,S.optKitchen);
+          const useSol=f.sol, useSage=f.sage, useKitchen=f.kitchen;
           const insSol=()=>{
             const sol=newId();
             wf[sol]={class_type:"SolAttnPatch",inputs:{
@@ -3978,7 +4026,17 @@ function persist(){
             wf[sage]={class_type:"MiniMaxH3MemoryEfficientSageAttentionPatch",inputs:{model:modelSrc},_meta:{title:"SageAttn"}};
             modelSrc=[sage,0];
           };
-          if(useSage&&useSol){
+          const insKitchen=()=>{
+            const kitchen=newId();
+            wf[kitchen]={class_type:"ModelAttentionBackend",inputs:{model:modelSrc,attention:"comfy kitchen attention"},_meta:{title:"Kitchen"}};
+            modelSrc=[kitchen,0];
+          };
+          if(useKitchen){
+            // Kitchen replaces the attention function; Sol layers on top of it.
+            if(useSage) insSage(); // defensive - UI never allows this pair
+            insKitchen();
+            if(useSol) insSol();
+          } else if(useSage&&useSol){
             // Sol + Sage together: follow the tested ordering (sage -> sol)
             insSage();insSol();
           } else {
@@ -4346,7 +4404,8 @@ function persist(){
           modelSrc=[id,0];
         });
         {
-          const useSol=!!S.optSol, useSage=!!S.optSage;
+          const f=resolveQualityFlags(S.optSol,S.optSage,S.optKitchen);
+          const useSol=f.sol, useSage=f.sage, useKitchen=f.kitchen;
           const insSol=()=>{
             const sol=newId();
             wf[sol]={class_type:"SolAttnPatch",inputs:{
@@ -4361,7 +4420,16 @@ function persist(){
             wf[sage]={class_type:"MiniMaxH3MemoryEfficientSageAttentionPatch",inputs:{model:modelSrc},_meta:{title:"SageAttn"}};
             modelSrc=[sage,0];
           };
-          if(useSage&&useSol){
+          const insKitchen=()=>{
+            const kitchen=newId();
+            wf[kitchen]={class_type:"ModelAttentionBackend",inputs:{model:modelSrc,attention:"comfy kitchen attention"},_meta:{title:"Kitchen"}};
+            modelSrc=[kitchen,0];
+          };
+          if(useKitchen){
+            if(useSage) insSage(); // defensive - UI never allows this pair
+            insKitchen();
+            if(useSol) insSol();
+          } else if(useSage&&useSol){
             insSage();insSol();
           } else {
             if(useSol) insSol();

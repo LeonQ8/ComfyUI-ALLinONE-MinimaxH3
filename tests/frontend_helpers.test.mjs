@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { aspect, sizeOf, sameSize, orientRes, fitResolutionToAspect, resolveFitPrimary, imgProfileShort, imgAspectName, viewQuery, inputFileExists, clampImageMP, planImageCanvas, IMG_MAX_MP, IMG_MIN_MP, IMG_ASPECT_RATIOS } from "../web/h3_helpers.mjs";
+import { aspect, sizeOf, sameSize, orientRes, fitResolutionToAspect, resolveFitPrimary, imgProfileShort, imgAspectName, viewQuery, inputFileExists, clampImageMP, planImageCanvas, IMG_MAX_MP, IMG_MIN_MP, IMG_ASPECT_RATIOS, resolveQualityFlags, matchQualityPreset, QUALITY_PRESET_FLAGS } from "../web/h3_helpers.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, "..");
@@ -426,6 +426,57 @@ function collectLocalDecls(bundle) {
   }
   return decls;
 }
+
+test("resolveQualityFlags: preset flags stay valid for every combo", () => {
+  assert.deepEqual(resolveQualityFlags(false, false, false), { sol: false, sage: false, kitchen: false });
+  assert.deepEqual(resolveQualityFlags(true, false, false), { sol: true, sage: false, kitchen: false });
+  assert.deepEqual(resolveQualityFlags(false, true, false), { sol: false, sage: true, kitchen: false });
+  assert.deepEqual(resolveQualityFlags(false, false, true), { sol: false, sage: false, kitchen: true });
+  assert.deepEqual(resolveQualityFlags(true, false, true), { sol: true, sage: false, kitchen: true });
+});
+
+test("resolveQualityFlags: kitchen and sage can never run together", () => {
+  assert.deepEqual(resolveQualityFlags(true, true, true), { sol: true, sage: false, kitchen: true });
+  assert.deepEqual(resolveQualityFlags(false, true, true), { sol: false, sage: false, kitchen: true });
+  assert.deepEqual(resolveQualityFlags(true, true, false), { sol: true, sage: true, kitchen: false });
+});
+
+test("matchQualityPreset: preset combos resolve to their keys", () => {
+  assert.equal(matchQualityPreset({ sol: true, sage: false, kitchen: false }), "speed");
+  assert.equal(matchQualityPreset({ sol: true, sage: false, kitchen: false }, QUALITY_PRESET_FLAGS, ["balanced"]), "balanced");
+  assert.equal(matchQualityPreset({ sol: false, sage: true, kitchen: false }), "high");
+  assert.equal(matchQualityPreset({ sol: false, sage: false, kitchen: false }), "native");
+});
+
+test("matchQualityPreset: kitchen mixes resolve to custom", () => {
+  assert.equal(matchQualityPreset({ sol: false, sage: false, kitchen: true }), "custom");
+  assert.equal(matchQualityPreset({ sol: true, sage: false, kitchen: true }), "custom");
+  assert.equal(matchQualityPreset({ sol: true, sage: true, kitchen: false }), "custom");
+});
+
+test("matchQualityPreset: mutual exclusion normalizes before matching", () => {
+  assert.equal(matchQualityPreset({ sol: false, sage: true, kitchen: true }), "custom");
+  assert.equal(matchQualityPreset({ sol: false, sage: true, kitchen: true }, QUALITY_PRESET_FLAGS, ["high", "native"]), "custom");
+});
+
+test("matchQualityPreset: nullish flags are treated as off", () => {
+  assert.equal(matchQualityPreset(null), "native");
+  assert.equal(matchQualityPreset({}), "native");
+  assert.equal(matchQualityPreset({ sol: null, sage: undefined, kitchen: 0 }), "native");
+});
+
+test("matchQualityPreset: every preset is matchable from its own flags", () => {
+  for (const key of Object.keys(QUALITY_PRESET_FLAGS)) {
+    if (key === "turbo") continue;
+    const p = QUALITY_PRESET_FLAGS[key];
+    const hit = matchQualityPreset({ sol: p.sol, sage: p.sage, kitchen: p.kitchen });
+    const q = QUALITY_PRESET_FLAGS[hit];
+    assert.ok(hit !== "custom", `${key} must match a preset`);
+    assert.equal(q.sol, p.sol, key);
+    assert.equal(q.sage, p.sage, key);
+    assert.equal(q.kitchen, p.kitchen, key);
+  }
+});
 
 function guardOffenders(bundle) {
   const decls = collectLocalDecls(bundle);

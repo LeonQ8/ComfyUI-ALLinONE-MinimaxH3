@@ -2,6 +2,10 @@
 
 Newest first.
 
+## 0.7.0 (2026-08-19)
+
+ - Comfy Kitchen attention is now a third toggle chip under Quality. It runs alone or together with SolAttn, and never with SageAttention. Needs `pip install comfy-kitchen` and a restart.
+
 ## 0.6.4 (2026-08-19)
 
  - Updated the tested node packs for ComfyUI 0.33.0: KJNodes, Motion Context, Turbo and H3 Studio.

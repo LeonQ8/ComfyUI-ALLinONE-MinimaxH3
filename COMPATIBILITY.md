@@ -25,6 +25,7 @@ These are the commit SHAs the node was developed against. You don't need to pin 
 | ComfyUI-MiniMax-H3-Turbo | [GitHub](https://github.com/Larryvrh/ComfyUI-MiniMax-H3-Turbo) | `4274783` | Turbo preset |
 | ComfyUI-SolAttn_triton | [GitHub](https://github.com/kijai/ComfyUI-SolAttn_triton) | `842c4ea` | Speed preset |
 | comfyui-kjnodes | [GitHub](https://github.com/kijai/ComfyUI-KJNodes) | `3f20054` | High Quality preset (SageAttention) / Live Preview |
+| comfy-kitchen (pip) | [GitHub](https://github.com/Comfy-Org/comfy-kitchen) | 0.2.31 | Kitchen chip (ModelAttentionBackend) |
 | ComfyUI-MiniMax-H3-Studio | [GitHub](https://github.com/thaakeno/ComfyUI-MiniMax-H3-Studio) | `99a868e` | Image mode |
 
 ## Known issues on newer ComfyUI cores
