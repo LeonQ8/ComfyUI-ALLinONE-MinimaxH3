@@ -7,6 +7,8 @@ import shutil
 import subprocess
 import hashlib
 import threading
+import tempfile
+import zipfile
 from pathlib import Path
 
 import folder_paths
@@ -389,6 +391,78 @@ def _scan_output_videos():
     return found
 
 
+def _favorite_matches(video, favs):
+    """True when a scanned video is a favorite. Favorites are stored as media
+    keys (`type|subfolder|filename`); a legacy bare-filename entry still matches
+    so favorites saved before the media-key migration keep working."""
+    return video["media_key"] in favs or video["filename"] in favs
+
+
+def _bulk_delete_targets(videos, mode, selected=None, favs=None):
+    """Resolve the videos a bulk delete should remove. Returns None for an
+    unknown mode. `selected` is the client's list of {subfolder, filename}.
+    Matching uses the same subfolder strings the gallery serves, so files with
+    duplicate names in different subfolders never collide."""
+    if mode == "all":
+        return list(videos)
+    if mode == "non_favorites":
+        favs = favs or set()
+        return [v for v in videos if not _favorite_matches(v, favs)]
+    if mode == "selected":
+        keys = {
+            (str(i.get("subfolder", "")), str(i.get("filename", "")))
+            for i in (selected or []) if isinstance(i, dict)
+        }
+        return [v for v in videos if (v["subfolder"], v["filename"]) in keys]
+    return None
+
+
+def _archive_entry_name(item):
+    """Path inside the favorites ZIP: subfolder (minus the node's own prefix)
+    plus the filename, forward-slashed so the archive is platform-neutral."""
+    sub = str(item.get("subfolder", "")).replace("\\", "/").strip("/")
+    if sub == SUBFOLDER:
+        sub = ""
+    elif sub.startswith(SUBFOLDER + "/"):
+        sub = sub[len(SUBFOLDER) + 1:]
+    return "/".join(part for part in (sub, str(item.get("filename", ""))) if part)
+
+
+def _build_favorites_zip(items):
+    """Zip the given scanned outputs into a temp file and return its path. The
+    caller streams the file to the client and removes it afterwards; the temp
+    name is unique per call so concurrent downloads never collide."""
+    fd, archive_path = tempfile.mkstemp(prefix="h3_favorites_", suffix=".zip")
+    os.close(fd)
+    try:
+        with zipfile.ZipFile(archive_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+            for item in items:
+                path = _safe_join(_get_output_dir(), item["subfolder"], item["filename"])
+                if not os.path.isfile(path):
+                    continue
+                archive.write(path, _archive_entry_name(item))
+    except Exception:
+        try:
+            os.remove(archive_path)
+        except OSError:
+            pass
+        raise
+    return archive_path
+
+
+def _resolve_download_items(videos, mode, selected=None, favs=None):
+    """Resolve which scanned videos a download should zip. Returns None for an
+    unknown mode. `favorites` zips every favorite; `selected` zips the client's
+    list of {subfolder, filename} using the same matching as bulk delete."""
+    if mode == "favorites":
+        favs = favs or set()
+        return [v for v in videos if _favorite_matches(v, favs)]
+    if mode == "selected":
+        targets = _bulk_delete_targets(videos, "selected", selected)
+        return targets if targets is not None else []
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
@@ -763,8 +837,89 @@ async def delete_file(request):
         if not os.path.exists(vpath):
             return web.json_response({"ok": False, "error": "file not found"}, status=404)
         os.remove(vpath)
+        with _favorite_lock:
+            favs = _load_favorites()
+            key = _media_key(filename, subfolder)
+            for stale in (key, Path(str(filename)).name):
+                favs.discard(stale)
+            _save_favorites(favs)
         return web.json_response({"ok": True})
     except Exception as e:
+        return web.json_response({"ok": False, "error": str(e)}, status=500)
+
+
+@PromptServer.instance.routes.post("/h3one/delete_bulk")
+async def delete_bulk(request):
+    try:
+        data = await request.json()
+        mode = str(data.get("mode", ""))
+        videos = _scan_output_videos()
+        with _favorite_lock:
+            favs = _load_favorites()
+            targets = _bulk_delete_targets(videos, mode, data.get("items"), favs)
+            if targets is None:
+                return web.json_response({"ok": False, "error": "invalid delete mode"}, status=400)
+            deleted = 0
+            errors = []
+            for item in targets:
+                try:
+                    path = _safe_join(_get_output_dir(), item["subfolder"], item["filename"])
+                    if not os.path.isfile(path):
+                        continue
+                    os.remove(path)
+                    deleted += 1
+                    favs.discard(item["media_key"])
+                    favs.discard(item["filename"])
+                except Exception as e:
+                    errors.append(f'{item["filename"]}: {e}')
+            _save_favorites(favs)
+        return web.json_response({"ok": True, "deleted": deleted, "errors": errors})
+    except Exception as e:
+        return web.json_response({"ok": False, "error": str(e)}, status=500)
+
+
+@PromptServer.instance.routes.post("/h3one/download")
+async def download(request):
+    """Zip the requested outputs and stream them to the client. `mode: selected`
+    zips the client's list of {subfolder, filename}; `mode: favorites` zips every
+    favorited output. The archive is built in a temp file and removed after it is
+    streamed, so concurrent downloads never collide."""
+    archive_path = None
+    try:
+        data = await request.json()
+        mode = str(data.get("mode", "selected"))
+        videos = _scan_output_videos()
+        with _favorite_lock:
+            favs = _load_favorites()
+        items = _resolve_download_items(videos, mode, data.get("items"), favs)
+        if items is None:
+            return web.json_response({"ok": False, "error": "invalid download mode"}, status=400)
+        if not items:
+            return web.json_response({"ok": False, "error": "nothing to download"}, status=404)
+        archive_path = _build_favorites_zip(items)
+        response = web.StreamResponse(headers={
+            "Content-Type": "application/zip",
+            "Content-Disposition": 'attachment; filename="h3_outputs.zip"',
+        })
+        await response.prepare(request)
+        try:
+            with open(archive_path, "rb") as archive:
+                while True:
+                    chunk = archive.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    await response.write(chunk)
+            await response.write_eof()
+        finally:
+            os.remove(archive_path)
+            archive_path = None
+        return response
+    except Exception as e:
+        if archive_path:
+            try:
+                os.remove(archive_path)
+            except OSError:
+                pass
         return web.json_response({"ok": False, "error": str(e)}, status=500)
 
 

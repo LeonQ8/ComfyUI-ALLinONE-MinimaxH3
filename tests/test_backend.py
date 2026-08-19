@@ -464,6 +464,214 @@ class TestGalleryMigration(_NodesTestBase):
         self.assertFalse(vids["b.mp4"]["favorite"])
 
 
+class TestBulkDeleteTargets(_NodesTestBase):
+    def _video(self, filename, subfolder):
+        return {"filename": filename, "subfolder": subfolder,
+                "media_key": self.nodes._media_key(filename, subfolder)}
+
+    def test_all_returns_every_video(self):
+        videos = [self._video("a.mp4", "one-node-minimax-h3"),
+                  self._video("b.mp4", "one-node-minimax-h3/chain")]
+        targets = self.nodes._bulk_delete_targets(videos, "all")
+        self.assertEqual(len(targets), 2)
+
+    def test_non_favorites_filters_by_media_key(self):
+        videos = [self._video("a.mp4", "one-node-minimax-h3"),
+                  self._video("b.mp4", "one-node-minimax-h3")]
+        targets = self.nodes._bulk_delete_targets(
+            videos, "non_favorites", favs={"output|one-node-minimax-h3|a.mp4"})
+        self.assertEqual([t["filename"] for t in targets], ["b.mp4"])
+
+    def test_non_favorites_matches_legacy_bare_filename(self):
+        videos = [self._video("a.mp4", "one-node-minimax-h3")]
+        targets = self.nodes._bulk_delete_targets(
+            videos, "non_favorites", favs={"a.mp4"})
+        self.assertEqual(targets, [])
+
+    def test_selected_matches_subfolder_and_filename(self):
+        videos = [self._video("a.mp4", "one-node-minimax-h3"),
+                  self._video("a.mp4", "one-node-minimax-h3/chain")]
+        targets = self.nodes._bulk_delete_targets(
+            videos, "selected",
+            [{"subfolder": "one-node-minimax-h3", "filename": "a.mp4"}])
+        self.assertEqual([t["subfolder"] for t in targets], ["one-node-minimax-h3"])
+
+    def test_unknown_mode_returns_none(self):
+        self.assertIsNone(self.nodes._bulk_delete_targets([], "bogus"))
+
+
+class TestArchiveEntryName(_NodesTestBase):
+    def test_strips_node_subfolder_prefix(self):
+        item = {"filename": "a.mp4", "subfolder": "one-node-minimax-h3/chain"}
+        self.assertEqual(self.nodes._archive_entry_name(item), "chain/a.mp4")
+
+    def test_bare_node_subfolder_becomes_flat(self):
+        item = {"filename": "a.mp4", "subfolder": "one-node-minimax-h3"}
+        self.assertEqual(self.nodes._archive_entry_name(item), "a.mp4")
+
+    def test_unknown_subfolder_kept(self):
+        item = {"filename": "a.mp4", "subfolder": "other/deep"}
+        self.assertEqual(self.nodes._archive_entry_name(item), "other/deep/a.mp4")
+
+    def test_normalizes_backslashes(self):
+        item = {"filename": "a.mp4", "subfolder": "one-node-minimax-h3\\chain"}
+        self.assertEqual(self.nodes._archive_entry_name(item), "chain/a.mp4")
+
+
+class TestBuildFavoritesZip(_NodesTestBase):
+    def _make_output(self, *files):
+        out_root = Path(self.nodes._get_output_dir())
+        sub = out_root / "one-node-minimax-h3"
+        sub.mkdir(parents=True, exist_ok=True)
+        for rel in files:
+            full = sub / rel
+            full.parent.mkdir(parents=True, exist_ok=True)
+            full.write_bytes(b"frame data")
+
+    def test_zips_existing_files_with_flat_names(self):
+        self._make_output("a.mp4", "chain/b.mp4")
+        items = self.nodes._scan_output_videos()
+        import zipfile
+        try:
+            path = self.nodes._build_favorites_zip(items)
+            with zipfile.ZipFile(path) as archive:
+                names = sorted(archive.namelist())
+            self.assertEqual(names, ["a.mp4", "chain/b.mp4"])
+        finally:
+            os.remove(path)
+
+    def test_skips_files_that_vanish_mid_zip(self):
+        self._make_output("a.mp4")
+        items = self.nodes._scan_output_videos()
+        os.remove(Path(self.nodes._get_output_dir()) / "one-node-minimax-h3" / "a.mp4")
+        import zipfile
+        try:
+            path = self.nodes._build_favorites_zip(items)
+            with zipfile.ZipFile(path) as archive:
+                self.assertEqual(archive.namelist(), [])
+        finally:
+            os.remove(path)
+
+
+class TestDeleteFileEvictsFavorites(_NodesTestBase):
+    def _make_output(self, *files):
+        out_root = Path(self.nodes._get_output_dir())
+        sub = out_root / "one-node-minimax-h3"
+        sub.mkdir(parents=True, exist_ok=True)
+        for rel in files:
+            full = sub / rel
+            full.parent.mkdir(parents=True, exist_ok=True)
+            full.write_bytes(b"\x00")
+
+    def test_delete_removes_favorite_by_media_key(self):
+        self._make_output("a.mp4")
+        self.nodes._save_favorites({"output|one-node-minimax-h3|a.mp4"})
+        _run(self.nodes.delete_file(_FakeRequest(
+            {"filename": "a.mp4", "subfolder": "one-node-minimax-h3"})))
+        self.assertEqual(self.nodes._load_favorites(), set())
+        self.assertFalse((Path(self.nodes._get_output_dir())
+                          / "one-node-minimax-h3" / "a.mp4").exists())
+
+    def test_delete_keeps_other_favorites(self):
+        self._make_output("a.mp4", "b.mp4")
+        self.nodes._save_favorites({"output|one-node-minimax-h3|a.mp4",
+                                    "output|one-node-minimax-h3|b.mp4"})
+        _run(self.nodes.delete_file(_FakeRequest(
+            {"filename": "a.mp4", "subfolder": "one-node-minimax-h3"})))
+        self.assertEqual(self.nodes._load_favorites(), {"output|one-node-minimax-h3|b.mp4"})
+
+
+class TestDeleteBulkRoute(_NodesTestBase):
+    def _make_output(self, *files):
+        out_root = Path(self.nodes._get_output_dir())
+        sub = out_root / "one-node-minimax-h3"
+        sub.mkdir(parents=True, exist_ok=True)
+        for rel in files:
+            full = sub / rel
+            full.parent.mkdir(parents=True, exist_ok=True)
+            full.write_bytes(b"\x00")
+
+    def _exists(self, *rel):
+        return (Path(self.nodes._get_output_dir()) / "one-node-minimax-h3"
+                / Path(*rel)).exists()
+
+    def test_selected_deletes_only_those(self):
+        self._make_output("a.mp4", "b.mp4", "chain/c.mp4")
+        resp = _run(self.nodes.delete_bulk(_FakeRequest({
+            "mode": "selected",
+            "items": [{"subfolder": "one-node-minimax-h3", "filename": "a.mp4"}],
+        })))
+        self.assertTrue(resp.kwargs["data"]["ok"])
+        self.assertEqual(resp.kwargs["data"]["deleted"], 1)
+        self.assertFalse(self._exists("a.mp4"))
+        self.assertTrue(self._exists("b.mp4"))
+        self.assertTrue(self._exists("chain", "c.mp4"))
+
+    def test_selected_does_not_collide_duplicate_names(self):
+        self._make_output("a.mp4", "chain/a.mp4")
+        _run(self.nodes.delete_bulk(_FakeRequest({
+            "mode": "selected",
+            "items": [{"subfolder": "one-node-minimax-h3", "filename": "a.mp4"}],
+        })))
+        self.assertFalse(self._exists("a.mp4"))
+        self.assertTrue(self._exists("chain", "a.mp4"))
+
+    def test_all_deletes_everything_and_clears_favorites(self):
+        self._make_output("a.mp4", "b.mp4")
+        self.nodes._save_favorites({"output|one-node-minimax-h3|a.mp4"})
+        resp = _run(self.nodes.delete_bulk(_FakeRequest({"mode": "all"})))
+        self.assertEqual(resp.kwargs["data"]["deleted"], 2)
+        self.assertFalse(self._exists("a.mp4"))
+        self.assertFalse(self._exists("b.mp4"))
+        self.assertEqual(self.nodes._load_favorites(), set())
+
+    def test_non_favorites_keeps_favorites(self):
+        self._make_output("a.mp4", "b.mp4")
+        self.nodes._save_favorites({"output|one-node-minimax-h3|a.mp4"})
+        resp = _run(self.nodes.delete_bulk(_FakeRequest({"mode": "non_favorites"})))
+        self.assertEqual(resp.kwargs["data"]["deleted"], 1)
+        self.assertTrue(self._exists("a.mp4"))
+        self.assertFalse(self._exists("b.mp4"))
+        self.assertEqual(self.nodes._load_favorites(), {"output|one-node-minimax-h3|a.mp4"})
+
+    def test_invalid_mode_rejected(self):
+        resp = _run(self.nodes.delete_bulk(_FakeRequest({"mode": "bogus"})))
+        self.assertFalse(resp.kwargs["data"]["ok"])
+
+
+class TestResolveDownloadItems(_NodesTestBase):
+    def _video(self, filename, subfolder):
+        return {"filename": filename, "subfolder": subfolder,
+                "media_key": self.nodes._media_key(filename, subfolder)}
+
+    def test_selected_resolves_client_items(self):
+        videos = [self._video("a.mp4", "one-node-minimax-h3"),
+                  self._video("b.mp4", "one-node-minimax-h3")]
+        items = self.nodes._resolve_download_items(
+            videos, "selected",
+            [{"subfolder": "one-node-minimax-h3", "filename": "a.mp4"}])
+        self.assertEqual([v["filename"] for v in items], ["a.mp4"])
+
+    def test_selected_does_not_collide_duplicate_names(self):
+        videos = [self._video("a.mp4", "one-node-minimax-h3"),
+                  self._video("a.mp4", "one-node-minimax-h3/chain")]
+        items = self.nodes._resolve_download_items(
+            videos, "selected",
+            [{"subfolder": "one-node-minimax-h3", "filename": "a.mp4"}])
+        self.assertEqual([v["subfolder"] for v in items], ["one-node-minimax-h3"])
+
+    def test_favorites_matches_media_key_and_legacy(self):
+        videos = [self._video("a.mp4", "one-node-minimax-h3"),
+                  self._video("b.mp4", "one-node-minimax-h3")]
+        items = self.nodes._resolve_download_items(
+            videos, "favorites",
+            favs={"output|one-node-minimax-h3|a.mp4", "b.mp4"})
+        self.assertEqual([v["filename"] for v in items], ["a.mp4", "b.mp4"])
+
+    def test_unknown_mode_returns_none(self):
+        self.assertIsNone(self.nodes._resolve_download_items([], "bogus"))
+
+
 class TestSetOutputPersistsMediaKey(_NodesTestBase):
     def test_set_output_writes_media_key(self):
         _run(self.nodes.set_output(_FakeRequest({

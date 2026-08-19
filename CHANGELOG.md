@@ -2,6 +2,14 @@
 
 Newest first.
 
+## 0.7.2 (2026-08-19)
+
+ - The Library now has bulk management: pick Select to tick several videos & images.
+ - Download ZIP saves the ticked outputs into one archive.
+ - Favorite and unfavorite videos straight from a Library card with the star button.
+ - The Library header shows how many videos and images it holds, plus how many are selected while ticking.
+ - The Outputs strip can be collapsed to give the preview more room.
+
 ## 0.7.1 (2026-08-19)
 
  - Extend mode now adds about the number of seconds you ask for. Extending a 5 second clip by 5 seconds gives roughly 10 seconds instead of growing to 16 or more, and re-extending the result keeps adding about the same amount each time.
