@@ -19,6 +19,13 @@ import types
 import unittest
 from pathlib import Path
 
+try:
+    import torch
+    _HAS_TORCH = True
+except Exception:  # pragma: no cover - CI hosts may not ship torch
+    torch = None
+    _HAS_TORCH = False
+
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 NODES_PATH = REPO_ROOT / "nodes.py"
@@ -474,6 +481,67 @@ class TestSetOutputPersistsMediaKey(_NodesTestBase):
         })))
         items = self.nodes._load_history()
         self.assertEqual(items[0]["media_key"], "output|chain|video.mp4")
+
+
+class _FakeWave:
+    ndim = 3
+
+    def __init__(self, n):
+        self.shape = (1, 2, n)
+
+
+class TestAudioJoinSmooth(_NodesTestBase):
+    def _node(self):
+        return self.nodes.H3AudioJoinSmooth()
+
+    def _img(self, frames):
+        return type("Img", (), {"shape": (frames, 8, 8, 3)})()
+
+    def test_non_dict_audio_passes_through(self):
+        out = self._node().smooth(None, self._img(100), 24.0, self._img(50), 24.0, 0.25)
+        self.assertIsNone(out[0])
+
+    def test_audio_without_waveform_passes_through(self):
+        out = self._node().smooth({"sample_rate": 240}, self._img(100), 24.0, self._img(50), 24.0, 0.25)
+        self.assertEqual(out[0], {"sample_rate": 240})
+
+    def test_empty_continuation_passes_through(self):
+        audio = {"waveform": _FakeWave(1500), "sample_rate": 240}
+        out = self._node().smooth(audio, self._img(100), 24.0, self._img(0), 24.0, 0.25)
+        self.assertIs(out[0], audio)
+
+    def test_fade_zero_passes_through(self):
+        audio = {"waveform": _FakeWave(1500), "sample_rate": 240}
+        out = self._node().smooth(audio, self._img(100), 24.0, self._img(50), 24.0, 0.0)
+        self.assertIs(out[0], audio)
+
+    @unittest.skipUnless(_HAS_TORCH, "torch not available")
+    def test_crossfade_blends_join_and_preserves_length(self):
+        sr = 240
+        src, cont = 100, 50
+        total = int(round((src + cont) / 24.0 * sr))
+        join = int(round(src / 24.0 * sr))
+        xf = int(round(0.1 * sr))  # 24 samples
+        wave = torch.full((1, 2, total), 1.0)
+        wave[..., join:] = 2.0
+        audio = {"waveform": wave, "sample_rate": sr}
+        out = self._node().smooth(audio, self._img(src), 24.0, self._img(cont), 24.0, 0.1)
+        result = out[0]["waveform"]
+        self.assertEqual(result.shape[-1], total, "length must stay AV-synced")
+        self.assertAlmostEqual(float(result[0, 0, join - xf - 10]), 1.0, places=4)
+        self.assertAlmostEqual(float(result[0, 0, total - 100]), 2.0, places=4)
+        mid = result[0, 0, join - xf + xf // 2].item()
+        self.assertTrue(1.0 < mid < 2.0, f"join should be blended, got {mid}")
+
+    @unittest.skipUnless(_HAS_TORCH, "torch not available")
+    def test_source_fps_normalization_moves_join(self):
+        sr = 240
+        src, cont = 100, 50
+        total = int(round((int(round(100 * 24.0 / 30.0)) + cont) / 24.0 * sr))
+        wave = torch.zeros((1, 2, total))
+        audio = {"waveform": wave, "sample_rate": sr}
+        out = self._node().smooth(audio, self._img(src), 30.0, self._img(cont), 24.0, 0.1)
+        self.assertEqual(out[0]["waveform"].shape[-1], total)
 
 
 if __name__ == "__main__":

@@ -8,6 +8,7 @@ Newest first.
  - Extend mode pins a shorter tail of the source video as context, so the join keeps more of the original quality and sound.
  - Extend matches the source video's resolution automatically, so the new part keeps the same sharpness and framing as the original instead of looking cut and lower quality.
  - New Auto stage result toggle in Extend mode. Off keeps the same source video for every run so the length stays predictable.
+ - The sound at the extend join is now smoothed with a short crossfade, so the cut between the first clip and the extended part no longer clicks.
 
 ## 0.7.0 (2026-08-19)
 

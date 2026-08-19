@@ -1018,5 +1018,86 @@ class H3AudioTrim:
         return (audio,)
 
 
-NODE_CLASS_MAPPINGS = {"H3OneNode": H3OneNode, "H3CacheBust": H3CacheBust, "H3IdentityAnchor": H3IdentityAnchor, "H3AudioTrim": H3AudioTrim}
-NODE_DISPLAY_NAME_MAPPINGS = {"H3OneNode": "ALL in ONE MiniMaxH3", "H3CacheBust": "H3 Cache Fingerprint (internal)", "H3IdentityAnchor": "H3 Identity Anchor (internal)", "H3AudioTrim": "H3 Audio Trim (internal)"}
+class H3AudioJoinSmooth:
+    """Fades the audio seam at the extend join.
+
+    Extend output is [source audio] + [generated audio], but the generated
+    audio continues the source tail through a lossy VAE round trip, so the two
+    sides rarely meet sample-for-sample and the hard concat clicks. This node
+    overlaps the source tail and the generated head with a short linear
+    crossfade (the two sides are the same audio continuing, so an equal-power
+    blend would boost the middle), then re-pads to the exact frame-derived
+    duration so audio and video stay in sync. The crossfade is deliberately
+    short (0.25s default) so speech and music keep their rhythm."""
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "audio": ("AUDIO",),
+                "source_frames": ("IMAGE",),
+                "source_fps": ("FLOAT", {"default": 24.0, "min": 1.0, "max": 240.0, "step": 0.001}),
+                "continuation_frames": ("IMAGE",),
+                "fps": ("FLOAT", {"default": 24.0, "min": 1.0, "max": 240.0, "step": 0.001}),
+                "fade_seconds": ("FLOAT", {"default": 0.25, "min": 0.0, "max": 1.0, "step": 0.05}),
+            }
+        }
+
+    RETURN_TYPES = ("AUDIO",)
+    RETURN_NAMES = ("audio",)
+    FUNCTION = "smooth"
+    CATEGORY = "One Node"
+
+    def smooth(self, audio, source_frames, source_fps, continuation_frames, fps=24.0, fade_seconds=0.25):
+        if not isinstance(audio, dict) or "waveform" not in audio:
+            return (audio,)
+        try:
+            fps = max(1.0, min(240.0, float(fps)))
+            src_fps = max(1.0, min(240.0, float(source_fps)))
+            fade = max(0.0, min(1.0, float(fade_seconds)))
+        except Exception:
+            return (audio,)
+        waveform = audio["waveform"]
+        if getattr(waveform, "ndim", 0) != 3:
+            return (audio,)
+        sr = int(audio.get("sample_rate", 32000) or 32000)
+        if sr <= 0:
+            return (audio,)
+        src_raw = int(source_frames.shape[0])
+        src_eff = max(1, int(round(src_raw * fps / src_fps)))
+        cont = int(continuation_frames.shape[0])
+        if cont < 1:
+            return (audio,)
+        join = int(round(src_eff / fps * sr))
+        total_want = int(round((src_eff + cont) / fps * sr))
+        n = int(waveform.shape[-1])
+        if n < join:
+            return (audio,)
+        xf = int(round(fade * sr))
+        if xf < 1:
+            return (audio,)
+        xf = min(xf, join, n - join)
+        if xf < 1:
+            return (audio,)
+
+        import torch
+
+        w = waveform[..., join - xf:join]
+        c = waveform[..., join:join + xf]
+        t = torch.arange(1, xf + 1, dtype=torch.float32, device=w.device).div(xf)
+        blended = w * (1 - t) + c * t
+        src_part = waveform[..., :join - xf]
+        cont_part = waveform[..., join + xf:]
+        merged = torch.cat([src_part, blended, cont_part], dim=-1)
+        pad = total_want - int(merged.shape[-1])
+        if pad > 0:
+            merged = torch.nn.functional.pad(merged, (0, pad))
+        elif pad < 0:
+            merged = merged[..., :total_want]
+        out = dict(audio)
+        out["waveform"] = merged
+        return (out,)
+
+
+NODE_CLASS_MAPPINGS = {"H3OneNode": H3OneNode, "H3CacheBust": H3CacheBust, "H3IdentityAnchor": H3IdentityAnchor, "H3AudioTrim": H3AudioTrim, "H3AudioJoinSmooth": H3AudioJoinSmooth}
+NODE_DISPLAY_NAME_MAPPINGS = {"H3OneNode": "ALL in ONE MiniMaxH3", "H3CacheBust": "H3 Cache Fingerprint (internal)", "H3IdentityAnchor": "H3 Identity Anchor (internal)", "H3AudioTrim": "H3 Audio Trim (internal)", "H3AudioJoinSmooth": "H3 Audio Join Smooth (internal)"}
