@@ -18,6 +18,7 @@ No node graph to build, no wires to connect, no hunting through twelve custom no
 | **Keyframes** | Pin still images at arbitrary frame positions |
 | **Extend** | Continue an existing video seamlessly |
 | **Chain** | Multi-clip continuation with H3 Motion Context (latent path, no re-encode) |
+| **Mask** | Paint or describe a region in a video, track it, and replace only that area |
 | **Upscale** | RTX/Seed2VR Video Super Resolution hook |
 
 ## Screenshots
@@ -66,6 +67,7 @@ I develop and test against a pinned stack (ComfyUI version, custom node commits,
 - Base graphs: the official MiniMax H3 native workflows from Comfy-Org
 - Turbo preset: ComfyUI-MiniMax-H3-Turbo pack
 - Image mode: [ComfyUI-MiniMax-H3-Studio](https://github.com/thaakeno/ComfyUI-MiniMax-H3-Studio) by thaakeno
+- Mask mode crop and latent-mask nodes: [MaskVidExperiments](https://github.com/drozbay/MaskVidExperiments) by drozbay
 
 ## Support
 

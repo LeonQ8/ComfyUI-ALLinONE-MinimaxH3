@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { aspect, sizeOf, sameSize, orientRes, fitResolutionToAspect, resolveFitPrimary, imgProfileShort, imgAspectName, viewQuery, inputFileExists, clampImageMP, planImageCanvas, IMG_MAX_MP, IMG_MIN_MP, IMG_ASPECT_RATIOS, resolveQualityFlags, matchQualityPreset, QUALITY_PRESET_FLAGS, planExtend, queuePromptPayload } from "../web/h3_helpers.mjs";
+import { aspect, sizeOf, sameSize, mapMaskPoint, orientRes, fitResolutionToAspect, planMaskCrop, maskTrackingPlan, resolveFitPrimary, imgProfileShort, imgAspectName, viewQuery, inputFileExists, h3SamCheckpoints, clampImageMP, planImageCanvas, IMG_MAX_MP, IMG_MIN_MP, IMG_ASPECT_RATIOS, resolveQualityFlags, matchQualityPreset, QUALITY_PRESET_FLAGS, planExtend, queuePromptPayload, settleQueuedOutput, maskSpeechSyncPrompt } from "../web/h3_helpers.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, "..");
@@ -42,10 +42,14 @@ test("helpers file is non-trivial and exports the core helpers", () => {
   assert.ok(src.includes("export function aspect"), "helpers must export aspect");
   assert.ok(src.includes("export function sizeOf"), "helpers must export sizeOf");
   assert.ok(src.includes("export function sameSize"), "helpers must export sameSize");
+  assert.ok(src.includes("export function mapMaskPoint"), "helpers must export mapMaskPoint");
   assert.ok(src.includes("export function imgProfileShort"), "helpers must export imgProfileShort");
   assert.ok(src.includes("export function imgAspectName"), "helpers must export imgAspectName");
   assert.ok(src.includes("export function viewQuery"), "helpers must export viewQuery");
   assert.ok(src.includes("export function inputFileExists"), "helpers must export inputFileExists");
+  assert.ok(src.includes("export function h3SamCheckpoints"), "helpers must export h3SamCheckpoints");
+  assert.ok(src.includes("export function planMaskCrop"), "helpers must export planMaskCrop");
+  assert.ok(src.includes("export function maskTrackingPlan"), "helpers must export maskTrackingPlan");
   assert.ok(src.includes("export function clampImageMP"), "helpers must export clampImageMP");
   assert.ok(src.includes("export function planImageCanvas"), "helpers must export planImageCanvas");
   assert.ok(src.includes("export function planExtend"), "helpers must export planExtend");
@@ -189,6 +193,55 @@ test("fitResolutionToAspect: respects a smaller area budget", () => {
   const r = fitResolutionToAspect(1920, 1080, 800, 450);
   assert.ok(r.width * r.height <= 800 * 450 + 1);
   assert.ok(r.width % 32 === 0 && r.height % 32 === 0);
+});
+
+test("planMaskCrop: caps the pixel budget so any mask shape stays H3-safe", () => {
+  const crop = planMaskCrop(16384, 1024);
+  assert.ok(crop.megapixels <= 0.5, "a mask-shaped crop must stay under the 768 short-edge H3 cap for any aspect");
+  assert.equal(crop.masked, true, "mask crops hug the tracked object");
+  assert.ok(crop.width > 0 && crop.height > 0);
+});
+
+test("planMaskCrop: a low preset keeps its own pixel budget", () => {
+  const crop = planMaskCrop(864, 480);
+  assert.ok(crop.megapixels <= 0.5);
+  assert.equal(crop.aspectRatio, 864 / 480);
+});
+
+test("planMaskCrop: invalid input uses a safe H3 canvas", () => {
+  const crop = planMaskCrop(0, NaN);
+  assert.ok(crop.width > 0 && crop.height > 0);
+  assert.ok(crop.megapixels <= 0.5);
+});
+
+test("maskTrackingPlan: a text target defines the tracked object; paint only seeds when no text", () => {
+  assert.deepEqual(maskTrackingPlan(true, "person"), { maxObjects: 1, objectIndices: "0", seedPaint: false });
+  assert.deepEqual(maskTrackingPlan(true, ""), { maxObjects: 1, objectIndices: "0", seedPaint: true });
+  assert.deepEqual(maskTrackingPlan(false, "person"), { maxObjects: 1, objectIndices: "0", seedPaint: false });
+});
+
+test("maskSpeechSyncPrompt: adds the speech-drive directive under detailed_description", () => {
+  const out = maskSpeechSyncPrompt("summary:\n[video editing] replace the face.\n\ndetailed_description:\n[Shot 1] The face changes.\n\noverall_soundscape:\nKeep the source soundtrack unchanged.");
+  assert.ok(out.includes("<Audio 1>: speech_drive"), "must label the preserved speech as an audio reference");
+  assert.ok(/detailed_description:\n<Audio 1>: speech_drive/i.test(out), "must be injected into detailed_description");
+  assert.ok(out.includes("mouth moving in sync"), "must request lip sync");
+});
+
+test("maskSpeechSyncPrompt: falls back to overall_soundscape when there is no detailed_description", () => {
+  const out = maskSpeechSyncPrompt("summary:\nswap the face.\n\noverall_soundscape:\nKeep the source soundtrack unchanged.");
+  assert.ok(/overall_soundscape:\n<Audio 1>: speech_drive/i.test(out), "must inject under overall_soundscape");
+});
+
+test("maskSpeechSyncPrompt: appends when neither field exists", () => {
+  const out = maskSpeechSyncPrompt("swap the face, keep everything else");
+  assert.ok(out.endsWith("<Audio 1>: speech_drive - The replacement speaks the same words as the source speech heard in <Audio 1>, mouth moving in sync with it."));
+});
+
+test("maskSpeechSyncPrompt: is idempotent and ignores empty input", () => {
+  const once = maskSpeechSyncPrompt("detailed_description:\nface swap");
+  assert.equal(maskSpeechSyncPrompt(once), once, "a prompt that already names <Audio 1> must be untouched");
+  assert.equal(maskSpeechSyncPrompt(""), "");
+  assert.equal(maskSpeechSyncPrompt(null), "");
 });
 
 // -- Per-slot fit primary -----------------------------------------------------
@@ -611,9 +664,14 @@ test("bundle wires the + Queue button and its queued-job tracking", () => {
   );
   assert.ok(bundle.includes("_h3_showQueued"), "bundle must surface queued outputs into the preview and gallery");
   assert.ok(
-    bundle.includes("if(!pid||_batchIds.includes(pid)) _finishRun()"),
+    bundle.includes("if(!pid||_batchIds.includes(pid)) _finishRun(pid,false)"),
     "bundle must not let queued jobs advance the Generate run state",
   );
+  assert.ok(bundle.includes("_mediaItemFromOutput"), "cached node events must not clear queued media tracking early");
+  assert.ok(bundle.includes("_mediaItemFromHistory"), "queued output must have a history fallback");
+  assert.ok(bundle.includes("_batchIds.push(data.prompt_id)"), "batch prompt ids must be published as each submission succeeds");
+  assert.ok(bundle.includes("JSON.stringify({delete:ids})"), "Stop must remove every active batch prompt");
+  assert.ok(bundle.includes("_settledBatchIds"), "batch completion events must be deduplicated by prompt id");
   assert.ok(bundle.includes("queuePromptPayload"), "bundle must build the queue payload");
   assert.ok(bundle.includes('api.fetchApi("/queue"'), "bundle must reconcile the queue counter against GET /queue");
   assert.ok(
@@ -623,5 +681,201 @@ test("bundle wires the + Queue button and its queued-job tracking", () => {
   assert.ok(
     bundle.includes("pad.append(navRow,mainRow,genRow,queueRow)"),
     "bundle must mount the queue row below the generate row",
+  );
+});
+
+test("h3SamCheckpoints: keeps only SAM 3.1 multiplex safetensors", () => {
+  assert.deepEqual(
+    h3SamCheckpoints([
+      "SDXL/model.safetensors",
+      "SAM/sam3.1_multiplex_fp16.safetensors",
+      "sam3_multiplex_fp16.safetensors",
+      "sam3.1_other.safetensors",
+      "sam3.1_multiplex_fp16.ckpt",
+    ]),
+    ["SAM/sam3.1_multiplex_fp16.safetensors"],
+  );
+  assert.deepEqual(h3SamCheckpoints(null), []);
+});
+
+test("bundle wires the Mask mode, brush editor, and runtime preflight", () => {
+  const bundle = readFileSync(bundlePath, "utf8");
+  assert.ok(bundle.includes('{ key:"mask",        label:"Mask" }'), "Mask must appear in the mode tabs");
+  assert.ok(bundle.includes('mask:"mask.json"'), "Mask must load its own workflow template");
+  assert.ok(bundle.includes("openVideoMaskEditor"), "Mask must provide a first-frame brush editor");
+  assert.ok(bundle.includes("mapMaskPoint"), "the editor must map display coordinates to source pixels");
+  assert.ok(bundle.includes("Paint first-frame mask"), "the Mask card must expose the editor action");
+  assert.ok(bundle.includes("updateMaskStats"), "the editor must show the painted region size live");
+  assert.ok(bundle.includes("Mask: empty"), "the size readout must cover the empty state");
+  assert.ok(bundle.includes("_checkMaskRuntime"), "Mask must preflight its external node pack");
+  assert.ok(bundle.includes("h3SamCheckpoints(_M.checkpoints)"), "Mask must reject non-SAM checkpoints");
+  assert.ok(bundle.includes("MVEx_MaskToLatentSpace"), "Mask must require H3-aligned latent masking");
+  assert.ok(bundle.includes("MVEx_LatentMaskToMask"), "Mask must paste the grown latent region back, not a tight outline");
+  assert.ok(bundle.includes("maskRegenerateAudio"), "Mask must expose source-audio preservation control");
+  assert.ok(
+    bundle.includes("modeArea.append(i2vArea,refArea,kfArea,adArea,exArea,chainArea,maskArea,imgArea)"),
+    "the Mask card must be mounted in the mode area",
+  );
+  assert.ok(
+    bundle.includes("if(_workflowBuildBusy||_uploadsPending>0) return"),
+    "mode changes must not mutate an in-flight workflow build",
+  );
+  assert.ok(bundle.includes("_captureRunMeta"), "completed outputs must keep their submitted metadata");
+  assert.ok(bundle.includes("_activeRunMetaByPrompt.set(data.prompt_id,runMeta)"), "batch metadata must be keyed by prompt id");
+  assert.ok(bundle.includes("_effectiveMaskCropPlan"), "Mask must reuse one axis-safe crop plan");
+  assert.ok(bundle.includes('wf["24"].inputs["mode.aspect_ratio"]=0'), "Mask must let the crop hug the tracked mask instead of forcing a fixed canvas");
+  assert.ok(bundle.includes("maskTrackingPlan(S.maskSeed,maskTarget)"), "the SAM tracking plan must be applied from the tested helper");
+  assert.ok(bundle.includes("tracking.seedPaint"), "a painted mask must only seed the tracker when no text target is given");
+  assert.ok(bundle.includes("Regenerate the soundtrack to match the replacement action"), "regenerated audio must not request source-audio retention");
+  assert.ok(bundle.includes("_renderMaskPreview"), "Mask must preview the painted region visually");
+  assert.ok(bundle.includes("masked region"), "the mask preview must label the painted area");
+  assert.ok(bundle.includes("Locked to 24 fps"), "Mask mode must explain why the FPS field is locked");
+  assert.ok(bundle.includes("@ 24 fps (locked)"), "the frame label must communicate the locked rate");
+  assert.ok(bundle.includes("ref_audios.ref_audio_0"), "Mask must feed the preserved source speech to H3");
+  assert.ok(bundle.includes("maskSpeechSyncPrompt"), "Mask must ask H3 for lip sync with the preserved speech");
+  assert.ok(
+    bundle.includes('if(S.maskRegenerateAudio) delete wf["6"].inputs["ref_audios.ref_audio_0"]'),
+    "regenerated audio must not copy the source speech reference",
+  );
+});
+
+test("bundle makes uploads stale-safe and part of the workflow build barrier", () => {
+  const bundle = readFileSync(bundlePath, "utf8");
+  assert.ok(bundle.includes("const token=++_loadToken"), "media slots must invalidate stale upload responses");
+  assert.ok(bundle.includes("_uploadsPending++"), "media uploads must participate in the pending counter");
+  assert.ok(bundle.includes("if(token!==_loadToken)"), "stale uploads must not replace newer selections");
+  assert.ok(bundle.includes("An upload is still in progress"), "workflow build must fail safely after a stalled upload");
+  assert.ok(bundle.includes("_uploadMedia"), "video and audio uploads must use the shared pending barrier");
+  assert.ok(bundle.includes("_fileMatches"), "drop and paste must enforce supported extensions");
+  assert.ok(bundle.includes("e.pointerId!==activePointer"), "the mask brush must isolate one active pointer");
+});
+
+test("mapMaskPoint: maps display coordinates to source pixels", () => {
+  const p = mapMaskPoint(250, 150, { left: 50, top: 50, width: 400, height: 200 }, 1920, 1080);
+  assert.deepEqual(p, { x: 960, y: 540 });
+});
+
+test("mapMaskPoint: clamps outside coordinates and rejects empty geometry", () => {
+  assert.deepEqual(mapMaskPoint(-10, 999, { left: 0, top: 0, width: 100, height: 100 }, 1000, 500), { x: 0, y: 499 });
+  assert.equal(mapMaskPoint(1, 1, { left: 0, top: 0, width: 0, height: 10 }, 100, 100), null);
+});
+
+// -- Queued-output history fallback retry -------------------------------------
+
+const firstMedia = (entry) => {
+  if (!entry) return null;
+  const outputs = Object.values(entry.outputs || {});
+  for (const out of outputs) {
+    const videos = out.videos || out.gifs || null;
+    if (Array.isArray(videos) && videos.length) return videos[videos.length - 1];
+    const images = out.images || null;
+    if (Array.isArray(images) && images.length) return images[images.length - 1];
+  }
+  return null;
+};
+
+test("settleQueuedOutput: returns media immediately on the first lookup", async () => {
+  const item = { filename: "out.mp4" };
+  let calls = 0;
+  const result = await settleQueuedOutput(
+    "p1",
+    async () => { calls++; return { outputs: { "15": { videos: [item] } }, status: { status_str: "success" } }; },
+    firstMedia,
+    { maxAttempts: 4, delayMs: 0, deadlineMs: 100 },
+  );
+  assert.equal(result.item, item);
+  assert.equal(result.failed, false);
+  assert.equal(result.expired, false);
+  assert.equal(calls, 1, "a visible result must stop the retry after one lookup");
+});
+
+test("settleQueuedOutput: retries until history commits the media", async () => {
+  const item = { filename: "out.mp4" };
+  let calls = 0;
+  const result = await settleQueuedOutput(
+    "p1",
+    async () => { calls++; return calls === 1 ? { status: {} } : { outputs: { "15": { videos: [item] } }, status: { status_str: "success" } }; },
+    firstMedia,
+    { maxAttempts: 5, delayMs: 0, deadlineMs: 100 },
+  );
+  assert.equal(result.item, item);
+  assert.equal(calls, 2, "an empty first lookup must be retried");
+});
+
+test("settleQueuedOutput: confirms failure instead of waiting for media", async () => {
+  let calls = 0;
+  const result = await settleQueuedOutput(
+    "p1",
+    async () => { calls++; return { status: { status_str: "error" } }; },
+    firstMedia,
+    { maxAttempts: 6, delayMs: 0, deadlineMs: 1000 },
+  );
+  assert.equal(result.item, null);
+  assert.equal(result.failed, true);
+  assert.equal(result.expired, false);
+  assert.equal(calls, 1, "an error status must stop the retry immediately");
+});
+
+test("settleQueuedOutput: treats interrupted as a confirmed failure", async () => {
+  const result = await settleQueuedOutput(
+    "p1",
+    async () => ({ status: { status_str: "interrupted" } }),
+    firstMedia,
+    { maxAttempts: 3, delayMs: 0, deadlineMs: 1000 },
+  );
+  assert.equal(result.failed, true);
+  assert.equal(result.item, null);
+});
+
+test("settleQueuedOutput: expires when no media commits before the attempt bound", async () => {
+  let calls = 0;
+  const result = await settleQueuedOutput(
+    "p1",
+    async () => { calls++; return { status: { status_str: "success" } }; },
+    firstMedia,
+    { maxAttempts: 4, delayMs: 0, deadlineMs: 1000 },
+  );
+  assert.equal(result.item, null);
+  assert.equal(result.failed, false);
+  assert.equal(result.expired, true);
+  assert.equal(calls, 4, "the retry must never exceed maxAttempts");
+});
+
+test("settleQueuedOutput: a throwing history fetch is treated as a retryable miss", async () => {
+  let calls = 0;
+  const result = await settleQueuedOutput(
+    "p1",
+    async () => { calls++; throw new Error("network"); },
+    firstMedia,
+    { maxAttempts: 3, delayMs: 0, deadlineMs: 1000 },
+  );
+  assert.equal(result.expired, true);
+  assert.equal(result.failed, false);
+  assert.equal(calls, 3);
+});
+
+test("settleQueuedOutput: honors the deadline even when attempts remain", async () => {
+  const item = { filename: "late.mp4" };
+  let calls = 0;
+  const result = await settleQueuedOutput(
+    "p1",
+    async () => { calls++; return calls === 3 ? { outputs: { "1": { videos: [item] } } } : { status: {} }; },
+    firstMedia,
+    { maxAttempts: 8, delayMs: 0, deadlineMs: 0 },
+  );
+  assert.equal(result.expired, true, "zero deadline must expire before the third lookup");
+  assert.ok(calls < 8, `calls=${calls} must be capped by the deadline`);
+});
+
+test("bundle retries the queued-output history fallback with a bounded deadline", () => {
+  const bundle = readFileSync(bundlePath, "utf8");
+  assert.ok(bundle.includes("const _settleQueuedJob=async(pid,qentry)"), "bundle must define the bounded queued-output settlement");
+  assert.ok(bundle.includes("qentry._settling"), "concurrent settlement must be deduplicated per job");
+  assert.ok(bundle.includes("DEADLINE_MS") && bundle.includes("MAX_ATTEMPTS"), "the retry must be bounded by attempts and a deadline");
+  assert.ok(bundle.includes("Date.now()-start>=DEADLINE_MS"), "the retry must stop once its deadline passes");
+  assert.ok(bundle.includes("_settleQueuedJob(pid,qentry)"), "execution_success must delegate to the bounded retry");
+  assert.ok(
+    !bundle.includes("const item=_mediaItemFromHistory(h&&h[pid]);"),
+    "the old single-shot history lookup must be gone from execution_success",
   );
 });

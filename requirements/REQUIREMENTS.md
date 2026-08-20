@@ -13,6 +13,7 @@ Official MiniMax H3 files from [Comfy-Org/MiniMax-H3](https://huggingface.co/Com
 | `qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors` | `text_encoders/` |
 | `minimax_h3_video_vae_fp16.safetensors` | `vae/` |
 | `minimax_h3_audio_vae_fp32.safetensors` | `vae/` |
+| [`sam3.1_multiplex_fp16.safetensors`](https://huggingface.co/Comfy-Org/sam3.1/resolve/main/checkpoints/sam3.1_multiplex_fp16.safetensors) | `checkpoints/` (Mask mode) |
 
 ## Custom nodes
 
@@ -25,6 +26,7 @@ Official MiniMax H3 files from [Comfy-Org/MiniMax-H3](https://huggingface.co/Com
 | Keyframes | [ComfyUI-H3-Motion-Context-MultiRef](https://github.com/seitanism/ComfyUI-H3-Motion-Context-MultiRef) |
 | Extend | [ComfyUI-H3-Motion-Context-MultiRef](https://github.com/seitanism/ComfyUI-H3-Motion-Context-MultiRef) |
 | Chain | [ComfyUI-H3-Motion-Context-MultiRef](https://github.com/seitanism/ComfyUI-H3-Motion-Context-MultiRef) |
+| Mask | [MaskVidExperiments](https://github.com/drozbay/MaskVidExperiments) plus the SAM 3.1 checkpoint above |
 | Upscale — RTX VSR | [Nvidia_RTX_Nodes_ComfyUI](https://github.com/Comfy-Org/Nvidia_RTX_Nodes_ComfyUI) (NVIDIA RTX GPUs only) |
 | Upscale — SeedVR2 | [ComfyUI-SeedVR2_VideoUpscaler](https://github.com/numz/ComfyUI-SeedVR2_VideoUpscaler) |
 | Image | [ComfyUI-MiniMax-H3-Studio](https://github.com/thaakeno/ComfyUI-MiniMax-H3-Studio) |
@@ -48,6 +50,8 @@ Each accelerator also has an on/off chip under the Quality dropdown (SolAttn / S
 **Live Preview** (the toggle under the video): [ComfyUI-KJNodes](https://github.com/kijai/ComfyUI-KJNodes) plus `taeh3.safetensors` in `ComfyUI/models/vae_approx/` ([Kijai/MiniMax-H3-TAE](https://huggingface.co/Kijai/MiniMax-H3-TAE)). Powered by KJNodes Model Preview Override: the clip plays in the preview box while it samples. A quality dropdown next to the toggle picks Fast, Balanced or Detailed previews, which trade preview smoothness against generation speed. Works in every video mode, not with the Turbo preset or Image mode. Your copy can sit in a subfolder of `vae_approx`, pick it under Settings: Live Preview decoder. Tested on ComfyUI 0.33.
 
 **Image mode prompts**: they follow the H3 Studio shape, a `summary:` line with the goal and a `detailed_description:` with the full scene. Name your references `@Image1`, `@Image2` and give each one a clear job (identity, pose, style, outfit). Edits are a semantic regeneration of the source image, not pixel inpainting, so describe what changes instead of expecting a perfect cutout. The Discover tab ships with Text to image, Image edit and Reference mix templates.
+
+**Mask mode**: add a source video, paint the region on its first frame or enter a text target for SAM 3, then add at least one replacement reference. MaskVidExperiments keeps the tracked crop stable, aligns the mask to H3 latent space, and pastes the generated region back into the source-resolution frames.
 
 **Image mode models**: besides your usual H3 files, H3 Studio's prompt machinery wants two small Qwen3.5 models in `ComfyUI/models/text_encoders/`:
 

@@ -95,7 +95,7 @@ _VIDEO_EXTS = (".mp4", ".webm", ".gif", ".mkv", ".mov", ".m4v", ".avi")
 _IMAGE_EXTS = (".png", ".jpg", ".jpeg", ".webp", ".bmp")
 _ALLOWED_TEMPLATES = (
     "t2v.json", "i2v.json", "r2v.json", "audio_drive.json",
-    "keyframes.json", "video_extend.json", "chain_section.json", "upscale.json",
+    "keyframes.json", "video_extend.json", "chain_section.json", "mask.json", "upscale.json",
     "upscale_rtx.json", "image.json",
 )
 
@@ -479,6 +479,7 @@ async def serve_template(request):
 @PromptServer.instance.routes.get("/h3one/models")
 async def get_models(request):
     return web.json_response({
+        "checkpoints": _scan("checkpoints"),
         "diffusion_models": _scan("diffusion_models"),
         "text_encoders": _scan("text_encoders"),
         "vaes": _scan("vae"),
@@ -539,7 +540,7 @@ async def list_input_files(request):
         elif ftype == "image":
             exts = (".png", ".jpg", ".jpeg", ".webp", ".bmp")
         else:
-            exts = (".mp4", ".webm", ".mkv", ".avi", ".mov")
+            exts = (".mp4", ".m4v", ".webm", ".mkv", ".avi", ".mov")
         input_dir = folder_paths.get_input_directory()
         found = sorted(fn for fn in os.listdir(input_dir) if fn.lower().endswith(exts))
         return web.json_response({"files": found})
@@ -613,7 +614,7 @@ async def save_config_route(request):
 async def save_preset(request):
     """Upsert a custom prompt preset for a mode. Stored in the user config
     (survives reinstalls); merged with the built-in presets at read time."""
-    _VALID_MODES = ("t2v", "i2v", "r2v", "audio_drive", "keyframes", "extend", "chain", "image")
+    _VALID_MODES = ("t2v", "i2v", "r2v", "audio_drive", "keyframes", "extend", "chain", "mask", "image")
     try:
         data = await request.json()
         mode = str(data.get("mode", "")).strip()
@@ -643,7 +644,7 @@ async def save_preset(request):
 
 @PromptServer.instance.routes.delete("/h3one/presets")
 async def delete_preset(request):
-    _VALID_MODES = ("t2v", "i2v", "r2v", "audio_drive", "keyframes", "extend", "chain", "image")
+    _VALID_MODES = ("t2v", "i2v", "r2v", "audio_drive", "keyframes", "extend", "chain", "mask", "image")
     try:
         data = await request.json()
         mode = str(data.get("mode", "")).strip()
@@ -1087,6 +1088,101 @@ class H3CacheBust:
         return h.digest().hex()
 
 
+def _mask_frame_plan(frame_count, source_fps, max_seconds, target_fps=24.0):
+    count = int(frame_count)
+    if count < 1:
+        raise ValueError("The source video has no frames")
+    source_fps = float(source_fps)
+    target_fps = float(target_fps)
+    max_seconds = float(max_seconds)
+    if source_fps <= 0 or target_fps <= 0 or max_seconds <= 0:
+        raise ValueError("Video duration and frame rates must be positive")
+    seconds = min(max_seconds, count / source_fps)
+    base = max(5, int(round(seconds * target_fps)))
+    output_frames = base + (5 - base % 17) % 17
+    last_source = min(count - 1, max(0, int(seconds * source_fps + 0.999999) - 1))
+    indices = [min(last_source, int(round(i * source_fps / target_fps))) for i in range(output_frames)]
+    return indices, output_frames, seconds, output_frames / target_fps
+
+
+def _mask_audio_lengths(frame_count, target_fps, sample_rate):
+    frame_count = max(1, int(frame_count))
+    target_fps = max(1.0, float(target_fps))
+    if abs(target_fps - 24.0) > 1e-6:
+        raise ValueError("MiniMax H3 mask preparation requires 24 fps")
+    sample_rate = max(1, int(sample_rate))
+    output_samples = max(1, int(round(frame_count * sample_rate / target_fps)))
+    audio_ticks = max(1, int(round(frame_count * 40.0 / target_fps)))
+    model_samples = audio_ticks * 800
+    return output_samples, model_samples
+
+
+class H3MaskVideoPrepare:
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "images": ("IMAGE",),
+                "audio": ("AUDIO",),
+                "source_fps": ("FLOAT", {"default": 24.0, "min": 1.0, "max": 240.0, "step": 0.001}),
+                "max_seconds": ("FLOAT", {"default": 5.0, "min": 0.2, "max": 15.0, "step": 0.1}),
+                "target_fps": ("FLOAT", {"default": 24.0, "min": 24.0, "max": 24.0, "step": 1.0}),
+            }
+        }
+
+    RETURN_TYPES = ("IMAGE", "AUDIO", "AUDIO", "FLOAT", "INT")
+    RETURN_NAMES = ("images", "model_audio", "source_audio", "fps", "frame_count")
+    FUNCTION = "prepare"
+    CATEGORY = "One Node"
+
+    def prepare(self, images, audio, source_fps=24.0, max_seconds=5.0, target_fps=24.0):
+        import torch
+
+        target_fps = float(target_fps)
+        if abs(target_fps - 24.0) > 1e-6:
+            raise ValueError("MiniMax H3 mask preparation requires 24 fps")
+        indices, frame_count, source_duration, _output_duration = _mask_frame_plan(
+            int(images.shape[0]), source_fps, max_seconds, target_fps
+        )
+        index = torch.tensor(indices, dtype=torch.long, device=images.device)
+        output_images = torch.index_select(images, 0, index)
+
+        source_audio = audio if isinstance(audio, dict) else {}
+        sample_rate = int(source_audio.get("sample_rate", 32000) or 32000)
+        waveform = source_audio.get("waveform")
+        if not isinstance(waveform, torch.Tensor):
+            waveform = torch.zeros((1, 2, 0), dtype=torch.float32)
+        elif waveform.ndim == 1:
+            waveform = waveform[None, None, :]
+        elif waveform.ndim == 2:
+            waveform = waveform[None, :, :]
+        source_wanted = max(1, int(round(source_duration * sample_rate)))
+        output_wanted, model_wanted = _mask_audio_lengths(frame_count, target_fps, sample_rate)
+        waveform = waveform[..., :min(source_wanted, output_wanted)]
+        if waveform.shape[-1] < output_wanted:
+            waveform = torch.nn.functional.pad(waveform, (0, output_wanted - waveform.shape[-1]))
+        if waveform.shape[-2] < 1:
+            model_waveform = torch.zeros((waveform.shape[0], 2, output_wanted), dtype=waveform.dtype, device=waveform.device)
+        elif waveform.shape[-2] == 1:
+            model_waveform = waveform.repeat(1, 2, 1)
+        elif waveform.shape[-2] == 2:
+            model_waveform = waveform
+        else:
+            model_waveform = waveform.mean(dim=1, keepdim=True).repeat(1, 2, 1)
+        if not model_waveform.is_floating_point():
+            model_waveform = model_waveform.float()
+        model_waveform = torch.nn.functional.interpolate(
+            model_waveform, size=model_wanted, mode="linear", align_corners=False
+        )
+        output_audio = dict(source_audio)
+        output_audio["waveform"] = waveform
+        output_audio["sample_rate"] = sample_rate
+        model_audio = dict(output_audio)
+        model_audio["waveform"] = model_waveform
+        model_audio["sample_rate"] = 32000
+        return output_images, model_audio, output_audio, float(target_fps), frame_count
+
+
 class H3IdentityAnchor:
     """Pins a reference image as a stock first/last keyframe anchor on the H3
     conditioning, so the shot starts (or ends) exactly on that image. Uses only
@@ -1254,5 +1350,5 @@ class H3AudioJoinSmooth:
         return (out,)
 
 
-NODE_CLASS_MAPPINGS = {"H3OneNode": H3OneNode, "H3CacheBust": H3CacheBust, "H3IdentityAnchor": H3IdentityAnchor, "H3AudioTrim": H3AudioTrim, "H3AudioJoinSmooth": H3AudioJoinSmooth}
-NODE_DISPLAY_NAME_MAPPINGS = {"H3OneNode": "ALL in ONE MiniMaxH3", "H3CacheBust": "H3 Cache Fingerprint (internal)", "H3IdentityAnchor": "H3 Identity Anchor (internal)", "H3AudioTrim": "H3 Audio Trim (internal)", "H3AudioJoinSmooth": "H3 Audio Join Smooth (internal)"}
+NODE_CLASS_MAPPINGS = {"H3OneNode": H3OneNode, "H3CacheBust": H3CacheBust, "H3MaskVideoPrepare": H3MaskVideoPrepare, "H3IdentityAnchor": H3IdentityAnchor, "H3AudioTrim": H3AudioTrim, "H3AudioJoinSmooth": H3AudioJoinSmooth}
+NODE_DISPLAY_NAME_MAPPINGS = {"H3OneNode": "ALL in ONE MiniMaxH3", "H3CacheBust": "H3 Cache Fingerprint (internal)", "H3MaskVideoPrepare": "H3 Mask Video Prepare (internal)", "H3IdentityAnchor": "H3 Identity Anchor (internal)", "H3AudioTrim": "H3 Audio Trim (internal)", "H3AudioJoinSmooth": "H3 Audio Join Smooth (internal)"}

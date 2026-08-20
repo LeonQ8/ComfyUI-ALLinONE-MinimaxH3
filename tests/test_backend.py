@@ -198,6 +198,12 @@ class TestConfig(_NodesTestBase):
             for flag in ("sol_attn", "sage", "kitchen"):
                 self.assertIn(flag, p, f"preset {key} missing {flag}")
 
+    def test_mask_prompt_template_is_shipped(self):
+        cfg = self.nodes._load_builtin_config()
+        mask = cfg.get("prompt_templates", {}).get("mask")
+        self.assertIsInstance(mask, dict)
+        self.assertTrue(mask.get("presets"))
+
     def test_user_overrides_builtin(self):
         user = self.user_dir()
         (user / "config.json").write_text(
@@ -231,11 +237,24 @@ class TestScan(_NodesTestBase):
     def test_empty_when_missing_dir(self):
         self.assertEqual(self.nodes._scan("nonexistent", [".safetensors"]), [])
 
+    def test_models_route_includes_checkpoints(self):
+        models = self.tmp / "models" / "checkpoints"
+        models.mkdir(parents=True, exist_ok=True)
+        (models / "sam3.safetensors").write_bytes(b"")
+        response = _run(self.nodes.get_models(None))
+        self.assertEqual(response.kwargs["data"]["checkpoints"], ["sam3.safetensors"])
+
+    def test_video_input_route_recognizes_m4v(self):
+        (self.tmp / "input" / "clip.m4v").write_bytes(b"")
+        response = _run(self.nodes.list_input_files(_FakeRequest({}, query={"type": "video"})))
+        self.assertEqual(response.kwargs["data"]["files"], ["clip.m4v"])
+
 
 class _FakeRequest:
-    def __init__(self, payload):
+    def __init__(self, payload, query=None):
         self._payload = payload
         self.match_info = {}
+        self.query = query or {}
 
     async def json(self):
         return self._payload
@@ -696,6 +715,98 @@ class _FakeWave:
 
     def __init__(self, n):
         self.shape = (1, 2, n)
+
+
+class TestMaskVideoPrepare(_NodesTestBase):
+    def test_frame_plan_resamples_and_pads_to_h3_grid(self):
+        indices, frame_count, source_duration, duration = self.nodes._mask_frame_plan(150, 30, 5, 24)
+        self.assertEqual(frame_count, 124)
+        self.assertEqual(len(indices), 124)
+        self.assertEqual(indices[0], 0)
+        self.assertEqual(indices[-1], 149)
+        self.assertTrue(all(a <= b for a, b in zip(indices, indices[1:])))
+        self.assertEqual(source_duration, 5)
+        self.assertAlmostEqual(duration, 124 / 24)
+
+    def test_frame_plan_honors_shorter_limit(self):
+        indices, frame_count, source_duration, _duration = self.nodes._mask_frame_plan(300, 30, 3, 24)
+        self.assertEqual(frame_count, 73)
+        self.assertEqual(indices[-1], 89)
+        self.assertEqual(source_duration, 3)
+
+    def test_frame_plan_rejects_empty_video(self):
+        with self.assertRaisesRegex(ValueError, "no frames"):
+            self.nodes._mask_frame_plan(0, 24, 5, 24)
+
+    def test_audio_lengths_follow_video_and_h3_tick_grids(self):
+        self.assertEqual(self.nodes._mask_audio_lengths(22, 24, 32000), (29333, 29600))
+        self.assertEqual(self.nodes._mask_audio_lengths(5, 24, 32000), (6667, 6400))
+        self.assertEqual(self.nodes._mask_audio_lengths(124, 24, 44100), (227850, 165600))
+
+    def test_audio_lengths_reject_non_h3_frame_rate(self):
+        with self.assertRaisesRegex(ValueError, "requires 24 fps"):
+            self.nodes._mask_audio_lengths(124, 30, 32000)
+
+    def test_prepare_schema_locks_target_rate_to_24_fps(self):
+        target = self.nodes.H3MaskVideoPrepare.INPUT_TYPES()["required"]["target_fps"][1]
+        self.assertEqual((target["default"], target["min"], target["max"]), (24.0, 24.0, 24.0))
+
+    @unittest.skipUnless(_HAS_TORCH, "torch not available")
+    def test_prepare_keeps_video_and_audio_lengths_in_sync(self):
+        images = torch.arange(150, dtype=torch.float32).reshape(150, 1, 1, 1)
+        audio = {"waveform": torch.ones((1, 2, 500)), "sample_rate": 100}
+        result = self.nodes.H3MaskVideoPrepare().prepare(images, audio, 30, 5, 24)
+        output_images, model_audio, source_audio, fps, frame_count = result
+        self.assertEqual(output_images.shape[0], 124)
+        self.assertEqual(float(output_images[-1, 0, 0, 0]), 149)
+        self.assertEqual(model_audio["waveform"].shape, (1, 2, 165600))
+        self.assertEqual(model_audio["sample_rate"], 32000)
+        self.assertEqual(source_audio["waveform"].shape[-1], round(124 / 24 * 100))
+        self.assertEqual(fps, 24)
+        self.assertEqual(frame_count, 124)
+
+    @unittest.skipUnless(_HAS_TORCH, "torch not available")
+    def test_prepare_normalizes_model_audio_and_pads_after_source_cut(self):
+        images = torch.zeros((300, 1, 1, 1))
+        channels = torch.stack([torch.ones(1000), torch.full((1000,), 2.0), torch.full((1000,), 3.0)])[None]
+        result = self.nodes.H3MaskVideoPrepare().prepare(images, {"waveform": channels, "sample_rate": 100}, 30, 3, 24)
+        _images, model_audio, source_audio, _fps, _frames = result
+        self.assertEqual(model_audio["waveform"].shape, (1, 2, 97600))
+        self.assertTrue(torch.allclose(model_audio["waveform"][0, :, :96000], torch.full((2, 96000), 2.0)))
+        self.assertTrue(torch.equal(model_audio["waveform"][..., 96500:], torch.zeros((1, 2, 1100))))
+        self.assertEqual(source_audio["waveform"].shape, (1, 3, 304))
+        self.assertTrue(torch.equal(source_audio["waveform"][..., 300:], torch.zeros((1, 3, 4))))
+
+    @unittest.skipUnless(_HAS_TORCH, "torch not available")
+    def test_prepare_supplies_stereo_silence_when_audio_is_missing(self):
+        images = torch.zeros((5, 1, 1, 1))
+        _images, model_audio, source_audio, _fps, _frames = self.nodes.H3MaskVideoPrepare().prepare(images, {}, 24, 1, 24)
+        self.assertEqual(model_audio["waveform"].shape, (1, 2, 6400))
+        self.assertEqual(source_audio["waveform"].shape, (1, 2, 6667))
+        self.assertTrue(torch.count_nonzero(model_audio["waveform"]) == 0)
+
+    @unittest.skipUnless(_HAS_TORCH, "torch not available")
+    def test_prepare_duplicates_mono_only_for_the_model(self):
+        images = torch.zeros((5, 1, 1, 1))
+        mono = torch.ones((1, 1, 10000))
+        _images, model_audio, source_audio, _fps, _frames = self.nodes.H3MaskVideoPrepare().prepare(
+            images, {"waveform": mono, "sample_rate": 32000}, 24, 1, 24
+        )
+        self.assertEqual(model_audio["waveform"].shape, (1, 2, 6400))
+        self.assertEqual(source_audio["waveform"].shape, (1, 1, 6667))
+        self.assertTrue(torch.equal(model_audio["waveform"][:, 0], model_audio["waveform"][:, 1]))
+
+    @unittest.skipUnless(_HAS_TORCH, "torch not available")
+    def test_prepare_resamples_44100_audio_to_exact_h3_ticks(self):
+        images = torch.zeros((22, 1, 1, 1))
+        waveform = torch.ones((1, 2, 50000))
+        _images, model_audio, source_audio, _fps, _frames = self.nodes.H3MaskVideoPrepare().prepare(
+            images, {"waveform": waveform, "sample_rate": 44100}, 24, 1, 24
+        )
+        self.assertEqual(model_audio["sample_rate"], 32000)
+        self.assertEqual(model_audio["waveform"].shape[-1], 29600)
+        self.assertEqual(source_audio["sample_rate"], 44100)
+        self.assertEqual(source_audio["waveform"].shape[-1], 40425)
 
 
 class TestAudioJoinSmooth(_NodesTestBase):

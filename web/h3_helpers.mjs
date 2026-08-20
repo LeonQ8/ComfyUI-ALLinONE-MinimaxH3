@@ -40,7 +40,7 @@ export function orientRes(res, orientation) {
   return flipped;
 }
 
-export function fitResolutionToAspect(sourceWidth, sourceHeight, targetWidth, targetHeight) {
+export function fitResolutionToAspect(sourceWidth, sourceHeight, targetWidth, targetHeight, maxAspect = Infinity) {
   const sw = Number(sourceWidth);
   const sh = Number(sourceHeight);
   const tw = Number(targetWidth);
@@ -59,6 +59,7 @@ export function fitResolutionToAspect(sourceWidth, sourceHeight, targetWidth, ta
       const longEdge = Math.max(w, h);
       if (shortEdge > capShort) continue;
       if (longEdge > capLong) continue;
+      if (w / h > maxAspect) continue;
       if (w * h > targetPixels) continue;
       const aspectError = Math.abs(Math.log(w / h / ratio));
       const areaError = Math.abs(Math.log((w * h) / targetPixels));
@@ -68,6 +69,35 @@ export function fitResolutionToAspect(sourceWidth, sourceHeight, targetWidth, ta
   }
   if (!best) return { width: tw, height: th };
   return { width: best.width, height: best.height };
+}
+
+export function planMaskCrop(width, height) {
+  // The H3 canvas follows the tracked mask instead of a fixed 16:9 frame.
+  // MVEx SubjectCrop targets a pixel budget on the 32 grid, preserving the
+  // mask's own aspect, so the budget must be H3-safe for ANY shape: a square
+  // crop at 0.5 MP is 707x707, inside the 768 short-edge cap. Above that a
+  // square or portrait crop breaks the cap, and the aspect is only known at
+  // runtime, so 0.5 MP is the ceiling regardless of the preset.
+  const w = Number(width) > 0 ? Number(width) : 960;
+  const h = Number(height) > 0 ? Number(height) : 544;
+  const preset = w * h / (1024 * 1024);
+  const megapixels = Math.min(preset, 0.5);
+  return {
+    width: w,
+    height: h,
+    aspectRatio: w / h,
+    megapixels: megapixels,
+    masked: true,
+  };
+}
+
+export function maskTrackingPlan(hasPaintedMask, textTarget) {
+  const hasText = Boolean(String(textTarget || "").trim());
+  // A text target makes SAM detect and track that object ("face" means the
+  // face). The painted mask only seeds the tracker when there is no text;
+  // combining both unions the painted region over the detected object and
+  // swallows the text prompt, so the tracked region blows up (measured).
+  return { maxObjects: 1, objectIndices: "0", seedPaint: Boolean(hasPaintedMask) && !hasText };
 }
 
 // Resolve which source slot drives the canvas fit for a mode.
@@ -278,4 +308,71 @@ export function queuePromptPayload(wf, clientId) {
     client_id: clientId,
     extra_data: { enable_previews: true },
   };
+}
+
+// Bounded retry for the queued-output history fallback. ComfyUI commits a
+// finished prompt to /history slightly after execution_success, so a single
+// immediate lookup can miss the output and the queued result is lost from the
+// preview. This polls /history a bounded number of times, stops the moment
+// media appears or a failure is confirmed, and gives up after the deadline so
+// no tracking leaks. Mirrored in the bundle (kept in sync).
+//
+// fetchHistory(pid) resolves the /history entry for that prompt (or null);
+// readItem(entry) extracts the media item (or null). Returns
+//   { item, failed, expired }
+// where expired is true when the deadline passed with no media and no failure.
+export async function settleQueuedOutput(pid, fetchHistory, readItem, { maxAttempts = 8, delayMs = 800, deadlineMs = 8000 } = {}) {
+  const start = Date.now();
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    let entry = null;
+    try {
+      entry = await fetchHistory(pid);
+    } catch (e) {
+      entry = null;
+    }
+    const status = (entry && entry.status) || {};
+    const statusStr = String(status.status_str || "");
+    if (statusStr === "error" || statusStr === "interrupted") {
+      return { item: null, failed: true, expired: false };
+    }
+    const item = readItem ? readItem(entry) : null;
+    if (item) return { item, failed: false, expired: false };
+    if (Date.now() - start >= deadlineMs) break;
+    if (attempt + 1 < maxAttempts) await new Promise((resolve) => setTimeout(resolve, delayMs));
+  }
+  return { item: null, failed: false, expired: true };
+}
+
+// Inject a lip-sync directive into a Mask mode prompt that preserves the
+// source soundtrack. The masked face region is regenerated from noise each
+// frame, so the model has no motion signal for the mouth; pointing it at the
+// preserved speech (<Audio 1>) is what gives the replacement talking lips.
+// Idempotent: a prompt that already names <Audio 1> is left alone. Mirrored in
+// the bundle (kept in sync).
+export function maskSpeechSyncPrompt(prompt) {
+  const text = String(prompt || "");
+  if (!text || text.includes("<Audio 1>")) return text;
+  const directive = "The replacement speaks the same words as the source speech heard in <Audio 1>, mouth moving in sync with it.";
+  if (/detailed_description:/i.test(text)) {
+    return text.replace(/(detailed_description:\s*)/i, `$1<Audio 1>: speech_drive - ${directive}\n`);
+  }
+  if (/overall_soundscape:/i.test(text)) {
+    return text.replace(/(overall_soundscape:\s*)/i, `$1<Audio 1>: speech_drive - ${directive} `);
+  }
+  return `${text}\n\n<Audio 1>: speech_drive - ${directive}`;
+}
+
+export function h3SamCheckpoints(items) {
+  return (Array.isArray(items) ? items : []).filter((name) => /sam3\.1.*multiplex.*\.safetensors$/i.test(String(name).replace(/\\/g, "/")));
+}
+
+export function mapMaskPoint(clientX, clientY, rect, width, height) {
+  const rw = Number(rect && rect.width);
+  const rh = Number(rect && rect.height);
+  const w = Number(width);
+  const h = Number(height);
+  if (!(rw > 0) || !(rh > 0) || !(w > 0) || !(h > 0)) return null;
+  const x = Math.max(0, Math.min(w - 1, (Number(clientX) - Number(rect.left || 0)) * w / rw));
+  const y = Math.max(0, Math.min(h - 1, (Number(clientY) - Number(rect.top || 0)) * h / rh));
+  return { x, y };
 }

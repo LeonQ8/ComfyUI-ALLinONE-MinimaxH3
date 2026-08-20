@@ -48,6 +48,7 @@ const MODES = [
   { key:"keyframes",   label:"Keyframes" },
   { key:"extend",      label:"Extend" },
   { key:"chain",       label:"Chain" },
+  { key:"mask",        label:"Mask" },
   { key:"image",       label:"Image" },
 ];
 
@@ -59,6 +60,7 @@ const MODE_HINTS = {
   keyframes:"Custom Keyframes - pin still images at chosen frames; the video morphs through them in order.",
   extend:"Extend - continue a source video seamlessly beyond its ending, keeping its look and sound.",
   chain:"Chain - multiple clips generated in sequence and stitched end-to-end with motion-context continuity.",
+  mask:"Mask - paint the first frame or name a target, track it through a source video, and replace only that region.",
   image:"Image - still image generation with MiniMax H3. Text to image, edit an image, or mix multiple references.",
 };
 
@@ -70,13 +72,14 @@ const MODE_DESC = {
   keyframes:"Pin still images at chosen frames; the video morphs through them in order.",
   extend:"Continue a source video seamlessly beyond its ending.",
   chain:"Clips generated in sequence, stitched with motion-context continuity.",
+  mask:"Track a painted or text-selected region and replace it with H3 reference inpainting.",
   image:"Still images with MiniMax H3. Text to image, edit an image, or mix references.",
 };
 
 const TEMPLATES = {
   t2v:"t2v.json", i2v:"i2v.json", r2v:"r2v.json", audio_drive:"audio_drive.json",
   keyframes:"keyframes.json", extend:"video_extend.json", chain:"chain_section.json",
-  image:"image.json",
+  mask:"mask.json", image:"image.json",
 };
 
 const DEFAULT_MODELS = {
@@ -85,6 +88,7 @@ const DEFAULT_MODELS = {
   clip:"qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
   vaeVideo:"minimax_h3_video_vae_fp16.safetensors",
   vaeAudio:"minimax_h3_audio_vae_fp32.safetensors",
+  sam3:"",
   tae:"taeh3.safetensors",
   upscaleDit:"none",
   upscaleVae:"none",
@@ -94,6 +98,13 @@ const LP_PRESETS = {
   fast:{res:384,frames:6,label:"Fast"},
   balanced:{res:512,frames:10,label:"Balanced"},
   detailed:{res:768,frames:10,label:"Detailed"},
+};
+const IMAGE_FILE_EXTS=[".png",".jpg",".jpeg",".webp",".bmp"];
+const VIDEO_FILE_EXTS=[".mp4",".m4v",".webm",".mkv",".avi",".mov"];
+const AUDIO_FILE_EXTS=[".mp3",".wav",".flac",".ogg",".m4a",".aac"];
+const _fileMatches=(file,exts)=>{
+  const name=String(file&&file.name||"").toLowerCase();
+  return exts.some(ext=>name.endsWith(ext));
 };
 
 function snapFrames(seconds, fps=24){
@@ -146,6 +157,14 @@ function sameSize(a, b){
   return a.width === b.width && a.height === b.height;
 }
 
+function mapMaskPoint(clientX,clientY,rect,width,height){
+  const rw=Number(rect&&rect.width),rh=Number(rect&&rect.height),w=Number(width),h=Number(height);
+  if(!(rw>0)||!(rh>0)||!(w>0)||!(h>0)) return null;
+  const x=Math.max(0,Math.min(w-1,(Number(clientX)-Number(rect.left||0))*w/rw));
+  const y=Math.max(0,Math.min(h-1,(Number(clientY)-Number(rect.top||0))*h/rh));
+  return {x,y};
+}
+
 function orientRes(res, orientation){
   if (!res || orientation !== "portrait" || res.width <= res.height) return res;
   const flipped = Object.assign({}, res, {
@@ -159,7 +178,7 @@ function orientRes(res, orientation){
   return flipped;
 }
 
-function fitResolutionToAspect(sourceWidth, sourceHeight, targetWidth, targetHeight){
+function fitResolutionToAspect(sourceWidth, sourceHeight,targetWidth,targetHeight,maxAspect=Infinity){
   const sw = Number(sourceWidth);
   const sh = Number(sourceHeight);
   const tw = Number(targetWidth);
@@ -178,6 +197,7 @@ function fitResolutionToAspect(sourceWidth, sourceHeight, targetWidth, targetHei
       const longEdge = Math.max(w, h);
       if (shortEdge > capShort) continue;
       if (longEdge > capLong) continue;
+      if(w/h>maxAspect) continue;
       if (w * h > targetPixels) continue;
       const aspectError = Math.abs(Math.log((w / h) / ratio));
       const areaError = Math.abs(Math.log((w * h) / targetPixels));
@@ -187,6 +207,32 @@ function fitResolutionToAspect(sourceWidth, sourceHeight, targetWidth, targetHei
   }
   if (!best) return { width: tw, height: th };
   return { width: best.width, height: best.height };
+}
+
+function planMaskCrop(width,height){
+  const w=Number(width)>0?Number(width):960;
+  const h=Number(height)>0?Number(height):544;
+  const preset=w*h/(1024*1024);
+  const megapixels=Math.min(preset,0.5);
+  return {width:w,height:h,aspectRatio:w/h,megapixels:megapixels,masked:true};
+}
+
+function maskTrackingPlan(hasPaintedMask,textTarget){
+  const hasText=!!String(textTarget||"").trim();
+  return {maxObjects:1,objectIndices:"0",seedPaint:!!hasPaintedMask&&!hasText};
+}
+
+// Inject a lip-sync directive into a Mask prompt that preserves the source
+// soundtrack. The masked face is regenerated from noise each frame, so the
+// model needs the preserved speech (<Audio 1>) to animate the mouth. Mirrored
+// in h3_helpers.mjs (kept in sync).
+function maskSpeechSyncPrompt(prompt){
+  const text=String(prompt||"");
+  if(!text||text.includes("<Audio 1>")) return text;
+  const directive="The replacement speaks the same words as the source speech heard in <Audio 1>, mouth moving in sync with it.";
+  if(/detailed_description:/i.test(text)) return text.replace(/(detailed_description:\s*)/i,`$1<Audio 1>: speech_drive - ${directive}\n`);
+  if(/overall_soundscape:/i.test(text)) return text.replace(/(overall_soundscape:\s*)/i,`$1<Audio 1>: speech_drive - ${directive} `);
+  return `${text}\n\n<Audio 1>: speech_drive - ${directive}`;
 }
 
 function resolveFitPrimary(cfg, slots){
@@ -671,7 +717,7 @@ function ImgSlot(optional,onFile,onDimensions,fixed){
     objectFit:"contain",display:"none",borderRadius:"11px",background:"#111",
   });
   const rm=mkRmBtn();
-  const inp=mk("input",{display:"none"},{type:"file",accept:"image/*"});
+  const inp=mk("input",{display:"none"},{type:"file",accept:IMAGE_FILE_EXTS.join(",")});
   wrap.append(icoWrap,prevEl,rm,inp);
   wrap.onmouseenter=()=>{wrap.style.borderColor=C.lime;};
   wrap.onmouseleave=()=>{wrap.style.borderColor=C.border;};
@@ -682,9 +728,11 @@ function ImgSlot(optional,onFile,onDimensions,fixed){
   wrap.addEventListener("dragleave",()=>{ _dragDepth--;if(_dragDepth<=0){_dragDepth=0;wrap.style.borderColor=C.border;wrap.style.background=C.bg2;} });
   wrap.addEventListener("drop",e=>{
     e.preventDefault();e.stopPropagation();_dragDepth=0;wrap.style.borderColor=C.border;wrap.style.background=C.bg2;
-    const f=e.dataTransfer.files[0];if(f&&f.type.startsWith("image/"))_load(f);
+    const f=e.dataTransfer.files[0];if(f&&_fileMatches(f,IMAGE_FILE_EXTS))_load(f);
   });
   let _currentName=null;
+  let _loadToken=0;
+  let _objUrl=null;
   const _showLoaded=(src,fname)=>{
     prevEl.onload=()=>{
       const _sz=sizeOf(prevEl);
@@ -696,14 +744,21 @@ function ImgSlot(optional,onFile,onDimensions,fixed){
     wrap.style.borderColor=C.lime;
   };
   const _load=async(file)=>{
+    if(!_fileMatches(file,IMAGE_FILE_EXTS)){if(_h3ShowError)_h3ShowError("Unsupported image format. Use PNG, JPG, WEBP, or BMP.");return;}
+    const token=++_loadToken;
     const objUrl=URL.createObjectURL(file);
+    if(_objUrl) URL.revokeObjectURL(_objUrl);
+    _objUrl=objUrl;
     _showLoaded(objUrl,file.name);
     const prev=_currentName;
     try{
-      _currentName=await _uploadImage(file);
+      const uploaded=await _uploadImage(file);
+      if(token!==_loadToken) return;
+      _currentName=uploaded;
       onFile(_currentName);
       if(onDimensions) onDimensions(_currentName,_pendingSize);
     }catch(err){
+      if(token!==_loadToken) return;
       console.warn("[H3One] upload:",err);
       if(prev){
         _currentName=prev;
@@ -720,6 +775,8 @@ function ImgSlot(optional,onFile,onDimensions,fixed){
   inp.onchange=()=>{if(inp.files[0])_load(inp.files[0]);};
   rm.onclick=e=>{
     e.stopPropagation();
+    _loadToken++;
+    if(_objUrl){URL.revokeObjectURL(_objUrl);_objUrl=null;}
     prevEl.src="";prevEl.style.display="none";
     rm.style.display="none";icoWrap.style.display="flex";
     resetSize();
@@ -729,6 +786,8 @@ function ImgSlot(optional,onFile,onDimensions,fixed){
   };
   const _restorePreview=(name)=>{
     if(!name) return;
+    _loadToken++;
+    if(_objUrl){URL.revokeObjectURL(_objUrl);_objUrl=null;}
     const src=api.apiURL(`/view?filename=${encodeURIComponent(name)}&type=input&subfolder=&t=${Date.now()}`);
     _currentName=name;
     _showLoaded(src,name);
@@ -752,7 +811,8 @@ function MediaSlot(type,onFile,onDimensions){
     const h=ratio>=1?Math.max(72,Math.round(PREVIEW_LONG/ratio)):PREVIEW_LONG;
     wrap.style.width=`${w}px`;wrap.style.height=`${h}px`;
   };
-  const acceptMap={video:"video/*",audio:"audio/*"};
+  const typeExts=type==="video"?VIDEO_FILE_EXTS:AUDIO_FILE_EXTS;
+  const acceptMap={video:VIDEO_FILE_EXTS.join(","),audio:AUDIO_FILE_EXTS.join(",")};
   const icons={
     video:`<rect x="2" y="2" width="20" height="20" rx="2.5"/><polygon points="10 8 16 12 10 16 10 8" fill="currentColor" stroke="none"/>`,
     audio:`<path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/>`,
@@ -860,9 +920,10 @@ function MediaSlot(type,onFile,onDimensions){
   wrap.addEventListener("dragenter",e=>{e.preventDefault();e.stopPropagation();_dragDepth++;wrap.style.borderColor=C.lime;});
   wrap.addEventListener("dragover",e=>{e.preventDefault();e.stopPropagation();});
   wrap.addEventListener("dragleave",()=>{ _dragDepth--;if(_dragDepth<=0){_dragDepth=0;wrap.style.borderColor=C.border;} });
-  wrap.addEventListener("drop",e=>{ e.preventDefault();e.stopPropagation();_dragDepth=0;const f=e.dataTransfer.files[0];if(f)_load(f); });
+  wrap.addEventListener("drop",e=>{ e.preventDefault();e.stopPropagation();_dragDepth=0;const f=e.dataTransfer.files[0];if(f&&_fileMatches(f,typeExts))_load(f); });
   wrap._hasFile=false;wrap._filename=null;
   let _objUrl=null;
+  let _loadToken=0;
   const _showLoaded=(name,objectUrl)=>{
     icoWrap.style.display="none";
     tx(loadedName,name);loadedName.style.display="block";
@@ -897,6 +958,7 @@ function MediaSlot(type,onFile,onDimensions){
     };
   }
   const _clearLoaded=()=>{
+    _loadToken++;
     icoWrap.style.display="flex";loadedName.style.display="none";rm.style.display="none";
     wrap.style.borderColor=C.border;wrap.style.background=C.bg2;
     resetSize();
@@ -912,6 +974,8 @@ function MediaSlot(type,onFile,onDimensions){
   };
   const _restorePreview=(name)=>{
     if(!name) return;
+    _loadToken++;
+    if(_objUrl){URL.revokeObjectURL(_objUrl);_objUrl=null;}
     wrap._filename=name;
     tx(loadedName,name);loadedName.style.display="block";
     icoWrap.style.display="none";rm.style.display="flex";
@@ -926,15 +990,19 @@ function MediaSlot(type,onFile,onDimensions){
     if(spkBtn) spkBtn.style.display="flex";
   };
   const _load=async(file)=>{
-    if(_objUrl){URL.revokeObjectURL(_objUrl);_objUrl=null;}
-    _objUrl=URL.createObjectURL(file);
-    const fd=new FormData();fd.append("file",file,file.name);
+    if(!_fileMatches(file,typeExts)){if(_h3ShowError)_h3ShowError(`Unsupported ${type} format.`);return;}
+    const token=++_loadToken;
+    const objectUrl=URL.createObjectURL(file);
     try{
-      const res=await fetch("/h3one/upload",{method:"POST",body:fd});
-      const data=await res.json();
-      if(!data.ok){console.error("[H3One] upload failed:",data.error);return;}
-      _showLoaded(data.filename,_objUrl);onFile(data.filename);
-    }catch(e){console.error("[H3One] upload error:",e);}
+      const filename=await _uploadMedia(file);
+      if(token!==_loadToken){URL.revokeObjectURL(objectUrl);return;}
+      if(_objUrl) URL.revokeObjectURL(_objUrl);
+      _objUrl=objectUrl;
+      _showLoaded(filename,objectUrl);onFile(filename);
+    }catch(e){
+      URL.revokeObjectURL(objectUrl);
+      if(token===_loadToken&&_h3ShowError) _h3ShowError(`${type==="video"?"Video":"Audio"} upload failed: `+fmtErr(e));
+    }
   };
   fileInp.onchange=()=>{ const f=fileInp.files[0];if(f)_load(f);fileInp.value=""; };
   rm.onclick=e=>{ e.stopPropagation();_clearLoaded(); };
@@ -956,6 +1024,165 @@ const _uploadImage=async(file)=>{
     return d.name;
   }finally{_uploadsPending--;}
 };
+const _uploadMedia=async(file)=>{
+  _uploadsPending++;
+  try{
+    const fd=new FormData();fd.append("file",file,file.name);
+    const res=await fetch("/h3one/upload",{method:"POST",body:fd});
+    const data=await res.json();
+    if(!res.ok||!data.ok||!data.filename) throw new Error(data.error||`upload failed (HTTP ${res.status})`);
+    return data.filename;
+  }finally{_uploadsPending--;}
+};
+
+function openVideoMaskEditor({videoName,maskName,onSave}){
+  return new Promise((resolve)=>{
+    const overlay=mk("div",{position:"fixed",inset:"0",zIndex:"1000001",background:"rgba(0,0,0,.88)",display:"flex",alignItems:"center",justifyContent:"center",padding:"24px",boxSizing:"border-box"});
+    const panel=mk("div",{width:"min(980px,94vw)",maxHeight:"94vh",overflowY:"auto",background:C.bg1,border:`1px solid ${C.borderH}`,borderRadius:"12px",boxShadow:"0 24px 80px rgba(0,0,0,.9)",padding:"14px",display:"flex",flexDirection:"column",gap:"10px",boxSizing:"border-box"});
+    const head=mk("div",{display:"flex",flexDirection:"column",gap:"3px"});
+    const title=mk("div",{fontSize:"13px",fontWeight:"800",color:C.text});tx(title,"Paint first-frame mask");
+    const help=mk("div",{fontSize:"10px",color:C.muted,lineHeight:"1.5"});tx(help,"Paint the whole region to replace with room to spare. For a face, cover the head, hair and neck; a tight outline around the features gets clipped by the paste. SAM 3 tracks it through the clip.");
+    head.append(title,help);
+    const stage=mk("div",{position:"relative",alignSelf:"center",flexShrink:"0",background:"#000",border:`1px solid ${C.border}`,borderRadius:"8px",overflow:"hidden",touchAction:"none"});
+    const video=mk("video",{position:"absolute",inset:"0",width:"100%",height:"100%",objectFit:"contain",display:"block"},{muted:true,preload:"auto",playsInline:true});
+    const canvas=mk("canvas",{position:"absolute",inset:"0",width:"100%",height:"100%",cursor:"crosshair",touchAction:"none"});
+    const maskCanvas=document.createElement("canvas");
+    const ctx=canvas.getContext("2d");
+    const maskCtx=maskCanvas.getContext("2d",{willReadFrequently:true});
+    stage.append(video,canvas);
+    const tools=mk("div",{display:"flex",alignItems:"center",gap:"8px",flexWrap:"wrap"});
+    const toolBtn=(label)=>{const b=mk("button",{height:"30px",padding:"0 12px",borderRadius:"7px",border:`1px solid ${C.border}`,background:C.bg2,color:C.text,fontSize:"10px",fontWeight:"700",cursor:"pointer",outline:"none"},{type:"button"});tx(b,label);return b;};
+    const drawBtn=toolBtn("Paint"),eraseBtn=toolBtn("Erase"),clearBtn=toolBtn("Clear");
+    const sizeLabel=mk("label",{display:"flex",alignItems:"center",gap:"6px",fontSize:"10px",color:C.muted});
+    const sizeText=mk("span",{});tx(sizeText,"Brush 48 px");
+    const sizeInput=mk("input",{width:"150px",accentColor:C.lime},{type:"range",min:"4",max:"512",step:"2",value:"48"});
+    sizeLabel.append(sizeText,sizeInput);
+    const maskStats=mk("div",{fontSize:"9px",color:C.muted,marginLeft:"auto"});tx(maskStats,"");
+    const status=mk("div",{fontSize:"9px",color:C.muted,marginLeft:"auto"});tx(status,maskName?"Existing mask loaded":"No saved mask");
+    const cancelBtn=toolBtn("Cancel"),saveBtn=toolBtn("Save mask");
+    saveBtn.style.borderColor=C.lime;saveBtn.style.color=C.lime;
+    tools.append(drawBtn,eraseBtn,clearBtn,sizeLabel,maskStats,status,cancelBtn,saveBtn);
+    panel.append(head,stage,tools);overlay.appendChild(panel);document.body.appendChild(overlay);
+
+    let mode="draw",drawing=false,last=null,activePointer=null,ready=false,closed=false,saving=false;
+    const renderMode=()=>{
+      drawBtn.style.borderColor=mode==="draw"?C.lime:C.border;
+      drawBtn.style.color=mode==="draw"?C.lime:C.text;
+      eraseBtn.style.borderColor=mode==="erase"?C.err:C.border;
+      eraseBtn.style.color=mode==="erase"?C.err:C.text;
+    };
+    const renderMask=()=>{
+      if(!ready) return;
+      ctx.clearRect(0,0,canvas.width,canvas.height);
+      ctx.drawImage(maskCanvas,0,0);
+      ctx.globalCompositeOperation="source-in";
+      ctx.fillStyle="rgba(255,72,72,.68)";
+      ctx.fillRect(0,0,canvas.width,canvas.height);
+      ctx.globalCompositeOperation="source-over";
+      updateMaskStats();
+    };
+    const updateMaskStats=()=>{
+      const w=maskCanvas.width,h=maskCanvas.height;
+      if(!w||!h){tx(maskStats,"");return;}
+      const data=maskCtx.getImageData(0,0,w,h).data;
+      let count=0,minX=w,minY=h,maxX=-1,maxY=-1;
+      for(let y=0;y<h;y++){
+        for(let x=0;x<w;x++){
+          if(data[(y*w+x)*4+3]>8){
+            count++;
+            if(x<minX)minX=x;if(x>maxX)maxX=x;
+            if(y<minY)minY=y;if(y>maxY)maxY=y;
+          }
+        }
+      }
+      if(!count){tx(maskStats,"Mask: empty");return;}
+      const pct=(100*count/(w*h)).toFixed(1);
+      tx(maskStats,`Mask: ${count.toLocaleString()} px · ${pct}% of frame · ${maxX-minX+1}×${maxY-minY+1}px`);
+      maskStats.style.color=C.lime;
+    };
+    const close=(value=null)=>{
+      if(closed) return;
+      closed=true;
+      video.pause();video.removeAttribute("src");video.load();overlay.remove();resolve(value);
+    };
+    const loadMask=()=>{
+      ready=false;
+      if(!maskName){ready=true;renderMask();return;}
+      const img=new Image();
+      img.onload=()=>{
+        if(closed) return;
+        const tmp=document.createElement("canvas");tmp.width=canvas.width;tmp.height=canvas.height;
+        const tc=tmp.getContext("2d",{willReadFrequently:true});tc.drawImage(img,0,0,tmp.width,tmp.height);
+        const data=tc.getImageData(0,0,tmp.width,tmp.height);
+        for(let i=0;i<data.data.length;i+=4){
+          const v=Math.max(data.data[i],data.data[i+1],data.data[i+2]);
+          data.data[i]=255;data.data[i+1]=255;data.data[i+2]=255;data.data[i+3]=v;
+        }
+        maskCtx.putImageData(data,0,0);ready=true;renderMask();
+      };
+      img.onerror=()=>{if(closed)return;tx(status,"Could not load old mask");ready=true;renderMask();};
+      img.src=api.apiURL(`/view?filename=${encodeURIComponent(maskName)}&type=input&subfolder=&t=${Date.now()}`);
+    };
+    video.onloadedmetadata=()=>{
+      const vw=video.videoWidth||640,vh=video.videoHeight||360;
+      const maxW=Math.min(920,window.innerWidth*.86),maxH=Math.min(720,window.innerHeight*.7);
+      const scale=Math.min(maxW/vw,maxH/vh);
+      stage.style.width=Math.max(1,Math.round(vw*scale))+"px";
+      stage.style.height=Math.max(1,Math.round(vh*scale))+"px";
+      canvas.width=vw;canvas.height=vh;maskCanvas.width=vw;maskCanvas.height=vh;
+      const brush=Math.max(8,Math.round(Math.min(vw,vh)*.05));
+      sizeInput.max=String(Math.max(64,Math.round(Math.min(vw,vh)*.3)));
+      sizeInput.value=String(brush);tx(sizeText,`Brush ${brush} px`);
+      loadMask();
+      try{video.currentTime=Math.min(.01,video.duration||.01);}catch(e){}
+    };
+    video.onerror=()=>{tx(status,"Source video could not be opened");status.style.color=C.err;};
+    video.src=api.apiURL(`/view?filename=${encodeURIComponent(videoName)}&type=input&subfolder=&t=${Date.now()}`);
+
+    const point=(e)=>mapMaskPoint(e.clientX,e.clientY,canvas.getBoundingClientRect(),canvas.width,canvas.height);
+    const paintDot=(p)=>{
+      const radius=Number(sizeInput.value)/2;
+      maskCtx.save();
+      maskCtx.globalCompositeOperation=mode==="erase"?"destination-out":"source-over";
+      maskCtx.fillStyle="#fff";maskCtx.beginPath();maskCtx.arc(p.x,p.y,radius,0,Math.PI*2);maskCtx.fill();maskCtx.restore();
+    };
+    canvas.onpointerdown=(e)=>{
+      if(!ready||activePointer!==null) return;e.preventDefault();activePointer=e.pointerId;canvas.setPointerCapture(e.pointerId);drawing=true;last=point(e);if(last){paintDot(last);renderMask();}
+    };
+    canvas.onpointermove=(e)=>{
+      if(!drawing||e.pointerId!==activePointer||!last) return;e.preventDefault();const p=point(e);if(!p)return;
+      maskCtx.save();maskCtx.globalCompositeOperation=mode==="erase"?"destination-out":"source-over";
+      maskCtx.strokeStyle="#fff";maskCtx.lineWidth=Number(sizeInput.value);maskCtx.lineCap="round";maskCtx.lineJoin="round";
+      maskCtx.beginPath();maskCtx.moveTo(last.x,last.y);maskCtx.lineTo(p.x,p.y);maskCtx.stroke();maskCtx.restore();last=p;renderMask();
+    };
+    const stop=(e)=>{if(e.pointerId!==activePointer)return;drawing=false;last=null;activePointer=null;};
+    canvas.onpointerup=stop;canvas.onpointercancel=stop;
+    drawBtn.onclick=()=>{mode="draw";renderMode();};eraseBtn.onclick=()=>{mode="erase";renderMode();};
+    clearBtn.onclick=()=>{if(!ready)return;maskCtx.clearRect(0,0,maskCanvas.width,maskCanvas.height);renderMask();tx(status,"Mask cleared");};
+    sizeInput.oninput=()=>tx(sizeText,`Brush ${sizeInput.value} px`);
+    cancelBtn.onclick=()=>{if(!saving)close(null);};
+    overlay.addEventListener("pointerdown",e=>e.stopPropagation());
+    saveBtn.onclick=async()=>{
+      if(!ready||saving) return;
+      const pixels=maskCtx.getImageData(0,0,maskCanvas.width,maskCanvas.height).data;
+      let painted=false;for(let i=3;i<pixels.length;i+=4){if(pixels[i]>8){painted=true;break;}}
+      if(!painted){tx(status,"Paint an area first");status.style.color=C.err;return;}
+      saving=true;saveBtn.disabled=true;cancelBtn.disabled=true;tx(status,"Uploading mask...");status.style.color=C.muted;
+      try{
+        const out=document.createElement("canvas");out.width=maskCanvas.width;out.height=maskCanvas.height;
+        const oc=out.getContext("2d");oc.fillStyle="#000";oc.fillRect(0,0,out.width,out.height);oc.drawImage(maskCanvas,0,0);
+        const blob=await new Promise((res,rej)=>out.toBlob(b=>b?res(b):rej(new Error("Mask encoding failed")),"image/png"));
+        const file=new File([blob],`h3_mask_${Date.now()}.png`,{type:"image/png"});
+        const name=await _uploadImage(file);if(closed)return;await onSave(name);close(name);
+      }catch(e){saving=false;saveBtn.disabled=false;cancelBtn.disabled=false;tx(status,fmtErr(e));status.style.color=C.err;}
+    };
+    renderMode();
+  });
+}
+
+function h3SamCheckpoints(items){
+  return (Array.isArray(items)?items:[]).filter(m=>/sam3\.1.*multiplex.*\.safetensors$/i.test(String(m).replace(/\\/g,"/")));
+}
 
 function loadState(){ try{return JSON.parse(localStorage.getItem(LS_KEY)||"{}");}catch(e){return{};} }
 function saveState(s){ try{localStorage.setItem(LS_KEY,JSON.stringify(s));}catch(e){} }
@@ -973,6 +1200,11 @@ let _activeShowLatest=null;
 let _activeShownFiles=[];
 let _batchIds=[];
 let _batchDone=0;
+let _batchFailures=0;
+let _settledBatchIds=new Set();
+let _expectedBatchCount=0;
+let _batchSubmissionOpen=false;
+let _activeRunMetaByPrompt=new Map();
 let _listenersRegistered=false;
 let _finishWatchTimer=null;
 let _finishDone=false;
@@ -997,22 +1229,46 @@ const _armFinishWatch=()=>{
     try{
       const r=await api.fetchApi(`/history/${encodeURIComponent(_activePromptId)}`);
       const h=await r.json();
-      if(h&&h[_activePromptId]){
-        _stopFinishWatch();
-        _batchDone=_batchIds.length;
-        _finishRun();
+      const entry=h&&h[_activePromptId];
+      const status=entry&&entry.status||{};
+      const terminal=["success","error","interrupted"].includes(status.status_str);
+      if(!terminal) return;
+      const pending=[];
+      for(const id of _batchIds){
+        if(_settledBatchIds.has(id)) continue;
+        let current=id===_activePromptId?entry:null;
+        if(!current){const hr=await api.fetchApi(`/history/${encodeURIComponent(id)}`);const hd=await hr.json();current=hd&&hd[id];}
+        const currentStatus=current&&current.status||{};
+        if(!["success","error","interrupted"].includes(currentStatus.status_str)) return;
+        pending.push([id,currentStatus]);
       }
+      _stopFinishWatch();
+      for(const [id,currentStatus] of pending){
+        const messages=Array.isArray(currentStatus.messages)?currentStatus.messages:[];
+        const failure=messages.find(message=>Array.isArray(message)&&["execution_error","execution_interrupted"].includes(message[0]));
+        const failed=currentStatus.status_str!=="success"||!!failure;
+        if(failed){const detail=failure&&failure[1]||{};_activeShowError?.(fmtErr(detail.exception_message||detail.error||"Execution failed."));}
+        await _finishRun(id,failed);
+      }
+      if(!pending.length) _finishRun(null,false);
     }catch(e){}
   },2500);
 };
-const _finishRun=async()=>{
+const _finishRun=async(pid=null,failed=false)=>{
   if(_finishDone) return;
   if(!_activeNode) return;
   if(_activeNode._h3_S && _activeNode._h3_S.generating!==true) return;
   if(_batchIds.length){
-    _batchDone++;
-    if(_batchDone<_batchIds.length){
-      _activeSetStage?.(`Done ${_batchDone}/${_batchIds.length}`,Math.round(_batchDone/_batchIds.length*100));
+    if(pid){
+      if(!_batchIds.includes(pid)||_settledBatchIds.has(pid)) return;
+      _settledBatchIds.add(pid);
+    }
+    if(failed) _batchFailures++;
+    _batchDone=_settledBatchIds.size;
+    if(_batchSubmissionOpen) return;
+    const expected=_expectedBatchCount||_batchIds.length;
+    if(_batchDone<expected){
+      if(pid) _activeSetStage?.(`Done ${_batchDone}/${expected}`,Math.round(_batchDone/expected*100));
       return;
     }
   }
@@ -1022,7 +1278,7 @@ const _finishRun=async()=>{
   const _elapsed=Date.now()-_activeGenStartTs;
   _activeShowTime?.(_elapsed);
   let tries=0;
-  while(tries<12&&!_activeShownFiles.length){
+  while(tries<12&&!_activeShownFiles.length&&_batchFailures<_batchIds.length){
     await _activeShowLatest?.();
     if(_activeShownFiles.length) break;
     tries++;
@@ -1036,7 +1292,61 @@ const _finishRun=async()=>{
 // -- Queued-job counter: shows how many + Queue jobs are still waiting and in
 // which modes. Tracked per prompt_id; reconciled against GET /queue so external
 // clears (ComfyUI's own queue panel) are reflected instead of leaking.
-const _QUEUE_MODE_SHORT={t2v:"T2V",i2v:"I2V",r2v:"R2V",audio_drive:"Audio",keyframes:"KF",extend:"Ext",chain:"Chain",image:"Img"};
+const _QUEUE_MODE_SHORT={t2v:"T2V",i2v:"I2V",r2v:"R2V",audio_drive:"Audio",keyframes:"KF",extend:"Ext",chain:"Chain",mask:"Mask",image:"Img"};
+const _mediaItemFromOutput=(out)=>{
+  if(!out) return null;
+  const vids=out.videos||out.gifs||null;
+  if(Array.isArray(vids)&&vids.length) return vids[vids.length-1];
+  const imgs=out.images||null;
+  if(Array.isArray(imgs)&&imgs.length){
+    const im=imgs[imgs.length-1];
+    const animated=!!(out.animated&&out.animated.length);
+    return {filename:im.filename,subfolder:im.subfolder||"",type:im.type||"output",kind:animated?"video":"image"};
+  }
+  return null;
+};
+const _mediaItemFromHistory=(entry)=>{
+  const outputs=Object.values(entry&&entry.outputs||{}).reverse();
+  for(const out of outputs){const item=_mediaItemFromOutput(out);if(item)return item;}
+  return null;
+};
+// Bounded retry for the queued-output history fallback. ComfyUI commits a
+// finished prompt to /history slightly after execution_success, so the old
+// single lookup could miss the output and drop the queued result. This keeps
+// the queue entry and badge while polling /history a bounded number of times,
+// stops the moment media appears or a failure is confirmed, and cleans up
+// after the deadline. Mirrored in h3_helpers.mjs (settleQueuedOutput).
+const _settleQueuedJob=async(pid,qentry)=>{
+  if(qentry._settling) return;
+  qentry._settling=true;
+  const MAX_ATTEMPTS=8;
+  const DEADLINE_MS=8000;
+  const start=Date.now();
+  let failed=false;
+  for(let attempt=0;attempt<MAX_ATTEMPTS;attempt++){
+    if(qentry.shown) break;
+    let entry=null;
+    try{
+      const r=await api.fetchApi(`/history/${encodeURIComponent(pid)}`);
+      const h=await r.json();
+      entry=h&&h[pid]||null;
+    }catch(e){entry=null;}
+    const st=String(entry&&entry.status&&entry.status.status_str||"");
+    if(st==="error"||st==="interrupted"){failed=true;break;}
+    const item=_mediaItemFromHistory(entry);
+    if(item&&qentry.node&&qentry.node._h3_showQueued){
+      qentry.shown=true;
+      qentry.node._h3_showQueued(item);
+      break;
+    }
+    if(Date.now()-start>=DEADLINE_MS) break;
+    if(attempt+1<MAX_ATTEMPTS) await new Promise(res=>setTimeout(res,800));
+  }
+  _queuedJobs.delete(pid);
+  _renderQueueBadge();
+  if(!_queuedJobs.size) _stopQueueSync();
+  if(failed&&_activeQueueBtn){ _activeQueueBtn.title="Queued job failed."; _activeQueueBtn._flash("failed"); }
+};
 const _renderQueueBadge=()=>{
   const b=_activeQueueBadge;
   if(!b) return;
@@ -1144,13 +1454,20 @@ app.registerExtension({
           lastFrameSize:   (saved.lastFrameSize&&saved.lastFrameSize.width>0&&saved.lastFrameSize.height>0)?{width:Number(saved.lastFrameSize.width),height:Number(saved.lastFrameSize.height)}:null,
           firstFrameOrientation: ["landscape","portrait"].includes(saved.firstFrameOrientation)?saved.firstFrameOrientation:null,
           lastFrameOrientation:  ["landscape","portrait"].includes(saved.lastFrameOrientation)?saved.lastFrameOrientation:null,
-          refImages:       Array.isArray(saved.refImages)?saved.refImages:[],
+          refImages:       (Array.isArray(saved.refImages)?saved.refImages:[]).filter(Boolean).slice(0,9),
           refImageSizes:   (saved.refImageSizes&&typeof saved.refImageSizes==="object"&&!Array.isArray(saved.refImageSizes))?saved.refImageSizes:{},
-          refVideos:       (Array.isArray(saved.refVideos)?saved.refVideos:[]).map(v=>(typeof v==="string")?{name:v,useAudio:false}:{name:(v&&v.name)||"",useAudio:!!(v&&v.useAudio),width:(v&&Number(v.width))||null,height:(v&&Number(v.height))||null}),
-          refAudios:       Array.isArray(saved.refAudios)?saved.refAudios:[],
+          refVideos:       (Array.isArray(saved.refVideos)?saved.refVideos:[]).map(v=>(typeof v==="string")?{name:v,useAudio:false}:{name:(v&&v.name)||"",useAudio:!!(v&&v.useAudio),width:(v&&Number(v.width))||null,height:(v&&Number(v.height))||null}).filter(v=>v.name).slice(0,3),
+          refAudios:       (Array.isArray(saved.refAudios)?saved.refAudios:[]).filter(Boolean).slice(0,3),
           audioFile:       saved.audioFile||null,
           extendVideo:     saved.extendVideo||null,
           extendVideoSize: (saved.extendVideoSize&&saved.extendVideoSize.width>0&&saved.extendVideoSize.height>0)?{width:Number(saved.extendVideoSize.width),height:Number(saved.extendVideoSize.height)}:null,
+          maskVideo:       saved.maskVideo||null,
+          maskVideoSize:   (saved.maskVideoSize&&saved.maskVideoSize.width>0&&saved.maskVideoSize.height>0)?{width:Number(saved.maskVideoSize.width),height:Number(saved.maskVideoSize.height)}:null,
+          maskSeed:        saved.maskSeed||null,
+          maskTarget:      saved.maskTarget||"",
+          maskThreshold:   Number.isFinite(Number(saved.maskThreshold))?Number(saved.maskThreshold):0.5,
+          maskCropScale:   Number.isFinite(Number(saved.maskCropScale))?Number(saved.maskCropScale):1.5,
+          maskRegenerateAudio: saved.maskRegenerateAudio===true,
           kf:              (Array.isArray(saved.kf)&&saved.kf.length)?saved.kf.map(k=>({img:k.img||null,pos:k.pos||0,width:(k&&Number(k.width))||null,height:(k&&Number(k.height))||null})):[{img:null,pos:1,width:null,height:null},{img:null,pos:62,width:null,height:null},{img:null,pos:124,width:null,height:null}],
           chainClips:      Array.isArray(saved.chainClips)&&saved.chainClips.length? saved.chainClips : [{prompt:"",duration:5},{prompt:"",duration:5}],
           models:          Object.assign({}, DEFAULT_MODELS, saved.models||{}),
@@ -1181,13 +1498,17 @@ app.registerExtension({
           imgW:            planImageCanvas({mode:"custom",width:saved.imgW||1024,height:saved.imgH||1024}).width,
           imgH:            planImageCanvas({mode:"custom",width:saved.imgW||1024,height:saved.imgH||1024}).height,
           imgProfile:      saved.imgProfile||"base_quality_20",
-          imgRefs:         Array.isArray(saved.imgRefs)?saved.imgRefs:[],
+          imgRefs:         (Array.isArray(saved.imgRefs)?saved.imgRefs:[]).filter(Boolean).slice(0,9),
           imgEditSrc:      typeof saved.imgEditSrc==="string"?saved.imgEditSrc:((saved.imgSub==="edit"&&saved.imgRefs&&saved.imgRefs[0])||null),
           imgRefsSize:     (saved.imgRefsSize&&typeof saved.imgRefsSize==="object"&&!Array.isArray(saved.imgRefsSize))?saved.imgRefsSize:{},
           resOrientation:  ["auto","landscape","portrait"].includes(saved.resOrientation)?saved.resOrientation:"auto",
         };
       }
       const S=self._h3_S;
+      S.refImages=(Array.isArray(S.refImages)?S.refImages:[]).filter(Boolean).slice(0,9);
+      S.refVideos=(Array.isArray(S.refVideos)?S.refVideos:[]).filter(v=>v&&(typeof v==="string"||v.name)).slice(0,3);
+      S.refAudios=(Array.isArray(S.refAudios)?S.refAudios:[]).filter(Boolean).slice(0,3);
+      S.imgRefs=(Array.isArray(S.imgRefs)?S.imgRefs:[]).filter(Boolean).slice(0,9);
       const _fitCfgFor=(state=S)=>{
         if(!state.fitCfg||typeof state.fitCfg!=="object") state.fitCfg={};
         if(!state.fitCfg[state.mode]||typeof state.fitCfg[state.mode]!=="object") state.fitCfg[state.mode]={key:null,mode:"fit",custom:null};
@@ -1208,6 +1529,7 @@ app.registerExtension({
       let _updPlaceholderLabelFn=null;
       let _updateFramesLabel=null;
       let _syncLiveToggle=null;
+      let _workflowBuildBusy=false;
       const _applyAccent=(hex)=>{
         S.accent=hex;persist();
         document.documentElement.style.setProperty("--h3accent",hex);
@@ -1232,6 +1554,9 @@ function persist(){
           refImages:S.refImages,refImageSizes:S.refImageSizes,
           refVideos:S.refVideos,refAudios:S.refAudios,
           audioFile:S.audioFile,extendVideo:S.extendVideo,extendVideoSize:S.extendVideoSize,
+          maskVideo:S.maskVideo,maskVideoSize:S.maskVideoSize,maskSeed:S.maskSeed,
+          maskTarget:S.maskTarget,maskThreshold:S.maskThreshold,maskCropScale:S.maskCropScale,
+          maskRegenerateAudio:S.maskRegenerateAudio,
           kf:(S.kf||[]).map(k=>({img:k.img||null,pos:k.pos||0,width:k.width||null,height:k.height||null})),
           models:S.models,speedLora:S.speedLora,audioOn:S.audioOn,fps:S.fps,
           soundEnabled:S.soundEnabled,sound:S.sound,accent:S.accent,mcLength:S.mcLength,
@@ -1301,6 +1626,8 @@ function persist(){
           (state.kf||[]).forEach((k,i)=>{ const r=_kfSize(state,i); if(r) push(`kf:${i}`,r.label,r); });
         } else if(mode==="extend"){
           push("src","Source video",state.extendVideoSize);
+        } else if(mode==="mask"){
+          push("masksrc","Source video",state.maskVideoSize);
         }
         return out;
       };
@@ -1322,6 +1649,7 @@ function persist(){
 
       const _effectiveResOrientation=(state=S)=>{
         if(state.resOrientation!=="auto") return state.resOrientation;
+        if(state.mode==="mask") return "landscape";
         const src=_fitSourceSize(state);
         if(!src) return "landscape";
         return aspect(src.width,src.height)||"landscape";
@@ -1536,9 +1864,10 @@ function persist(){
         keyframes:'<path d="M12 4l7 8-7 8-7-8 7-8z"/>',
         extend:'<path d="M4 12h14M13 6l6 6-6 6"/>',
         chain:'<path d="M10.5 13.5a4 4 0 005.7 0l2.8-2.8a4 4 0 00-5.7-5.7l-1.4 1.4"/><path d="M13.5 10.5a4 4 0 00-5.7 0L5 13.3a4 4 0 005.7 5.7l1.4-1.4"/>',
+        mask:'<path d="M4 4h16v16H4z"/><path d="M8 15c2-5 5-7 9-8M7 17l3-1-2-2-1 3z"/>',
         image:'<rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="8.5" cy="10" r="1.5"/><path d="M6 17l4-4 3 3 2-2 3 3"/>',
       };
-      const MODE_SHORT={t2v:"T2V",i2v:"I2V",r2v:"R2V",audio_drive:"Audio",keyframes:"Keys",extend:"Extend",chain:"Chain",image:"Image"};
+      const MODE_SHORT={t2v:"T2V",i2v:"I2V",r2v:"R2V",audio_drive:"Audio",keyframes:"Keys",extend:"Extend",chain:"Chain",mask:"Mask",image:"Image"};
       const modesWrap=mk("div",{}, {className:"h3-modes"});
       const modeEls={};
       const _updateTabs=()=>{
@@ -1585,7 +1914,7 @@ function persist(){
       settBtnRow.append(settRefresh,settClose);
       settHdr.append(settTitle,settBtnRow);
 
-      let _M={diffusion:[],text_encoders:[],vaes:[],loras:[]};
+      let _M={checkpoints:[],diffusion:[],text_encoders:[],vaes:[],loras:[]};
       const modelDDs={};
       const _mkModelRow=(key,label,items=[],onChange)=>{
         const w=mk("div",{marginBottom:"12px"});
@@ -1600,6 +1929,8 @@ function persist(){
       const clipRow=_mkModelRow("clip","Text encoder (CLIP)");
       const vaeVRow=_mkModelRow("vaeVideo","Video VAE");
       const vaeARow=_mkModelRow("vaeAudio","Audio VAE");
+      const sam3Row=_mkModelRow("sam3","SAM 3 tracker checkpoint");
+      sam3Row.firstChild.appendChild(infoIcon("Used only by Mask mode. Install sam3.1_multiplex_fp16.safetensors in a ComfyUI checkpoints model folder, then refresh models."));
       const taeRow=_mkModelRow("tae","Live Preview decoder (TAEH3)");
       taeRow.firstChild.appendChild(infoIcon("The tiny decoder used by the Live Preview toggle under the video. Every taeh3.safetensors found in a ComfyUI models/vae_approx folder is listed here. The node auto-picks one when your selection goes missing; change it here if you want a specific copy."));
       const upMethodWrap=mk("div",{marginBottom:"12px"});
@@ -1662,7 +1993,7 @@ function persist(){
       tx(supBtn,"Buy me a coffee");
       supBtn.onclick=()=>window.open(SUPPORT_URL,"_blank");
       supWrap.append(supCap,supBtn);
-      settingsOverlay.append(settHdr,unetT2VRow,unetR2VRow,clipRow,vaeVRow,vaeARow,taeRow,upMethodWrap,upDitRow,upVaeRow,upHint,speedLoraWrap,audioToggle.el,soundToggle.el,playOnFinishToggle.el,sndWrap,accWrap,supWrap);
+      settingsOverlay.append(settHdr,unetT2VRow,unetR2VRow,clipRow,vaeVRow,vaeARow,sam3Row,taeRow,upMethodWrap,upDitRow,upVaeRow,upHint,speedLoraWrap,audioToggle.el,soundToggle.el,playOnFinishToggle.el,sndWrap,accWrap,supWrap);
 
       // -- HISTORY OVERLAY ---------------------------------------------------
       const historyOverlay=mk("div",{
@@ -1701,7 +2032,7 @@ function persist(){
       let _histItems=[];
       let _histOpenId=null;
       // History row mode metadata: per-mode icon+color, upscale methods, turbo
-      const _HIST_MODE_COLORS={t2v:"#c0a996",i2v:"#5aa8ff",r2v:"#5fd08c",audio_drive:"#c07fff",keyframes:"#ffc266",extend:"#7ed491",chain:"#4dd0e1",image:"#f0a0c0"};
+      const _HIST_MODE_COLORS={t2v:"#c0a996",i2v:"#5aa8ff",r2v:"#5fd08c",audio_drive:"#c07fff",keyframes:"#ffc266",extend:"#7ed491",chain:"#4dd0e1",mask:"#ff7f6e",image:"#f0a0c0"};
       const _HIST_UP_COLORS={rtx:"#5aa8ff",seedvr:"#c07fff"};
       const _histModeMeta=(mode)=>{
         const m=String(mode||"");
@@ -1883,7 +2214,7 @@ function persist(){
         display:"none",flexDirection:"column",padding:"16px",boxSizing:"border-box",zIndex:"50",
         borderRadius:"8px",overflow:"hidden",opacity:"0",transition:"opacity .22s ease",transform:"translateY(6px)",
       });
-      const _LIB_MODE_LBL={t2v:"T2V",i2v:"I2V",r2v:"R2V",audio_drive:"Audio Drive",keyframes:"Keyframes",extend:"Extend",chain:"Chain",image:"Image"};
+      const _LIB_MODE_LBL={t2v:"T2V",i2v:"I2V",r2v:"R2V",audio_drive:"Audio Drive",keyframes:"Keyframes",extend:"Extend",chain:"Chain",mask:"Mask",image:"Image"};
       const libHdr=mk("div",{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:"12px"});
       const libTitle=mk("div",{fontSize:"13px",fontWeight:"700",letterSpacing:".06em",textTransform:"uppercase",color:C.text});
       tx(libTitle,"Library");
@@ -2444,7 +2775,7 @@ function persist(){
 
         // -- custom presets (all modes, labeled) --
         const allCustom=[];
-        const MODE_LABELS={t2v:"T2V",i2v:"I2V",r2v:"R2V",audio_drive:"Audio Drive",keyframes:"Keyframes",extend:"Extend",chain:"Chain"};
+        const MODE_LABELS={t2v:"T2V",i2v:"I2V",r2v:"R2V",audio_drive:"Audio Drive",keyframes:"Keyframes",extend:"Extend",chain:"Chain",mask:"Mask"};
         Object.keys(_discCustom||{}).forEach(mode=>{
           (Array.isArray(_discCustom[mode])?_discCustom[mode]:[]).forEach(pr=>{
             allCustom.push({name:pr.name,prompt:pr.prompt,mode});
@@ -2521,10 +2852,11 @@ function persist(){
       const chainArea=mk("div",{display:"flex",flexDirection:"column",gap:"6px"});
       const adArea=mk("div",{display:"flex",gap:"10px"});
       const exArea=mk("div",{display:"flex",flexDirection:"column",gap:"6px"});
+      const maskArea=mk("div",{display:"flex",flexDirection:"column",gap:"8px"});
       const imgArea=mk("div",{display:"flex",flexDirection:"column",gap:"8px"});
 
       const _clearSections=()=>{
-        [i2vArea,kfArea,refArea,chainArea,adArea,exArea,imgArea].forEach(a=>a.style.display="none");
+        [i2vArea,kfArea,refArea,chainArea,adArea,exArea,maskArea,imgArea].forEach(a=>a.style.display="none");
       };
 
       // -- Image mode (H3 Studio still images) --------------------------------
@@ -2606,20 +2938,21 @@ function persist(){
       imgArea.append(imgSubRow,imgProfRow);
       const imgRefsBox=mk("div",{display:"flex",flexDirection:"column",gap:"6px"});
       imgArea.appendChild(imgRefsBox);
+      let _imgRefUploadsPending=0;
       const _renderImgRefs=()=>{
         imgRefsBox.innerHTML="";
         const sub=S.imgSub;
         if(sub==="t2i") return;
         const isEdit=sub==="edit";
         const maxRefs=isEdit?1:9;
-        const capLbl=isEdit?"Source image":("Reference images ("+S.imgRefs.length+"/"+maxRefs+")");
+        const capLbl=isEdit?"Source image":("Reference images ("+S.imgRefs.length+"/"+maxRefs+(_imgRefUploadsPending?", uploading":"")+")");
         const capE=mk("div",{fontSize:"9px",fontWeight:"700",color:C.muted,textTransform:"uppercase",letterSpacing:".07em"});
         tx(capE,capLbl);
         imgRefsBox.appendChild(capE);
         const row=mk("div",{display:"grid",gridTemplateColumns:"repeat(auto-fill, 76px)",gap:"8px",alignItems:"start",justifyContent:"start"});
         if(isEdit){
           const name=S.imgEditSrc||"";
-          const slot=ImgSlot(false,n=>{ if(n===null){S.imgEditSrc=null;} else { S.imgEditSrc=n; persist(); } _renderImgRefs(); },(name,size)=>{
+          const slot=ImgSlot(false,n=>{ if(S.imgSub!=="edit")return;if(n===null){S.imgEditSrc=null;}else{S.imgEditSrc=n;persist();}_renderImgRefs(); },(name,size)=>{
             if(name&&size){ S.imgRefsSize[name]=size; persist(); }
             if(size&&size.width>0&&size.height>0){
               const fit=fitResolutionToAspect(size.width,size.height,1344,768);
@@ -2633,7 +2966,7 @@ function persist(){
           if(name) slot._restorePreview(name);
         } else {
           S.imgRefs.slice(0,maxRefs).forEach((name,idx)=>{
-            const slot=ImgSlot(false,n=>{ if(n===null){S.imgRefs.splice(idx,1);} else { S.imgRefs[idx]=n; persist(); } _renderImgRefs(); },(name,size)=>{
+            const slot=ImgSlot(false,n=>{const current=S.imgRefs.indexOf(name);if(current<0)return;if(n===null)S.imgRefs.splice(current,1);else S.imgRefs[current]=n;persist();_renderImgRefs();},(name,size)=>{
               if(name&&size){ S.imgRefsSize[name]=size; persist(); }
             },true);
             const card=mk("div",{display:"flex",flexDirection:"column",gap:"3px",alignItems:"center"});
@@ -2645,28 +2978,26 @@ function persist(){
             if(name) slot._restorePreview(name);
           });
         }
-        if(sub==="refmix"&&S.imgRefs.length<9){
+        if(sub==="refmix"&&!_imgRefUploadsPending&&S.imgRefs.length<9){
           const addImg=mk("div",{width:"72px",height:"72px",borderRadius:"12px",border:"1.5px dashed rgba(90,168,255,.4)",background:"rgba(90,168,255,.05)",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",color:"rgba(90,168,255,.8)",fontSize:"18px",fontWeight:"700",flexShrink:"0"});
           tx(addImg,"+");
-          const upImg=mk("input",{display:"none"},{type:"file",accept:"image/*"});
+          const upImg=mk("input",{display:"none"},{type:"file",accept:IMAGE_FILE_EXTS.join(",")});
           row.append(addImg,upImg);
           addImg.onclick=()=>{
-            if(S.imgRefs.length>=9) return;
+            if(_imgRefUploadsPending||S.imgRefs.length>=9) return;
             upImg.value="";
             upImg.onchange=async()=>{
-              if(!upImg.files[0]) return;
+              const file=upImg.files[0];
+              if(!file||!_fileMatches(file,IMAGE_FILE_EXTS)||_imgRefUploadsPending||S.imgRefs.length>=9) return;
+              _imgRefUploadsPending++;_renderImgRefs();
               try{
-                const _nm=await _uploadImage(upImg.files[0]);
-                S.imgRefs.push(_nm);
-                const _sz=await _captureFileSize(upImg.files[0]);
-                if(_sz) S.imgRefsSize[_nm]=_sz;
-                persist();
+                const _nm=await _uploadImage(file);
+                if(S.imgRefs.length<9){S.imgRefs.push(_nm);const _sz=await _captureFileSize(file);if(_sz)S.imgRefsSize[_nm]=_sz;persist();}
               }catch(e){
                 console.warn(e);
                 if(_h3ShowError)_h3ShowError("Image upload failed: "+fmtErr(e));
               }
-              upImg.value="";
-              _renderImgRefs();
+              finally{_imgRefUploadsPending--;upImg.value="";_renderImgRefs();}
             };
             upImg.click();
           };
@@ -2705,14 +3036,17 @@ function persist(){
       if(S.lastFrame) lastSlot._restorePreview(S.lastFrame);
 
       // R2V refs
+      let _refImageUploadsPending=0;
+      let _refVideoUploadsPending=0;
+      let _refAudioUploadsPending=0;
       const _renderRefs=()=>{
         refArea.innerHTML="";
         const imgCap=mk("div",{fontSize:"9px",fontWeight:"700",color:C.muted,textTransform:"uppercase",letterSpacing:".07em"});
-        tx(imgCap,`Reference images (${S.refImages.length}/9)`);
+        tx(imgCap,`Reference images (${S.refImages.length}/9${_refImageUploadsPending?", uploading":""})`);
         refArea.appendChild(imgCap);
         const imgRow=mk("div",{display:"flex",gap:"8px",flexWrap:"wrap"});
         S.refImages.forEach((name,idx)=>{
-          const slot=ImgSlot(false,n=>{ if(n===null){S.refImages.splice(idx,1);} else { S.refImages[idx]=n; persist(); } _renderRefs(); },(nm,size)=>{ if(nm&&size){ S.refImageSizes[nm]=size; persist(); } });
+          const slot=ImgSlot(false,n=>{const current=S.refImages.indexOf(name);if(current<0)return;if(n===null)S.refImages.splice(current,1);else S.refImages[current]=n;persist();_renderRefs();},(nm,size)=>{if(nm&&size){S.refImageSizes[nm]=size;persist();}});
           const card=mk("div",{display:"flex",flexDirection:"column",gap:"3px",alignItems:"center"});
           card.appendChild(slot.el);
           card.appendChild(_mkFitChip(`ref:${idx}`,`Reference ${idx+1}`));
@@ -2721,29 +3055,37 @@ function persist(){
         });
         const addImg=mk("div",{width:"72px",height:"72px",borderRadius:"12px",border:`1.5px dashed rgba(90,168,255,.4)`,background:"rgba(90,168,255,.05)",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",color:"rgba(90,168,255,.8)",fontSize:"18px",fontWeight:"700",flexShrink:"0"});
         tx(addImg,"+");
-        const upImg=mk("input",{display:"none"},{type:"file",accept:"image/*"});
+        const upImg=mk("input",{display:"none"},{type:"file",accept:IMAGE_FILE_EXTS.join(",")});
+        if(_refImageUploadsPending||S.refImages.length>=9) addImg.style.display="none";
         imgRow.append(addImg,upImg);
         refArea.appendChild(imgRow);
         const imgHint=mk("div",{fontSize:"8px",color:C.muted,lineHeight:"1.5",marginTop:"2px"});
         tx(imgHint,"The video starts from the first image. The other images guide the subject's identity and style, they do not appear as scenes in the video.");
         refArea.appendChild(imgHint);
         addImg.onclick=async()=>{
-          if(S.refImages.length>=9) return;
+          if(_refImageUploadsPending||S.refImages.length>=9) return;
           upImg.value="";
           upImg.onchange=async()=>{
-            if(!upImg.files[0]) return;
+            const file=upImg.files[0];
+            if(!file||!_fileMatches(file,IMAGE_FILE_EXTS)||_refImageUploadsPending||S.refImages.length>=9) return;
+            _refImageUploadsPending++;
+            _renderRefs();
             try{
-              const _nm=await _uploadImage(upImg.files[0]);
-              S.refImages.push(_nm);
-              const _sz=await _captureFileSize(upImg.files[0]);
-              if(_sz) S.refImageSizes[_nm]=_sz;
-              persist();
+              const _nm=await _uploadImage(file);
+              if(S.refImages.length<9){
+                S.refImages.push(_nm);
+                const _sz=await _captureFileSize(file);
+                if(_sz) S.refImageSizes[_nm]=_sz;
+                persist();
+              }
             }catch(e){
               console.warn(e);
               if(_h3ShowError)_h3ShowError("Image upload failed: "+fmtErr(e));
+            }finally{
+              _refImageUploadsPending--;
             }
             upImg.value="";
-            _renderRefs();
+            if(S.mode==="mask") _renderMask(); else _renderRefs();
           };
           upImg.click();
         };
@@ -2756,7 +3098,7 @@ function persist(){
           return;
         }
         const vidCap=mk("div",{fontSize:"9px",fontWeight:"700",color:C.muted,textTransform:"uppercase",letterSpacing:".07em",marginTop:"4px"});
-        tx(vidCap,`Reference videos (${S.refVideos.length}/3)`);
+        tx(vidCap,`Reference videos (${S.refVideos.length}/3${_refVideoUploadsPending?", uploading":""})`);
         refArea.appendChild(vidCap);
         const vidRow=mk("div",{display:"flex",gap:"8px",flexWrap:"wrap"});
         S.refVideos.forEach((entry,idx)=>{
@@ -2764,12 +3106,15 @@ function persist(){
           const useAudio=!!(entry&&entry.useAudio);
           const card=mk("div",{display:"flex",flexDirection:"column",gap:"3px",alignItems:"center"});
           const slot=MediaSlot("video",n=>{
-            if(n===null){ S.refVideos.splice(idx,1); }
-            else { S.refVideos[idx]={name:n,useAudio:!!(S.refVideos[idx]&&S.refVideos[idx].useAudio)}; persist(); }
+            const current=S.refVideos.findIndex(v=>((typeof v==="string")?v:v&&v.name)===name);
+            if(current<0)return;
+            if(n===null)S.refVideos.splice(current,1);
+            else S.refVideos[current]={name:n,useAudio:!!(S.refVideos[current]&&S.refVideos[current].useAudio)};
+            persist();
             _renderRefs();
           },(nm,size)=>{
             if(nm&&size){
-              const e=S.refVideos[idx];
+              const e=S.refVideos.find(v=>v&&v.name===nm);
               if(e&&e.name===nm){ e.width=size.width; e.height=size.height; persist(); }
             }
           });
@@ -2784,8 +3129,11 @@ function persist(){
             tgl.title="Include this video's own soundtrack as an audio reference (<Audio N>). While on, the standalone audio slots are disabled so audio labels stay unambiguous.";
             tgl.onclick=(e)=>{
               e.stopPropagation();
-              const on=!(S.refVideos[idx]&&S.refVideos[idx].useAudio);
-              S.refVideos[idx]={name:(S.refVideos[idx]&&S.refVideos[idx].name)||name,useAudio:on};
+              const current=S.refVideos.findIndex(v=>((typeof v==="string")?v:v&&v.name)===name);
+              if(current<0)return;
+              const on=!(S.refVideos[current]&&S.refVideos[current].useAudio);
+              if(on&&_refAudioUploadsPending){if(_h3ShowError)_h3ShowError("Wait for the reference audio upload to finish before enabling video audio.");return;}
+              S.refVideos[current]={name:(S.refVideos[current]&&S.refVideos[current].name)||name,useAudio:on};
               if(on){ S.refAudios=[]; persist(); }
               _renderRefs();
             };
@@ -2797,19 +3145,20 @@ function persist(){
         const anyVideoAudio=S.refVideos.some(v=>v&&v.useAudio);
         const addVid=mk("div",{width:"72px",height:"72px",borderRadius:"12px",border:`1.5px dashed rgba(95,208,140,.4)`,background:"rgba(95,208,140,.05)",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",color:"rgba(95,208,140,.8)",fontSize:"18px",fontWeight:"700",flexShrink:"0"});
         tx(addVid,"+");
+        if(_refVideoUploadsPending||S.refVideos.length>=3) addVid.style.display="none";
         addVid.onclick=async()=>{
-          if(S.refVideos.length>=3) return;
-          const fi=mk("input",{display:"none"},{type:"file",accept:"video/*"});
+          if(_refVideoUploadsPending||S.refVideos.length>=3) return;
+          const fi=mk("input",{display:"none"},{type:"file",accept:VIDEO_FILE_EXTS.join(",")});
           document.body.appendChild(fi);
           fi.onchange=async()=>{
-            if(!fi.files[0]){fi.remove();return;}
-            const fd=new FormData();fd.append("file",fi.files[0],fi.files[0].name);
+            const file=fi.files[0];
+            if(!file||!_fileMatches(file,VIDEO_FILE_EXTS)||_refVideoUploadsPending||S.refVideos.length>=3){fi.remove();return;}
+            _refVideoUploadsPending++;_renderRefs();
             try{
-              const res=await fetch("/h3one/upload",{method:"POST",body:fd});
-              const d=await res.json();
-              if(d.ok){ S.refVideos.push({name:d.filename,useAudio:false}); persist(); _renderRefs(); }
-            }catch(e){ console.warn(e); }
-            fi.remove();
+              const name=await _uploadMedia(file);
+              if(S.refVideos.length<3){S.refVideos.push({name,useAudio:false});persist();}
+            }catch(e){console.warn(e);if(_h3ShowError)_h3ShowError("Video upload failed: "+fmtErr(e));}
+            finally{_refVideoUploadsPending--;fi.remove();_renderRefs();}
           };
           fi.click();
         };
@@ -2817,7 +3166,7 @@ function persist(){
         refArea.appendChild(vidRow);
         if(!isAudioDrive){
         const audCap=mk("div",{fontSize:"9px",fontWeight:"700",color:anyVideoAudio?C.dim:C.muted,textTransform:"uppercase",letterSpacing:".07em",marginTop:"4px"});
-        tx(audCap,anyVideoAudio?"Reference audio (using video audio)":`Reference audio (${S.refAudios.length}/3)`);
+        tx(audCap,anyVideoAudio?"Reference audio (using video audio)":`Reference audio (${S.refAudios.length}/3${_refAudioUploadsPending?", uploading":""})`);
         refArea.appendChild(audCap);
         if(anyVideoAudio){
           const note=mk("div",{fontSize:"8px",color:C.dim,lineHeight:"1.5"});
@@ -2826,25 +3175,26 @@ function persist(){
         } else {
           const audRow=mk("div",{display:"flex",gap:"8px",flexWrap:"wrap"});
           S.refAudios.forEach((name,idx)=>{
-            const slot=MediaSlot("audio",n=>{ if(n===null){S.refAudios.splice(idx,1);} else { S.refAudios[idx]=n; persist(); } _renderRefs(); });
+            const slot=MediaSlot("audio",n=>{const current=S.refAudios.indexOf(name);if(current<0)return;if(n===null)S.refAudios.splice(current,1);else S.refAudios[current]=n;persist();_renderRefs();});
             audRow.appendChild(slot);
             if(name) slot._restorePreview(name);
           });
           const addAud=mk("div",{width:"72px",height:"72px",borderRadius:"12px",border:`1.5px dashed rgba(192,127,255,.4)`,background:"rgba(192,127,255,.05)",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",color:"rgba(192,127,255,.8)",fontSize:"18px",fontWeight:"700",flexShrink:"0"});
           tx(addAud,"+");
+          if(_refAudioUploadsPending||S.refAudios.length>=3) addAud.style.display="none";
           addAud.onclick=async()=>{
-            if(S.refAudios.length>=3) return;
-            const fi=mk("input",{display:"none"},{type:"file",accept:"audio/*"});
+            if(_refAudioUploadsPending||S.refAudios.length>=3) return;
+            const fi=mk("input",{display:"none"},{type:"file",accept:AUDIO_FILE_EXTS.join(",")});
             document.body.appendChild(fi);
             fi.onchange=async()=>{
-              if(!fi.files[0]){fi.remove();return;}
-              const fd=new FormData();fd.append("file",fi.files[0],fi.files[0].name);
+              const file=fi.files[0];
+              if(!file||!_fileMatches(file,AUDIO_FILE_EXTS)||_refAudioUploadsPending||S.refAudios.length>=3){fi.remove();return;}
+              _refAudioUploadsPending++;_renderRefs();
               try{
-                const res=await fetch("/h3one/upload",{method:"POST",body:fd});
-                const d=await res.json();
-                if(d.ok){ S.refAudios.push(d.filename); persist(); _renderRefs(); }
-              }catch(e){ console.warn(e); }
-              fi.remove();
+                const name=await _uploadMedia(file);
+                if(S.refAudios.length<3){S.refAudios.push(name);persist();}
+              }catch(e){console.warn(e);if(_h3ShowError)_h3ShowError("Audio upload failed: "+fmtErr(e));}
+              finally{_refAudioUploadsPending--;fi.remove();_renderRefs();}
             };
             fi.click();
           };
@@ -2908,6 +3258,174 @@ function persist(){
       exArea.append(exCardRow);
       exArea.append(exOptsRow);
       if(S.extendVideo) exSlot._restorePreview(S.extendVideo);
+
+      // Masked video inpainting
+      const maskSrcSlot=MediaSlot("video",n=>{
+        S.maskSeed=null;
+        S.maskVideo=n;
+        if(!n) S.maskVideoSize=null;
+        persist();
+        if(_renderMask) _renderMask();
+      },(name,size)=>{
+        if(name===S.maskVideo) _rememberFrameInfo(null,"maskVideoSize",size);
+      });
+      const maskTop=mk("div",{display:"flex",alignItems:"flex-start",gap:"10px"});
+      const maskSrcCard=_mkSlotCard("Source video",maskSrcSlot);
+      maskSrcCard.appendChild(_mkFitChip("masksrc","Source video"));
+      const maskActions=mk("div",{display:"flex",flexDirection:"column",gap:"6px",minWidth:"170px",paddingTop:"2px"});
+      const maskPaintBtn=mk("button",{}, {type:"button",className:"h3-actbtn"});
+      tx(maskPaintBtn,"Paint first-frame mask");
+      const maskClearBtn=mk("button",{height:"28px",borderRadius:"7px",border:`1px solid ${C.border}`,background:C.bg2,color:C.muted,fontSize:"9px",fontWeight:"700",cursor:"pointer",outline:"none"},{type:"button"});
+      tx(maskClearBtn,"Remove painted mask");
+      maskActions.append(maskPaintBtn,maskClearBtn);maskTop.append(maskSrcCard,maskActions);
+      maskArea.appendChild(maskTop);
+
+      const maskPreviewRow=mk("div",{display:"flex",alignItems:"center",gap:"10px",background:C.bg1,border:`1px solid ${C.border}`,borderRadius:"8px",padding:"8px",boxSizing:"border-box",minHeight:"92px",cursor:"pointer"});
+      const maskPreviewCol=mk("div",{display:"flex",flexDirection:"column",alignItems:"center",flexShrink:"0",width:"150px"});
+      const maskPreviewBox=mk("div",{width:"150px",height:"84px",flexShrink:"0",background:"#000",borderRadius:"6px",overflow:"hidden",display:"flex",alignItems:"center",justifyContent:"center",position:"relative"});
+      const maskPaintState=mk("div",{fontSize:"8px",color:C.muted,lineHeight:"1.4",textAlign:"center",marginTop:"3px"});
+      maskPreviewCol.append(maskPreviewBox,maskPaintState);
+      const maskPreviewNote=mk("div",{flex:"1",minWidth:"0",fontSize:"9px",color:C.muted,lineHeight:"1.5"});
+      maskPreviewRow.append(maskPreviewCol,maskPreviewNote);
+      maskPreviewRow.onclick=()=>maskPaintBtn.onclick();
+      maskArea.appendChild(maskPreviewRow);
+
+      let _maskPrevToken=0;
+      const _renderMaskPreview=async()=>{
+        const token=++_maskPrevToken;
+        maskPreviewBox.innerHTML="";
+        if(!S.maskVideo){
+          tx(maskPreviewNote,"Add a source video first. Once it is loaded, click here to paint the region to replace.");
+          const ph=mk("div",{fontSize:"9px",color:C.muted,padding:"4px",textAlign:"center",lineHeight:"1.4"});tx(ph,"No source video");
+          maskPreviewBox.appendChild(ph);
+          return;
+        }
+        if(!S.maskSeed){
+          tx(maskPreviewNote,"No painted mask yet. Click here to paint the full region to replace, or enter a Mask target below and let SAM 3 detect it.");
+          const ph=mk("div",{fontSize:"9px",color:C.muted,padding:"4px",textAlign:"center",lineHeight:"1.4"});tx(ph,"No mask\npainted");
+          maskPreviewBox.appendChild(ph);
+          return;
+        }
+        const spin=mk("div",{fontSize:"9px",color:C.muted,padding:"4px",textAlign:"center"});tx(spin,"Loading preview...");
+        maskPreviewBox.appendChild(spin);
+        tx(maskPreviewNote,"Mask ready. Click the preview to adjust the painted region, then Generate.");
+        const BOX_W=150,BOX_H=84;
+        const canvas=mk("canvas",{display:"block"});
+        const ctx=canvas.getContext("2d");
+        const videoUrl=api.apiURL(`/view?filename=${encodeURIComponent(S.maskVideo)}&type=input&subfolder=&t=${Date.now()}`);
+        const maskUrl=api.apiURL(`/view?filename=${encodeURIComponent(S.maskSeed)}&type=input&subfolder=&t=${Date.now()}`);
+        await new Promise(resolve=>{
+          const v=document.createElement("video");
+          v.muted=true;v.playsInline=true;v.preload="auto";
+          let finished=false;
+          const finish=(good)=>{if(finished)return;finished=true;clearTimeout(timer);v.removeAttribute("src");resolve(good);};
+          const timer=setTimeout(()=>finish(false),5000);
+          v.onloadeddata=()=>{
+            const vw=v.videoWidth||640,vh=v.videoHeight||360;
+            const scale=Math.min(BOX_W/vw,BOX_H/vh);
+            canvas.width=Math.max(1,Math.round(vw*scale));
+            canvas.height=Math.max(1,Math.round(vh*scale));
+            try{v.currentTime=Math.min(.01,v.duration||.01);}catch(e){finish(false);}
+          };
+          v.onseeked=()=>{try{ctx.drawImage(v,0,0,canvas.width,canvas.height);finish(true);}catch(e){finish(false);}};
+          v.onerror=()=>finish(false);
+          v.src=videoUrl;
+        });
+        if(token!==_maskPrevToken) return;
+        if(!canvas.width||!canvas.height){
+          const vw=(S.maskVideoSize&&S.maskVideoSize.width)||640,vh=(S.maskVideoSize&&S.maskVideoSize.height)||360;
+          const scale=Math.min(BOX_W/vw,BOX_H/vh);
+          canvas.width=Math.max(1,Math.round(vw*scale));
+          canvas.height=Math.max(1,Math.round(vh*scale));
+          ctx.fillStyle="#111";ctx.fillRect(0,0,canvas.width,canvas.height);
+        }
+        await new Promise(resolve=>{
+          const img=new Image();
+          const timer=setTimeout(()=>resolve(false),5000);
+          img.onload=()=>{
+            clearTimeout(timer);
+            try{
+              const tmp=document.createElement("canvas");tmp.width=canvas.width;tmp.height=canvas.height;
+              const tc=tmp.getContext("2d");tc.drawImage(img,0,0,tmp.width,tmp.height);
+              const data=tc.getImageData(0,0,tmp.width,tmp.height);
+              for(let i=0;i<data.data.length;i+=4){
+                const v=Math.max(data.data[i],data.data[i+1],data.data[i+2]);
+                data.data[i]=255;data.data[i+1]=72;data.data[i+2]=72;data.data[i+3]=Math.round(v*.78);
+              }
+              tc.putImageData(data,0,0);
+              ctx.drawImage(tmp,0,0);
+              resolve(true);
+            }catch(e){resolve(false);}
+          };
+          img.onerror=()=>{clearTimeout(timer);resolve(false);};
+          img.src=maskUrl;
+        });
+        if(token!==_maskPrevToken) return;
+        maskPreviewBox.innerHTML="";
+        maskPreviewBox.appendChild(canvas);
+        const cap=mk("div",{position:"absolute",left:"0",right:"0",bottom:"0",background:"rgba(0,0,0,.55)",color:"#fff",fontSize:"8px",padding:"2px 6px",textAlign:"center",pointerEvents:"none"});tx(cap,"masked region");
+        maskPreviewBox.appendChild(cap);
+      };
+
+      const maskTargetWrap=mk("div",{display:"flex",flexDirection:"column",gap:"3px"});
+      const maskTargetCap=mk("div",{display:"flex",alignItems:"center",gap:"4px"});
+      const maskTargetLbl=mk("div",{fontSize:"9px",fontWeight:"700",color:C.muted,textTransform:"uppercase",letterSpacing:".07em"});tx(maskTargetLbl,"Mask target");
+      maskTargetCap.append(maskTargetLbl,infoIcon("Optional when you painted a mask. Describe an object such as face, jacket, car, or sign and SAM 3 will detect and track it. When you enter a target, SAM tracks that object - a painted mask is only used to seed the tracker when no target is given."));
+      const maskTargetInput=mk("input",{height:"30px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"7px",color:C.text,fontSize:"11px",padding:"0 9px",outline:"none",boxSizing:"border-box",width:"100%"},{type:"text",value:S.maskTarget,placeholder:"e.g. face, red jacket, car"});
+      maskTargetInput.oninput=()=>{S.maskTarget=maskTargetInput.value;persist();};
+      maskTargetInput.onfocus=()=>maskTargetInput.style.borderColor=C.lime;maskTargetInput.onblur=()=>maskTargetInput.style.borderColor=C.border;
+      maskTargetWrap.append(maskTargetCap,maskTargetInput);maskArea.appendChild(maskTargetWrap);
+
+      const maskOpts=mk("div",{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:"8px"});
+      const maskField=(labelTxt,control,tip)=>{
+        const w=mk("div",{display:"flex",flexDirection:"column",gap:"3px"});
+        const h=mk("div",{display:"flex",alignItems:"center",gap:"4px"});
+        const l=mk("div",{fontSize:"9px",color:C.muted});tx(l,labelTxt);h.appendChild(l);if(tip)h.appendChild(infoIcon(tip));w.append(h,control);return w;
+      };
+      const maskThresholdNI=NI("",S.maskThreshold,0,1,0.01,v=>{S.maskThreshold=v;persist();},"100%");
+      const maskCropNI=NI("",S.maskCropScale,1,4,0.05,v=>{S.maskCropScale=v;persist();},"100%");
+      const maskAudioBox=mk("div",{height:"28px",display:"flex",alignItems:"center",justifyContent:"space-between",padding:"0 8px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"7px",boxSizing:"border-box"});
+      const maskAudioText=mk("span",{fontSize:"9px",color:C.text});tx(maskAudioText,S.maskRegenerateAudio?"Regenerate":"Preserve");
+      const maskAudioToggle=MiniToggle(S.maskRegenerateAudio,v=>{S.maskRegenerateAudio=v;tx(maskAudioText,v?"Regenerate":"Preserve");persist();},"Regenerate audio inside the H3 latent instead of keeping the source soundtrack");
+      maskAudioBox.append(maskAudioText,maskAudioToggle.el);
+      maskOpts.append(
+        maskField("Detection",maskThresholdNI,"SAM 3 text-detection threshold. Lower finds more candidates; higher is stricter."),
+        maskField("Crop padding",maskCropNI,"Crop size relative to the tracked subject. 1 is tight; 1.5 leaves useful context."),
+        maskField("Audio",maskAudioBox,"Preserve keeps the source soundtrack and feeds it to H3 so the replacement's mouth moves in sync with the original speech. Regenerate asks H3 to create audio with the edited crop.")
+      );
+      maskArea.appendChild(maskOpts);
+      const maskRefsBox=mk("div",{display:"flex",flexDirection:"column",gap:"6px"});maskArea.appendChild(maskRefsBox);
+      const _renderMask=()=>{
+        tx(maskPaintState,S.maskSeed?"Mask ready - click preview to edit":"No mask yet - paint one or enter a text target");
+        maskPaintState.style.color=S.maskSeed?C.lime:C.muted;
+        maskClearBtn.style.display=S.maskSeed?"block":"none";
+        _renderMaskPreview();
+        maskRefsBox.innerHTML="";
+        const h=mk("div",{fontSize:"9px",fontWeight:"700",color:C.muted,textTransform:"uppercase",letterSpacing:".07em"});
+        tx(h,`Replacement references (${S.refImages.length}/9${_refImageUploadsPending?`, ${_refImageUploadsPending} uploading`:""})`);maskRefsBox.appendChild(h);
+        const row=mk("div",{display:"grid",gridTemplateColumns:"repeat(auto-fill, 76px)",gap:"8px",alignItems:"start"});
+        S.refImages.forEach((name,idx)=>{
+          const slot=ImgSlot(false,n=>{const current=S.refImages.indexOf(name);if(current<0)return;if(n===null)S.refImages.splice(current,1);else S.refImages[current]=n;persist();_renderMask();},(nm,size)=>{if(nm&&size){S.refImageSizes[nm]=size;persist();}},true);
+          row.appendChild(slot.el);if(name)slot._restorePreview(name);
+        });
+        if(!_refImageUploadsPending&&S.refImages.length<9){
+          const add=mk("button",{width:"72px",height:"72px",borderRadius:"12px",border:"1.5px dashed rgba(90,168,255,.4)",background:"rgba(90,168,255,.05)",color:"rgba(90,168,255,.8)",fontSize:"18px",fontWeight:"700",cursor:"pointer"},{type:"button",title:"Add replacement reference"});tx(add,"+");
+          const input=mk("input",{display:"none"},{type:"file",accept:IMAGE_FILE_EXTS.join(",")});
+          add.onclick=()=>{input.value="";input.click();};
+          input.onchange=async()=>{const file=input.files&&input.files[0];if(!file||!_fileMatches(file,IMAGE_FILE_EXTS)||_refImageUploadsPending||S.refImages.length>=9)return;_refImageUploadsPending++;_renderMask();try{const name=await _uploadImage(file);if(S.refImages.length<9){S.refImages.push(name);const size=await _captureFileSize(file);if(size)S.refImageSizes[name]=size;persist();}}catch(e){if(_h3ShowError)_h3ShowError("Reference upload failed: "+fmtErr(e));}finally{_refImageUploadsPending--;_renderMask();}};
+          row.append(add,input);
+        }
+        maskRefsBox.appendChild(row);
+        const hint=mk("div",{fontSize:"8px",color:C.muted,lineHeight:"1.45"});tx(hint,"Add at least one image showing what should appear inside the mask. Describe it in the main prompt as <Picture 1>, <Picture 2>, and so on.");maskRefsBox.appendChild(hint);
+      };
+      maskArea._render=_renderMask;
+      maskPaintBtn.onclick=async()=>{
+        if(!S.maskVideo){if(_h3ShowError)_h3ShowError("Add a source video before painting a mask.");return;}
+        await openVideoMaskEditor({videoName:S.maskVideo,maskName:S.maskSeed,onSave:async name=>{S.maskSeed=name;persist();_renderMask();}});
+      };
+      maskClearBtn.onclick=()=>{S.maskSeed=null;persist();_renderMask();};
+      if(S.maskVideo) maskSrcSlot._restorePreview(S.maskVideo);
+      _renderMask();
 
       // Chain clips
       const _renderChain=()=>{
@@ -2978,10 +3496,17 @@ function persist(){
           durHalf.style.display="flex";
           dfSep.style.display="";
           framesLbl.style.display="";
-          tx(durCap,"Duration (s)");
+          tx(durCap,S.mode==="mask"?"Source max (s)":"Duration (s)");
           durNI._inp.disabled=false;
           durNI.style.opacity="";
         }
+        const maskFps=S.mode==="mask";
+        if(maskFps&&S.duration>15){S.duration=15;durNI.setVal(15);persist();}
+        durNI._inp.max=maskFps?"15":"30";
+        fpsNI._inp.disabled=maskFps;
+        fpsNI.style.opacity=maskFps?".5":"";
+        fpsNI._inp.title=maskFps?"Locked to 24 fps. MiniMax H3 renders Mask mode at 24 fps; use Source max (s) to control how long the clip runs.":"";
+        fpsNI.setVal(maskFps?24:S.fps);
         params.style.display=S.mode==="image"?"none":"grid";
         tx(modeDesc, MODE_DESC[S.mode]||"");
         if(S.mode==="i2v"){ modeHdr.style.display="flex"; modeTitle.textContent="Image to Video"; i2vArea.style.display="flex"; }
@@ -2990,11 +3515,13 @@ function persist(){
         else if(S.mode==="keyframes"){ modeHdr.style.display="flex"; modeTitle.textContent="Custom Keyframes"; _renderKf(); kfArea.style.display="flex"; }
         else if(S.mode==="extend"){ modeHdr.style.display="flex"; modeTitle.textContent="Extend Video"; exArea.style.display="flex"; }
         else if(S.mode==="chain"){ modeHdr.style.display="flex"; modeTitle.textContent="Motion Context Chain"; _renderChain(); chainArea.style.display="flex"; }
+        else if(S.mode==="mask"){ modeHdr.style.display="flex"; modeTitle.textContent="Mask Inpaint"; _renderMask(); maskArea.style.display="flex"; }
         else if(S.mode==="image"){ modeHdr.style.display="flex"; modeTitle.textContent="Image (H3 Studio)"; _renderImgRefs(); imgArea.style.display="flex"; if(_syncImgAdvRef) _syncImgAdvRef(); }
         else { modeHdr.style.display="none"; modeTitle.textContent="Text to Video"; }
         if(typeof _syncLiveToggle==="function") _syncLiveToggle();
         if(_syncFitRowFn) _syncFitRowFn();
         if(_updPlaceholderLabelFn) _updPlaceholderLabelFn();
+        if(_updateFramesLabel) _updateFramesLabel();
       };
 
       // -- PARAMS ------------------------------------------------------------
@@ -3017,7 +3544,7 @@ function persist(){
         } else {
           base=_resItems.find(r=>r.label===S.resolution)||_resItems[0]||{width:960,height:544,label:S.resolution};
         }
-        if(S.resolution!=="Custom"&&S.mode==="extend"&&S.extendVideoSize&&_validSize(S.extendVideoSize)){
+        if(S.resolution!=="Custom"&&S.mode!=="mask"&&S.mode==="extend"&&S.extendVideoSize&&_validSize(S.extendVideoSize)){
           const p=_fitPrimary(S);
           if(!p||p.mode!=="custom"){
             const src=S.extendVideoSize;
@@ -3025,7 +3552,7 @@ function persist(){
             return {width:fit.width,height:fit.height,label:`${fit.width}x${fit.height} (source)`};
           }
         }
-        if(S.resolution!=="Custom"){
+        if(S.resolution!=="Custom"&&S.mode!=="mask"){
           const p=_fitPrimary(S);
           if(p){
             if(p.mode==="custom"){
@@ -3043,10 +3570,18 @@ function persist(){
         }
         return orientRes(base, _effectiveResOrientation(S));
       };
+      const _effectiveMaskCropPlan=()=>{
+        const r=_resolveRes();
+        return planMaskCrop(r.width,r.height);
+      };
+      const _effectiveMaskCropMP=()=>_effectiveMaskCropPlan().megapixels;
       const resRow=mk("div",{display:"flex",flexDirection:"column",gap:"3px"});
       const resCapRow=mk("div",{display:"flex",alignItems:"center",gap:"4px"});
       const resCap=mk("div",{fontSize:"10px",color:C.text});tx(resCap,"Resolution");
-      resCapRow.append(resCap,infoIcon("The output pixel grid (width x height).\nHigher = sharper detail and more VRAM + time.\nThe swap button flips between landscape and portrait.\nPick Custom to set any size - snapped to multiples of 32.\nMiniMax H3 recommends up to 1344x768 (short edge <= 768, long edge <= 1344). Above that the model may repeat content or distort."));
+      resCapRow.append(resCap,infoIcon(S.mode==="mask"?
+        "The pixel budget for the masked crop. 0.5MP Balanced is the sweet spot: big enough for a clean face, small enough for any crop shape within H3 limits. The crop hugs the tracked object, and this budget never changes with the source video.\nThe swap button flips landscape and portrait.\nPick Custom to set any size - snapped to multiples of 32.\nMiniMax H3 recommends up to 1344x768 (short edge <= 768, long edge <= 1344). Above that the model may repeat content or distort."
+        :
+        "The output pixel grid (width x height).\nHigher = sharper detail and more VRAM + time.\nThe swap button flips between landscape and portrait.\nPick Custom to set any size - snapped to multiples of 32.\nMiniMax H3 recommends up to 1344x768 (short edge <= 768, long edge <= 1344). Above that the model may repeat content or distort."));
       const resDD=DD([],S.resolution,v=>{S.resolution=v;persist();_updateFramesLabel();_updResCustom();});
       const swapBtn=mk("button",{width:"32px",height:"28px",flexShrink:"0",background:C.bg3,border:`1px solid ${C.border}`,borderRadius:"7px",color:C.muted,fontSize:"13px",lineHeight:"1",cursor:"pointer",outline:"none",transition:"border-color .15s,color .15s",boxSizing:"border-box"},{type:"button",title:"Swap width and height","aria-label":"Swap width and height"});
       tx(swapBtn,"\u21C4");
@@ -3077,6 +3612,7 @@ function persist(){
       resRow.appendChild(fitInfoRow);
 
       _syncFitRowFn=()=>{
+        tx(resCap,S.mode==="mask"?"Crop canvas":"Resolution");
         const src=_fitSourceSize(S);
         const fitActive=!!(S.resolution!=="Custom"&&src);
         if(!fitActive){
@@ -3087,7 +3623,7 @@ function persist(){
         const r=_resolveRes();
         resDD.set(r.label);
         fitInfoRow.style.display="flex";
-        const mp=(r.width*r.height/1000000).toFixed(2);
+        const mp=(S.mode==="mask"?_effectiveMaskCropMP():(r.width*r.height/1000000)).toFixed(2);
         tx(fitInfo, `${src.label} ${src.width}x${src.height} -> canvas ${r.width}x${r.height} (${mp}MP)`);
         const over=Math.min(r.width,r.height)>768||Math.max(r.width,r.height)>1344;
         fitInfo.style.color=over?C.warn:C.muted;
@@ -3119,7 +3655,7 @@ function persist(){
       const durFpsCell=mk("div",{display:"flex",flexDirection:"column",gap:"3px"});
       const durCap=mk("div",{fontSize:"10px",color:C.text});tx(durCap,"Duration (s)");
       const durInner=mk("div",{display:"flex",alignItems:"center",gap:"8px"});
-      const durNI=NI("",S.duration,1,30,0.5,v=>{S.duration=v;persist();_updateFramesLabel();},"60px");
+      const durNI=NI("",S.duration,1,30,0.5,v=>{S.duration=S.mode==="mask"?Math.min(15,v):v;durNI.setVal(S.duration);persist();_updateFramesLabel();},"60px");
       durInner.append(durNI);
       const durHalf=mk("div",{display:"flex",flexDirection:"column",gap:"3px",flex:"1",minWidth:"0"});
       durHalf.append(durCap,durInner);
@@ -3270,7 +3806,7 @@ function persist(){
         }
         if(typeof _syncLiveToggle==="function") _syncLiveToggle();
         if(ms.resolution!==undefined){ S.resolution=ms.resolution; resDD.set(ms.resolution); _updResCustom(); }
-        if(ms.duration!==undefined){ S.duration=ms.duration; durNI._inp.value=String(ms.duration); _updateFramesLabel(); }
+        if(ms.duration!==undefined){ S.duration=S.mode==="mask"?Math.min(15,ms.duration):ms.duration; durNI._inp.value=String(S.duration); _updateFramesLabel(); }
         if(Array.isArray(ms.loras)){ const named=ms.loras.filter(l=>l&&l.name); S.loras=named.concat([{name:"",strength:1,enabled:false}]); _renderLoras(); }
         if(Array.isArray(ms.refImages)) S.refImages=ms.refImages.slice();
         if(Array.isArray(ms.refVideos)) S.refVideos=ms.refVideos.map(v=>(typeof v==="string")?{name:v,useAudio:false}:{name:(v&&v.name)||"",useAudio:!!(v&&v.useAudio)});
@@ -3278,6 +3814,7 @@ function persist(){
       };
       const _switchMode=(m)=>{
         if(S.mode===m) return;
+        if(_workflowBuildBusy||_uploadsPending>0) return;
         _saveModeState();
         // Reference slots are per-mode (R2V and Audio Drive keep their own sets).
         const ms0=S.modeSettings[S.mode]||{};
@@ -3285,7 +3822,9 @@ function persist(){
         ms0.refVideos=(S.refVideos||[]).map(v=>(typeof v==="string")?{name:v,useAudio:false}:{name:(v&&v.name)||"",useAudio:!!(v&&v.useAudio)});
         ms0.refAudios=(S.refAudios||[]).slice();
         S.modeSettings[S.mode]=ms0;
+        const targetState=S.modeSettings[m];
         S.mode=m;
+        if(!targetState){S.refImages=[];S.refVideos=[];S.refAudios=[];}
         _restoreModeState();
         persist();
         _updateTabs();
@@ -4010,7 +4549,7 @@ function persist(){
           const res=await api.fetchApi("/prompt",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
           const data=await res.json();
           if(data.error||!data.prompt_id) throw new Error(data.error?.message||"Unknown error");
-          _batchIds=[data.prompt_id];_batchDone=0;_activePromptId=data.prompt_id;
+          _batchIds=[data.prompt_id];_batchDone=0;_batchFailures=0;_settledBatchIds.clear();_expectedBatchCount=1;_batchSubmissionOpen=false;_activePromptId=data.prompt_id;
           _armFinishWatch();
           setStage(rtx?("Upscaling "+S.upscaleFactor+"x with RTX VSR..."):("Upscaling "+S.upscaleFactor+"x with SeedVR2 ("+S.models.upscaleDit+")..."),8);
         }catch(e){
@@ -4111,9 +4650,12 @@ function persist(){
       queueBtn._flash=queueFlash;
       _activeQueueBtn=queueBtn;
       queueBtn.onclick=async()=>{
-        if(_queueBusy) return;
+        if(_queueBusy||_workflowBuildBusy) return;
         if(!S.generating&&!_queuedJobs.size){ genBtn.click(); return; }
         _queueBusy=true;
+        _workflowBuildBusy=true;
+        root.style.pointerEvents="none";
+        const queuedMode=S.mode;
         queueBtn.disabled=true;
         try{
           if(_uploadsPending>0){
@@ -4122,6 +4664,7 @@ function persist(){
               await new Promise(res=>setTimeout(res,100));
               _wait++;
             }
+            if(_uploadsPending>0) throw new Error("An upload is still in progress. Wait for it to finish, then queue again.");
           }
           if(S.randomizeSeed){ S.seed=Math.floor(Math.random()*(H3_SEED_MAX+1)); seedNI._inp.value=String(S.seed); }
           const wf=await _buildWorkflow();
@@ -4132,7 +4675,7 @@ function persist(){
           if(!data||data.error||!data.prompt_id){
             throw new Error(data&&data.error?fmtErr(data.error):"queue returned no prompt id");
           }
-          _queuedJobs.set(data.prompt_id,{mode:S.mode,node:self});
+          _queuedJobs.set(data.prompt_id,{mode:queuedMode,node:self});
           _renderQueueBadge();
           _armQueueSync();
           queueBtn.title="Job queued. It runs after the current job; results land in the Library.";
@@ -4143,6 +4686,8 @@ function persist(){
           queueFlash("failed");
         }finally{
           _queueBusy=false;
+          _workflowBuildBusy=false;
+          root.style.pointerEvents="";
           queueBtn.disabled=false;
         }
       };
@@ -4159,7 +4704,7 @@ function persist(){
 
       const resetBtn=()=>{
         S.generating=false;
-        _batchIds=[];_batchDone=0;
+        _batchIds=[];_batchDone=0;_batchFailures=0;_settledBatchIds.clear();_expectedBatchCount=0;_batchSubmissionOpen=false;
         _stopFinishWatch();
         _upscaleRun="";
         self._h3_lpOn=false;
@@ -4183,13 +4728,23 @@ function persist(){
         vidEl.style.display="none";imgEl.style.display="none";placeholder.style.display="none";
       };
       _h3ShowError=showError;
-      const showOutput=(item)=>{
+      const _captureRunMeta=()=>{
+        const maskCrop=_effectiveMaskCropPlan();
+        return {
+          mode:S.mode,quality:S.quality,prompt:S.prompt,duration:S.duration,resolution:S.resolution,seed:S.seed,
+          autoStage:S.autoStage,imgLastW:S.imgLastW,imgLastH:S.imgLastH,
+          maskVideoSize:S.maskVideoSize?{width:S.maskVideoSize.width,height:S.maskVideoSize.height}:null,
+          maskCrop,
+        };
+      };
+      const showOutput=(item,runMeta=null)=>{
         errorBox.style.display="none";
         const _soKey=mediaKey(item);
-        if(S.seed!==undefined&&S.seed!==null&&S.seed!=="") _seedByFile[_soKey]=S.seed;
         const genMs=Date.now()-_activeGenStartTs;
         _genTimeByFile[_soKey]=genMs;
         const wasUpscale=_upscaleRun;
+        const run=wasUpscale?S:(runMeta||S);
+        if(run.seed!==undefined&&run.seed!==null&&run.seed!=="") _seedByFile[_soKey]=run.seed;
         if(_upscaleRun&&_upOrig){
           _upResult={filename:item.filename,subfolder:item.subfolder||"",type:item.type||"output",media_key:_soKey};
         }
@@ -4201,15 +4756,17 @@ function persist(){
         _activeShownFiles.push(_soKey);
         const isTemp=item.type==="temp";
         if(!isTemp){
-          if(S.mode==="extend"&&!wasUpscale&&S.autoStage!==false) _stageVideoForExtend(item,false);
+          if(run.mode==="extend"&&!wasUpscale&&run.autoStage!==false) _stageVideoForExtend(item,false);
           fetch("/h3one/set_output",{method:"POST",headers:{"Content-Type":"application/json"},
             body:JSON.stringify({node_id:self.id,info:{filename:item.filename,subfolder:item.subfolder||"",type:item.type||"output"}})}).catch(()=>{});
-          const histMode=wasUpscale?("Upscale "+S.upscaleFactor+"x ("+(wasUpscale==="upscale-rtx"?"RTX VSR":"SeedVR2")+")"):S.mode;
-          const histRes=wasUpscale?(S.upscaleFactor+"x upscale"):(S.mode==="image"?(S.imgLastW+"x"+S.imgLastH):S.resolution);
+          const histMode=wasUpscale?("Upscale "+S.upscaleFactor+"x ("+(wasUpscale==="upscale-rtx"?"RTX VSR":"SeedVR2")+")"):run.mode;
+          const maskSource=run.maskVideoSize?`${run.maskVideoSize.width}x${run.maskVideoSize.height} source`:"source video";
+          const maskCrop=run.maskCrop||{width:0,height:0,megapixels:.2};
+          const histRes=wasUpscale?(S.upscaleFactor+"x upscale"):(run.mode==="image"?(run.imgLastW+"x"+run.imgLastH):(run.mode==="mask"?`${maskSource}, mask-shaped ${Number(maskCrop.megapixels).toFixed(2)}MP crop`:run.resolution));
            fetch("/h3one/history",{method:"POST",headers:{"Content-Type":"application/json"},
              body:JSON.stringify({
-               mode:histMode,quality:wasUpscale?"":S.quality,prompt:(S.prompt||"").slice(0,2000),duration:wasUpscale?0:S.duration,
-               resolution:histRes,seed:S.seed,gen_time:genMs,video:item.filename,subfolder:item.subfolder||"",type:item.type||"output",
+               mode:histMode,quality:wasUpscale?"":run.quality,prompt:(run.prompt||"").slice(0,2000),duration:wasUpscale?0:run.duration,
+               resolution:histRes,seed:run.seed,gen_time:genMs,video:item.filename,subfolder:item.subfolder||"",type:item.type||"output",
                kind:item.kind==="image"?"image":"video",
              })}).catch(()=>{});
         }
@@ -4260,13 +4817,19 @@ function persist(){
           const d=await r.json();
           const items=d.videos||[];
           if(!items.length) return;
-          showOutput(items[0]);
+          showOutput(items[0],_activeRunMetaByPrompt.get(_activePromptId));
         }catch(e){}
       };
 
       // -- WORKFLOW BUILDERS -------------------------------------------------
+      const _fetchTimed=async(url,options={},timeout=15000)=>{
+        const controller=new AbortController();
+        const timer=setTimeout(()=>controller.abort(),timeout);
+        try{return await fetch(url,{...options,signal:controller.signal});}
+        finally{clearTimeout(timer);}
+      };
       const _fetchTpl=async(name)=>{
-        const res=await fetch(`/h3one/workflow/${name}`);
+        const res=await _fetchTimed(`/h3one/workflow/${name}`);
         if(!res.ok) throw new Error("Failed to load workflow template: "+name);
         return await res.json();
       };
@@ -4274,6 +4837,10 @@ function persist(){
       const _finalPrompt=(userText,tplKey)=>{
         let text=(userText||"").trim();
         if(!text) return "";
+        const finish=(value)=>S.mode==="mask"&&S.maskRegenerateAudio
+          ?value.replace(/Keep the source soundtrack unchanged\./gi,"Regenerate the soundtrack to match the replacement action inside the edited clip; do not copy the source soundtrack.")
+          :value;
+        if(S.mode==="mask"&&!S.maskRegenerateAudio) text=maskSpeechSyncPrompt(text);
         if(S.mode==="extend"){
           const airlock="Hold the exact closing framing of the source video for about 2 seconds - same camera, same subject position, same lighting and same motion - then continue seamlessly with no visible cut: ";
           if(text.includes("integrated_multimodal_description")){
@@ -4287,13 +4854,13 @@ function persist(){
               text=text.replace(/(overall_soundscape:\s*)/i, "$1The copied audio track <Audio 1> is the complete soundtrack. ");
             }
           }
-          return text;
+          return finish(text);
         }
         const mode=tplKey||S.mode;
         const tpl=_discTmpl[mode==="chain"?"chain":mode]||{};
         const wrap=tpl.wrap;
-        if(!wrap) return text;
-        return wrap.split("{USER}").join(text);
+        if(!wrap) return finish(text);
+        return finish(wrap.split("{USER}").join(text));
       };
 
       // -- Cache fingerprint + bust node -------------------------------------
@@ -4312,6 +4879,8 @@ function persist(){
         (S.refAudios||[]).forEach(n=>add("audio",n));
         add("audio",S.audioFile);
         add("video",S.extendVideo);
+        add("video",S.maskVideo);
+        add("image",S.maskSeed);
         (S.kf||[]).forEach(k=>add("image",k.img));
         if(Array.isArray(extra)) extra.forEach(f=>files.push(f));
         const res=_resolveRes();
@@ -4445,7 +5014,7 @@ function persist(){
         wf["1"].inputs.clip_name=S.models.clip;
         const condNode=wf["6"];
         const isR2V=condNode&&condNode.class_type==="MiniMaxH3ReferenceToVideo";
-        wf["2"].inputs.unet_name= isR2V&&(S.mode==="r2v"||S.mode==="audio_drive")? S.models.unetR2V : S.models.unetT2V;
+        wf["2"].inputs.unet_name= isR2V&&["r2v","audio_drive","mask"].includes(S.mode)? S.models.unetR2V : S.models.unetT2V;
         wf["3"].inputs.vae_name=S.models.vaeVideo;
         wf["4"].inputs.vae_name=S.models.vaeAudio;
         const res=_resolveRes();
@@ -4565,16 +5134,34 @@ function persist(){
       const _checkInputFile=async(type,name)=>{
         if(!name) return false;
         try{
-          const r=await fetch(`/h3one/input_files?type=${type}`);
+          const r=await _fetchTimed(`/h3one/input_files?type=${type}`);
+          if(!r.ok) throw new Error(`HTTP ${r.status}`);
           const d=await r.json();
           return inputFileExists(d.files,name);
-        }catch(e){ return true; }
+        }catch(e){ throw new Error(`Could not verify the ${type} input "${name}": ${fmtErr(e)}`); }
       };
       const _checkInputFiles=async(type,names,label)=>{
         for(const name of names){
           const ok=await _checkInputFile(type,name);
           if(!ok) throw new Error(`The ${label} "${name}" is missing from ComfyUI's input folder. Drop it into the slot again to re-upload it.`);
         }
+      };
+
+      let _maskRuntimeReady=false;
+      const _checkMaskRuntime=async()=>{
+        if(!_maskRuntimeReady){
+          const required=["H3MaskVideoPrepare","Video Slice","SAM3_VideoTrack","SAM3_TrackToMask","MVEx_MaskCleanup","MVEx_SubjectCrop","MVEx_MaskToLatentSpace","MVEx_LatentMaskToMask","MVEx_SubjectUncrop"];
+          const checks=await Promise.all(required.map(async name=>{try{const r=await _fetchTimed(`/object_info/${encodeURIComponent(name)}`,{},8000);const d=await r.json();return !!(d&&d[name]);}catch(e){return false;}}));
+          const missing=required.filter((_name,idx)=>!checks[idx]);
+          if(missing.length) throw new Error("Mask mode is missing required nodes: "+missing.join(", ")+". Install MaskVidExperiments, restart ComfyUI, and hard refresh the browser.");
+          _maskRuntimeReady=true;
+        }
+        if(!_M.checkpoints.length){
+          try{const r=await _fetchTimed("/h3one/models");const d=await r.json();_M.checkpoints=d.checkpoints||[];}catch(e){}
+        }
+        const selected=String(S.models.sam3||"").replace(/\\/g,"/").toLowerCase();
+        const exists=h3SamCheckpoints(_M.checkpoints).some(n=>String(n).replace(/\\/g,"/").toLowerCase()===selected);
+        if(!exists) throw new Error("Mask mode needs a SAM 3.1 multiplex checkpoint. Install sam3.1_multiplex_fp16.safetensors in a ComfyUI checkpoints model folder, restart ComfyUI, then pick it under Settings.");
       };
 
       const _buildWorkflow=async()=>{
@@ -4694,6 +5281,51 @@ function persist(){
         } else if(mode==="extend"){
           if(!S.extendVideo) throw new Error("Extend needs a source video. Drop a file in the Video to extend slot, or switch to another mode.");
           wf["16"].inputs.file=S.extendVideo;
+        } else if(mode==="mask"){
+          if(!S.maskVideo) throw new Error("Mask mode needs a source video. Drop one into the Source video slot.");
+          if(!S.maskSeed&&!String(S.maskTarget||"").trim()) throw new Error("Paint a first-frame mask or enter a Mask target for SAM 3 to track.");
+          if(!S.refImages.length) throw new Error("Mask mode needs at least one replacement reference image.");
+          await _checkMaskRuntime();
+          await _checkInputFiles("video",[S.maskVideo],"source video");
+          if(S.maskSeed) await _checkInputFiles("image",[S.maskSeed],"painted mask");
+          await _checkInputFiles("image",S.refImages,"replacement reference");
+          wf["16"].inputs.file=S.maskVideo;
+          const maskSeconds=Math.min(15,Math.max(.2,Number(S.duration)||5));
+          wf["34"].inputs.duration=maskSeconds;
+          wf["18"].inputs.max_seconds=maskSeconds;
+          wf["18"].inputs.target_fps=24;
+          wf["19"].inputs.ckpt_name=S.models.sam3;
+          const maskTarget=String(S.maskTarget||"").trim();
+          wf["20"].inputs.text=maskTarget;
+          wf["21"].inputs.detection_threshold=Math.max(0,Math.min(1,Number(S.maskThreshold)||0));
+          if(!maskTarget) delete wf["21"].inputs.conditioning;
+          const tracking=maskTrackingPlan(S.maskSeed,maskTarget);
+          wf["21"].inputs.max_objects=tracking.maxObjects;
+          wf["22"].inputs.object_indices=tracking.objectIndices;
+          if(S.maskSeed&&tracking.seedPaint){
+            const loadMask=newId(),toMask=newId();
+            wf[loadMask]={class_type:"LoadImage",inputs:{image:S.maskSeed},_meta:{title:"Painted First-Frame Mask"}};
+            wf[toMask]={class_type:"ImageToMask",inputs:{image:[loadMask,0],channel:"red"},_meta:{title:"Painted Mask To SAM"}};
+            wf["21"].inputs.initial_mask=[toMask,0];
+          }
+          S.refImages.forEach((name,idx)=>{
+            const id=newId();
+            wf[id]={class_type:"LoadImage",inputs:{image:name},_meta:{title:`Replacement Reference ${idx+1}`}};
+            wf["6"].inputs[`ref_images.ref_image_${idx}`]=[id,0];
+          });
+          const maskCrop=_effectiveMaskCropPlan();
+          wf["24"].inputs["mode.crop_scale"]=Math.max(1,Math.min(4,Number(S.maskCropScale)||1.5));
+          wf["24"].inputs["mode.aspect_ratio"]=0;
+          wf["24"].inputs.upscale_megapixels=-maskCrop.megapixels;
+          wf["6"].inputs.width=["25",0];
+          wf["6"].inputs.height=["25",1];
+          wf["6"].inputs.length=["18",4];
+          wf["30"].inputs.value=S.maskRegenerateAudio?1:0;
+          wf["33"].inputs.feather=32;
+          if(S.maskRegenerateAudio) delete wf["6"].inputs["ref_audios.ref_audio_0"];
+          const maskAudio=S.maskRegenerateAudio?["13",0]:["18",2];
+          if(wf["14"]){wf["14"].inputs.fps=["18",3];wf["14"].inputs.audio=maskAudio;}
+          else if(wf["15"]&&wf["15"].class_type==="VHS_VideoCombine"){wf["15"].inputs.frame_rate=["18",3];wf["15"].inputs.audio=maskAudio;}
         }
         return wf;
       };
@@ -4830,7 +5462,7 @@ function persist(){
       };
 
       genBtn.onclick=async()=>{
-        if(S.generating) return;
+        if(S.generating||_workflowBuildBusy) return;
         _upOrig=null;_upResult=null;
         if(_cmpMode) _exitCompare();
         _cmpImageRefs=S.mode==="image"&&["edit","refmix"].includes(S.imgSub)?(S.imgSub==="edit"?(S.imgEditSrc?[S.imgEditSrc]:[]):(S.imgRefs||[]).filter(Boolean).slice(0,9)):[];
@@ -4865,44 +5497,69 @@ function persist(){
           showError(`Live Preview is on but the decoder "${S.models.tae}" was not found in a ComfyUI models/vae_approx folder.\nOpen Settings to pick the Live Preview decoder, download taeh3.safetensors from huggingface.co/Kijai/MiniMax-H3-TAE, or turn Live Preview off.`);
           return;
         }
-        if(_uploadsPending>0){
-          let _wait=0;
-          while(_uploadsPending>0&&_wait<200){
-            setStage("Waiting for image upload...",4);
-            await new Promise(res=>setTimeout(res,100));
-            _wait++;
-          }
-        }
+        _workflowBuildBusy=true;
+        root.style.pointerEvents="none";
+        _activeRunMetaByPrompt.clear();
         try{
+          if(_uploadsPending>0){
+            let _wait=0;
+            while(_uploadsPending>0&&_wait<200){
+              setStage("Waiting for image upload...",4);
+              await new Promise(res=>setTimeout(res,100));
+              _wait++;
+            }
+            if(_uploadsPending>0) throw new Error("An upload is still in progress. Wait for it to finish, then generate again.");
+          }
           const n=Math.max(1,Math.min(4,S.batch||1));
-          const ids=[];
+          _batchIds=[];
+          _batchDone=0;
+          _batchFailures=0;
+          _settledBatchIds.clear();
+          _expectedBatchCount=n;
+          _batchSubmissionOpen=true;
           for(let i=0;i<n;i++){
             if(S.randomizeSeed){ S.seed=Math.floor(Math.random()*(H3_SEED_MAX+1)); seedNI._inp.value=String(S.seed); }
             const wf=await _buildWorkflow();
+            const runMeta=_captureRunMeta();
             const body={prompt:wf,client_id:api.clientId,extra_data:{enable_previews:true}};
             const res=await api.fetchApi("/prompt",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
-            const data=await res.json();
-            if(data.error||!data.prompt_id){
-              throw new Error(data.error?.message||JSON.stringify(data.error)||"Unknown error");
+            if(!res.ok) throw new Error(`queue failed (HTTP ${res.status})`);
+            let data=null;try{data=await res.json();}catch(e){}
+            if(!data||data.error||!data.prompt_id){
+              throw new Error(data?.error?.message||JSON.stringify(data&&data.error)||"Unknown error");
             }
-            ids.push(data.prompt_id);
+            _activeRunMetaByPrompt.set(data.prompt_id,runMeta);
+            _batchIds.push(data.prompt_id);
+            _activePromptId=data.prompt_id;
           }
-          _batchIds=ids;
-          _batchDone=0;
-          _activePromptId=ids[ids.length-1];
           _armFinishWatch();
           setStage(n>1?`Queued ${n} runs...`:"In queue...",6);
         }catch(e){
-          resetBtn();showError(fmtErr(e));
+          if(_batchIds.length){
+            _expectedBatchCount=_batchIds.length;
+            _activePromptId=_batchIds[_batchIds.length-1];
+            _armFinishWatch();
+            setStage(`Queued ${_batchIds.length} run${_batchIds.length===1?"":"s"}; batch submission stopped`,6);
+            showError(`The remaining batch could not be queued: ${fmtErr(e)}\n${_batchIds.length} submitted run${_batchIds.length===1?" is":"s are"} still active.`);
+          }else{
+            resetBtn();showError(fmtErr(e));
+          }
+        }finally{
+          _batchSubmissionOpen=false;
+          if(_batchIds.length&&_settledBatchIds.size>=(_expectedBatchCount||_batchIds.length)) _finishRun(null,false);
+          _workflowBuildBusy=false;
+          root.style.pointerEvents="";
         }
       };
 
       stopBtn.onclick=async()=>{
+        const ids=[..._batchIds];
+        S.generating=false;
         try{await api.fetchApi("/interrupt",{method:"POST"});}catch(e){}
-        if(_activePromptId){
-          try{await api.fetchApi("/queue",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({delete:[_activePromptId]})});}catch(e){}
-          _activePromptId=null;
+        if(ids.length){
+          try{await api.fetchApi("/queue",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({delete:ids})});}catch(e){}
         }
+        _activePromptId=null;
         resetBtn();
       };
 
@@ -4918,20 +5575,26 @@ function persist(){
         try{
           const r=await fetch("/h3one/models");
           const d=await r.json();
-          _M={diffusion:d.diffusion_models||[],text_encoders:d.text_encoders||[],vaes:d.vaes||[],loras:d.loras||[]};
+          _M={checkpoints:d.checkpoints||[],diffusion:d.diffusion_models||[],text_encoders:d.text_encoders||[],vaes:d.vaes||[],loras:d.loras||[]};
           const has=(arr,v)=>arr.some(m=>(m||"").toLowerCase()===(v||"").toLowerCase());
           const clipItems=h3TextEncoderItems(_M.text_encoders);
+          const samItems=h3SamCheckpoints(_M.checkpoints);
           if(!has(clipItems,S.models.clip)) S.models.clip=_pickModel(clipItems,"qwen3vl_32b_minimax_h3");
           if(!has(_M.diffusion,S.models.unetT2V)) S.models.unetT2V=_pickModel(_M.diffusion,"fl2va");
           if(!has(_M.diffusion,S.models.unetR2V)) S.models.unetR2V=_pickModel(_M.diffusion,"ref2va");
           if(!has(_M.vaes,S.models.vaeVideo)) S.models.vaeVideo=_pickModel(_M.vaes,"video_vae");
           if(!has(_M.vaes,S.models.vaeAudio)) S.models.vaeAudio=_pickModel(_M.vaes,"audio_vae");
+          if(!has(samItems,S.models.sam3)){
+            S.models.sam3=samItems[0]||"";
+          }
           persist();
           modelDDs.unetT2V.updateItems(_M.diffusion);
           modelDDs.unetR2V.updateItems(_M.diffusion);
           modelDDs.clip.updateItems(clipItems);
           modelDDs.vaeVideo.updateItems(_M.vaes);
           modelDDs.vaeAudio.updateItems(_M.vaes);
+          modelDDs.sam3.updateItems(samItems.length?samItems:[""]);
+          modelDDs.sam3.set(S.models.sam3);
           speedLoraDD.updateItems(["none"].concat(_M.loras));
           const loraItems=_M.loras.length?_M.loras:["none"];
           _renderLoras();
@@ -4967,7 +5630,10 @@ function persist(){
           _discTmpl=d.prompt_templates||{};
         }catch(e){console.warn("[H3One] load config:",e);}
       };
-      _updateFramesLabel=()=>{ tx(framesLbl,outputFrameLabel(S.duration,S.fps,(seconds)=>snapFrames(seconds,S.fps))); };
+      _updateFramesLabel=()=>{
+        if(S.mode==="mask") tx(framesLbl,`= up to ${snapFrames(Math.min(15,S.duration),24)} source frames @ 24 fps (locked)`);
+        else tx(framesLbl,outputFrameLabel(S.duration,S.fps,(seconds)=>snapFrames(seconds,S.fps)));
+      };
       _updateFramesLabel();
       _loadModels();
       _loadConfig();
@@ -4976,7 +5642,7 @@ function persist(){
       // -- Assemble ----------------------------------------------------------
       const mainRow=mk("div",{display:"flex",gap:"12px",alignItems:"stretch",flex:"1",minHeight:"0"});
       const leftPanel=mk("div",{display:"flex",flexDirection:"column",gap:"9px",width:"460px",flexShrink:"0",overflowY:"auto",minHeight:"0",paddingRight:"4px",boxSizing:"border-box",scrollbarWidth:"thin",scrollbarColor:`${C.border} transparent`});
-      modeArea.append(i2vArea,refArea,kfArea,adArea,exArea,chainArea,imgArea);
+      modeArea.append(i2vArea,refArea,kfArea,adArea,exArea,chainArea,maskArea,imgArea);
       // -- Card assembly -----------------------------------------------------
       const promptCard=mk("div",{}, {className:"h3-card"});
       promptCard.append(promptHdr,promptWrap);
@@ -5031,9 +5697,10 @@ function persist(){
         const r=_resolveRes();
         const p=_fitPrimary(S);
         const fitTag=p?(p.mode==="custom"?"Custom":(p.mode==="normal"?"Normal":"Fit")):"";
-        chip(fitTag?`Res · ${fitTag}`:"Res",`${r.width}×${r.height}`,(rect)=>resDD.open(rect),true);
+        if(S.mode==="mask"){const crop=_effectiveMaskCropPlan();chip("Crop",`mask-shaped · ${crop.megapixels.toFixed(2)} MP`,(rect)=>resDD.open(rect),true);}
+        else chip(fitTag?`Res · ${fitTag}`:"Res",`${r.width}×${r.height}`,(rect)=>resDD.open(rect),true);
         if(S.mode==="chain") chip("Clips",String(S.chainClips.length));
-        else chip("Length",`${S.duration}s`,()=>editField(durNI));
+        else chip(S.mode==="mask"?"Source":"Length",`${S.duration}s`,()=>editField(durNI));
         chip("Steps",String(S.steps),()=>editField(stepsNI));
         chip("Quality",_q,(rect)=>qualDD.open(rect),true);
         chip("Sampler",S.samplerName||"res_multistep",(rect)=>samplerDD.open(rect),true);
@@ -5064,6 +5731,7 @@ function persist(){
       document.addEventListener("keydown",(e)=>{
         if(e.code!=="Space") return;
         if(!_mouseOverRoot) return;
+        if(_workflowBuildBusy) return;
         const tag=(document.activeElement||{}).tagName||"";
         if(tag==="INPUT"||tag==="TEXTAREA") return;
         if(settingsOverlay.style.display!=="none"||historyOverlay.style.display!=="none"||libraryOverlay.style.display!=="none"||discoverOverlay.style.display!=="none") return;
@@ -5073,6 +5741,7 @@ function persist(){
 
       document.addEventListener("paste",async(e)=>{
         if(!_mouseOverRoot) return;
+        if(_workflowBuildBusy) return;
         const tag=(document.activeElement||{}).tagName||"";
         if(tag==="INPUT"||tag==="TEXTAREA") return;
         const items=[...(e.clipboardData?.items||[])];
@@ -5086,19 +5755,24 @@ function persist(){
         let file;
         try{ file=new File([raw],uniqueName,{type:raw.type}); }
         catch(_){ file=raw; file.name=uniqueName; }
+        if(!_fileMatches(file,IMAGE_FILE_EXTS)) return;
         if(S.mode==="i2v"){
           if(!S.firstFrame) firstSlot.loadFile(file);
           else lastSlot.loadFile(file);
-        } else if(S.mode==="r2v"){
-          if(S.refImages.length>=9) return;
+        } else if(S.mode==="r2v"||S.mode==="mask"){
+          if(_refImageUploadsPending||S.refImages.length>=9) return;
+          _refImageUploadsPending++;
+          if(S.mode==="mask") _renderMask(); else _renderRefs();
           try{
             const _nm=await _uploadImage(file);
-            S.refImages.push(_nm);
-            const _sz=await _captureFileSize(file);
-            if(_sz) S.refImageSizes[_nm]=_sz;
-            persist();
-            _renderRefs();
+            if(S.refImages.length<9){
+              S.refImages.push(_nm);
+              const _sz=await _captureFileSize(file);
+              if(_sz) S.refImageSizes[_nm]=_sz;
+              persist();
+            }
           }catch(err){ console.warn("[H3One] paste upload:",err); if(_h3ShowError)_h3ShowError("Pasted image upload failed: "+fmtErr(err)); }
+          finally{_refImageUploadsPending--;if(S.mode==="mask") _renderMask(); else _renderRefs();}
         } else if(S.mode==="keyframes"){
           let empty=S.kf.find(k=>!k.img);
           if(!empty){
@@ -5175,22 +5849,8 @@ function persist(){
     const pid=d?.prompt_id;
     const qentry=pid?_queuedJobs.get(pid):null;
     if(qentry){
-      _queuedJobs.delete(pid);
-      _renderQueueBadge();
-      if(!_queuedJobs.size) _stopQueueSync();
-      const out=d?.output;
-      if(out&&qentry.node&&qentry.node._h3_showQueued){
-        const vids=out.videos||out.gifs||null;
-        const imgs=out.images||null;
-        let item=null;
-        if(vids&&Array.isArray(vids)&&vids.length) item=vids[vids.length-1];
-        else if(imgs&&Array.isArray(imgs)&&imgs.length){
-          const im=imgs[imgs.length-1];
-          const animated=!!(out.animated&&out.animated.length);
-          item={filename:im.filename,subfolder:im.subfolder||"",type:im.type||"output",kind:animated?"video":"image"};
-        }
-        if(item) qentry.node._h3_showQueued(item);
-      }
+      const item=_mediaItemFromOutput(d?.output);
+      if(item&&!qentry.shown&&qentry.node&&qentry.node._h3_showQueued){qentry.shown=true;qentry.node._h3_showQueued(item);}
       return;
     }
     if(!_activeNode) return;
@@ -5199,26 +5859,26 @@ function persist(){
     if(!out) return;
     const vids=out.videos||out.gifs||null;
     if(vids&&Array.isArray(vids)&&vids.length&&_activeShowOutput){
-      _activeShowOutput(vids[vids.length-1]);
+      _activeShowOutput(vids[vids.length-1],_activeRunMetaByPrompt.get(pid));
       _activeSetStage?.("Done",97);
     }
     const imgs=out.images||null;
     if(imgs&&Array.isArray(imgs)&&imgs.length&&_activeShowOutput){
       const im=imgs[imgs.length-1];
       const animated=!!(out.animated&&out.animated.length);
-      _activeShowOutput({filename:im.filename,subfolder:im.subfolder||"",type:im.type||"output",kind:animated?"video":"image"});
+      _activeShowOutput({filename:im.filename,subfolder:im.subfolder||"",type:im.type||"output",kind:animated?"video":"image"},_activeRunMetaByPrompt.get(pid));
       _activeSetStage?.("Done",97);
     }
   });
 
   api.addEventListener("execution_success",(evt)=>{
     const pid=(evt?.detail||{}).prompt_id;
-    if(pid&&_queuedJobs.has(pid)){
-      _queuedJobs.delete(pid);
-      _renderQueueBadge();
-      if(!_queuedJobs.size) _stopQueueSync();
+    const qentry=pid?_queuedJobs.get(pid):null;
+    if(qentry){
+      _settleQueuedJob(pid,qentry);
+      return;
     }
-    if(!pid||_batchIds.includes(pid)) _finishRun();
+    if(!pid||_batchIds.includes(pid)) _finishRun(pid,false);
   });
 
   api.addEventListener("execution_error",(evt)=>{
@@ -5235,8 +5895,22 @@ function persist(){
     }
     if(!_activeNode) return;
     if(d?.prompt_id&&_batchIds.length&&!_batchIds.includes(d.prompt_id)) return;
+    if(_activeNode._h3_S&&_activeNode._h3_S.generating!==true) return;
     const msg=fmtErr(d?.exception_message||d?.error||d||"Execution failed.");
     _activeShowError?.(msg);
-    _activeResetBtn?.();
+    _finishRun(d?.prompt_id||_activePromptId,true);
+  });
+
+  api.addEventListener("execution_interrupted",(evt)=>{
+    const d=evt.detail||{};
+    const pid=d.prompt_id;
+    if(pid&&_queuedJobs.has(pid)){
+      _queuedJobs.delete(pid);_renderQueueBadge();if(!_queuedJobs.size)_stopQueueSync();
+      return;
+    }
+    if(!_activeNode||(_activeNode._h3_S&&_activeNode._h3_S.generating!==true)) return;
+    if(pid&&_batchIds.length&&!_batchIds.includes(pid)) return;
+    _activeShowError?.("Generation was interrupted.");
+    _finishRun(pid||_activePromptId,true);
   });
 })();

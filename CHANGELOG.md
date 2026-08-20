@@ -2,6 +2,10 @@
 
 Newest first.
 
+## Unreleased
+
+Mask mode can paint or describe a region in a source video, track it with SAM 3, replace it with H3 reference inpainting, and keep the rest of the video unchanged. A Mask target now defines what SAM tracks, so typing "face" tracks the face instead of the whole painted area, and the replacement region hugs the tracked object. The H3 crop also follows the object's own shape like the droz reference template instead of a fixed widescreen canvas, so the replacement gets more pixels and cleaner edges.
+
 ## 0.8.0 (2026-08-19)
 
  - New + Queue button under Generate.

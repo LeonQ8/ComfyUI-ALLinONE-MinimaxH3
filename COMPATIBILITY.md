@@ -27,6 +27,7 @@ These are the commit SHAs the node was developed against. You don't need to pin 
 | comfyui-kjnodes | [GitHub](https://github.com/kijai/ComfyUI-KJNodes) | `3f20054` | High Quality preset (SageAttention) / Live Preview |
 | comfy-kitchen (pip) | [GitHub](https://github.com/Comfy-Org/comfy-kitchen) | 0.2.31 | Kitchen chip (ModelAttentionBackend) |
 | ComfyUI-MiniMax-H3-Studio | [GitHub](https://github.com/thaakeno/ComfyUI-MiniMax-H3-Studio) | `99a868e` | Image mode |
+| MaskVidExperiments | [GitHub](https://github.com/drozbay/MaskVidExperiments) | `d98cc89` (0.2.0) | Mask mode |
 
 ## Known issues on newer ComfyUI cores
 
@@ -53,3 +54,4 @@ All official, from [Comfy-Org/MiniMax-H3](https://huggingface.co/Comfy-Org/MiniM
 | `qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors` | `text_encoders/` |
 | `minimax_h3_video_vae_fp16.safetensors` | `vae/` |
 | `minimax_h3_audio_vae_fp32.safetensors` | `vae/` |
+| `sam3.1_multiplex_fp16.safetensors` | `checkpoints/` |
