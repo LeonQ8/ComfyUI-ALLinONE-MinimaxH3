@@ -102,6 +102,8 @@ def validate(name, data):
             raise ValueError(f"{name}: conditioning length must follow prepared source frames")
         if data["6"]["inputs"].get("ref_audios.ref_audio_0") != ["18", 1]:
             raise ValueError(f"{name}: conditioning must receive the preserved source speech as an audio reference")
+        if data["6"]["inputs"].get("ref_videos.ref_video_0") != ["24", 0]:
+            raise ValueError(f"{name}: conditioning must receive the tracked source crop as a motion reference")
         if data["29"]["inputs"].get("audio") != ["18", 1]:
             raise ValueError(f"{name}: H3 audio VAE must receive normalized stereo audio")
         if data["14"]["inputs"].get("audio") != ["18", 2]:

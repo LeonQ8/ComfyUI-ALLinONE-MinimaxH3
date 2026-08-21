@@ -858,6 +858,18 @@ test("bundle wires the Mask mode, brush editor, and runtime preflight", () => {
   );
 });
 
+test("bundle feeds the tracked source crop to H3 as a motion reference", () => {
+  const bundle = readFileSync(bundlePath, "utf8");
+  assert.ok(bundle.includes("ref_videos.ref_video_0"), "Mask must wire the source crop as a ref_video motion reference");
+  assert.ok(
+    bundle.includes("instead of inventing new motion"),
+    "the motion-reference wiring must be documented as a motion fix",
+  );
+  assert.ok(bundle.includes('wf["7"].inputs.conditioning=[kfId,0]'), "the mask identity anchor must rewire the guider");
+  assert.ok(bundle.includes('class_type:"H3IdentityAnchor"'), "Mask must pin the replacement identity at frame 0");
+  assert.ok(bundle.includes("frame_count:[\"18\",4]"), "the mask identity anchor must use the prepared frame count");
+});
+
 test("bundle makes uploads stale-safe and part of the workflow build barrier", () => {
   const bundle = readFileSync(bundlePath, "utf8");
   assert.ok(bundle.includes("const token=++_loadToken"), "media slots must invalidate stale upload responses");

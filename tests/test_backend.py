@@ -220,6 +220,18 @@ class TestConfig(_NodesTestBase):
             self.assertNotIn("speaks", prompt, "presets must not bake in lip-sync; the Audio mode owns it")
             self.assertNotIn("mouth", prompt, "presets must not bake in lip-sync; the Audio mode owns it")
 
+    def test_mask_prompt_uses_the_source_crop_as_a_motion_reference(self):
+        cfg = self.nodes._load_builtin_config()
+        mask = cfg.get("prompt_templates", {}).get("mask", {})
+        self.assertIn("<Video 1>", mask.get("wrap", ""), "the mask template must label the source crop as a motion reference")
+        self.assertIn("movement and performance come from <Video 1>", mask.get("wrap", ""), "identity and motion must be split between the ref image and the ref video")
+        self.assertIn("weak_reference", mask.get("wrap", ""), "the ref video must be a motion-only reference, never the identity")
+        for preset in mask.get("presets", []):
+            prompt = preset.get("prompt", "")
+            self.assertIn("<Video 1>", prompt)
+            self.assertIn("the face of the person in <Video 1> never appears", prompt,
+                          "the source dancer's face must not leak into the replacement")
+
     def test_user_overrides_builtin(self):
         user = self.user_dir()
         (user / "config.json").write_text(

@@ -6068,11 +6068,31 @@ function persist(){
             wf["24"].inputs.masks=[regionMask,0];
             maskRegionId=regionMask;
           }
+          let firstImgId=null;
           S.refImages.forEach((name,idx)=>{
             const id=newId();
             wf[id]={class_type:"LoadImage",inputs:{image:name},_meta:{title:`Replacement Reference ${idx+1}`}};
             wf["6"].inputs[`ref_images.ref_image_${idx}`]=[id,0];
+            if(idx===0) firstImgId=id;
           });
+          // The tracked source crop rides in as ref_video_0 so H3 re-enacts the
+          // original movement instead of inventing new motion inside the mask.
+          // Pin the replacement identity at frame 0 so that reference video's
+          // original face cannot outrank <Picture 1> (same fix as R2V mode).
+          if(firstImgId){
+            const kfId=newId();
+            wf[kfId]={class_type:"H3IdentityAnchor",inputs:{
+              conditioning:["6",0],
+              vae:["3",0],
+              latent:["6",1],
+              frame_count:["18",4],
+              width:["25",0],
+              height:["25",1],
+              anchor:"first",
+              image:[firstImgId,0],
+            },_meta:{title:"Identity Anchor (frame 0)"}};
+            wf["7"].inputs.conditioning=[kfId,0];
+          }
           const maskCrop=_effectiveMaskCropPlan();
           wf["24"].inputs["mode.crop_scale"]=Math.max(1,Math.min(4,Number(S.maskCropScale)||1.5));
           wf["24"].inputs["mode.aspect_ratio"]=0;
@@ -6080,6 +6100,7 @@ function persist(){
           wf["6"].inputs.width=["25",0];
           wf["6"].inputs.height=["25",1];
           wf["6"].inputs.length=["18",4];
+          wf["6"].inputs["ref_videos.ref_video_0"]=["24",0];
           wf["30"].inputs.value=S.maskAudioMode==="regenerate"?1:0;
           wf["33"].inputs.feather=32;
           if(S.maskAudioMode==="regenerate") delete wf["6"].inputs["ref_audios.ref_audio_0"];
