@@ -1068,6 +1068,29 @@ class TestMaskPreviewWorkflow(_NodesTestBase):
         self.assertEqual(wf["24"]["inputs"]["masks"], ["202", 0])
         self.assertEqual(wf["101"]["inputs"]["masks"], ["202", 0])
 
+    def test_preview_error_passes_unrelated_failures_through(self):
+        wf = self._build()
+        self.assertEqual(self.nodes._preview_error_message("some other error", wf), "some other error")
+
+    def test_preview_error_translates_empty_masks_with_a_text_target(self):
+        wf = self._build(text="person", detection_threshold=1.0)
+        msg = self.nodes._preview_error_message("all masks are empty, nothing to crop", wf)
+        self.assertIn("person", msg)
+        self.assertIn("100%", msg)
+        self.assertIn("lower the Detection slider", msg)
+
+    def test_preview_error_translates_empty_masks_with_a_reasonable_threshold(self):
+        wf = self._build(text="person", detection_threshold=0.5)
+        msg = self.nodes._preview_error_message("nothing to crop", wf)
+        self.assertIn("person", msg)
+        self.assertIn("clearer Mask target", msg)
+
+    def test_preview_error_translates_empty_masks_with_no_text(self):
+        wf = self._build(text="", initial_mask="")
+        msg = self.nodes._preview_error_message("all masks are empty, nothing to crop", wf)
+        self.assertIn("Mask target", msg)
+        self.assertIn("paint a first-frame mask", msg)
+
     def test_text_target_does_not_add_the_region_node(self):
         wf = self._build(text="face", initial_mask="mask.png")
         self.assertNotIn("202", wf)
@@ -1609,6 +1632,60 @@ class TestSmartMask(_NodesTestBase):
             self.nodes._smart_mask_run = original_run
         self.assertEqual(resp.kwargs["status"], 422)
         self.assertIn("did not find an object", resp.kwargs["data"]["error"])
+
+    @unittest.skipUnless(_HAS_TORCH and _HAS_NUMPY, "torch/numpy not available")
+    def test_smart_mask_route_rejects_a_mask_that_is_only_a_speck(self):
+        (self.tmp / "input" / "clip.mp4").write_bytes(b"\x00\x00")
+        (self.tmp / "models" / "checkpoints").mkdir(parents=True, exist_ok=True)
+        (self.tmp / "models" / "checkpoints" / "sam.safetensors").write_bytes(b"\x00")
+        import folder_paths as _fp
+        original_full = getattr(_fp, "get_full_path", None)
+        original_frame = self.nodes._mask_source_frame
+        original_run = self.nodes._smart_mask_run
+
+        def fake_full(key, name):
+            return str(self.tmp / "models" / "checkpoints" / "sam.safetensors")
+
+        _fp.get_full_path = fake_full
+        self.nodes._mask_source_frame = lambda _path, _t: (torch.zeros((1, 40, 60, 3)), (60, 40))
+        speck = torch.zeros((40, 60))
+        speck[20, 30] = 1.0
+        self.nodes._smart_mask_run = lambda *a, **k: speck
+        self._stub_comfy_sd()
+        try:
+            resp = _run(self.nodes.smart_mask(_FakeRequest({
+                "source": "clip.mp4", "ckpt_name": "sam.safetensors",
+                "positive": [{"x": 30, "y": 20}], "negative": [],
+            })))
+        finally:
+            if original_full is None:
+                _fp.__dict__.pop("get_full_path", None)
+            else:
+                _fp.get_full_path = original_full
+            self.nodes._mask_source_frame = original_frame
+            self.nodes._smart_mask_run = original_run
+        self.assertEqual(resp.kwargs["status"], 422)
+        self.assertIn("did not find an object", resp.kwargs["data"]["error"])
+
+    @unittest.skipUnless(_HAS_TORCH and _HAS_NUMPY, "torch/numpy not available")
+    def test_despeckle_mask_keeps_the_object_and_drops_specks(self):
+        m = torch.zeros((40, 60))
+        m[10:30, 20:40] = 1.0
+        m[5, 5] = 1.0
+        m[35:38, 50:53] = 1.0
+        out = self.nodes._despeckle_mask(m)
+        self.assertEqual(float(out[5, 5]), 0.0, "a single stray pixel must be removed")
+        self.assertEqual(float(out[35, 50]), 0.0, "a tiny isolated blob must be removed")
+        self.assertEqual(float(out[10, 20]), 1.0, "the main object must survive")
+        self.assertEqual(float(out[29, 39]), 1.0, "the main object must keep its full area")
+        self.assertEqual(float(out.sum().item()), 400, "only the 20x20 object should remain")
+
+    @unittest.skipUnless(_HAS_TORCH and _HAS_NUMPY, "torch/numpy not available")
+    def test_despeckle_mask_skips_empty_and_full_frame_masks(self):
+        empty = torch.zeros((10, 10))
+        self.assertIs(self.nodes._despeckle_mask(empty), empty, "an empty mask must pass through untouched")
+        full = torch.ones((10, 10))
+        self.assertIs(self.nodes._despeckle_mask(full), full, "a whole-scene mask must pass through untouched")
 
     def _stub_comfy_sd(self):
         import sys

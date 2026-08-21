@@ -8,6 +8,8 @@ Newest first.
 
  - A new Smart tool in the Mask paint editor builds your first-frame mask with a click. Click the character and SAM 3 paints just that object, respecting hard edges and the shape it holds; right-click anything in hand (like a microphone) to carve it back out. The mask shows live in red over the video and you can still touch it up by hand before saving.
  - On wide shots the Smart tool used to paint the whole scene in one click. It now picks just the character you click, and the red overlay marks only that region instead of the full frame.
+ - The Smart tool cleans the small stray dots SAM 3 can leave on dark or patterned clothing, so a click gives one clean object mask.
+ - Preview tracking explains itself when SAM 3 finds nothing to track: it names the Mask target and the Detection level and suggests lowering Detection or using a clearer target, instead of a raw crop error.
 
 ## 0.11.0 (2026-08-21)
 

@@ -1433,6 +1433,35 @@ def _mask_preview_queue_number(current):
     return -abs(float(current)) - 1.0
 
 
+def _mask_empty_crop_hint(wf):
+    """Explain an empty tracked mask so the crop failure reads as guidance.
+
+    SAM 3 found no object, so the tracked mask came through empty and MVEx
+    Subject Crop refused to crop. The most actionable cause depends on whether
+    the preview was told to detect by text or to follow a painted mask."""
+    text = ""
+    threshold = 0.5
+    try:
+        text = str(wf.get("20", {}).get("inputs", {}).get("text", "") or "").strip()
+        threshold = max(0.0, min(1.0, float(wf.get("21", {}).get("inputs", {}).get("detection_threshold", 0.5) or 0.5)))
+    except (TypeError, ValueError):
+        pass
+    if text:
+        pct = int(round(threshold * 100))
+        if threshold >= 0.9:
+            return f"SAM 3 found no '{text}' at Detection {pct}%. That is a near-impossible bar; lower the Detection slider toward 50% and Preview tracking again."
+        return f"SAM 3 found no '{text}' at Detection {pct}%. Try a clearer Mask target (face, jacket, car) or lower the Detection slider, then Preview tracking again."
+    return "SAM 3 found nothing to track. Enter a Mask target or paint a first-frame mask, then Preview tracking again."
+
+
+def _preview_error_message(detail, wf):
+    """Turn a raw preview execution failure into a friendly, actionable message."""
+    msg = str(detail or "")
+    if "all masks are empty" in msg or "nothing to crop" in msg:
+        return _mask_empty_crop_hint(wf)
+    return msg
+
+
 async def _run_mask_preview(wf, client_id, token=""):
     """Queue the preview graph at the front and wait for its temp overlay video."""
     import asyncio
@@ -1477,6 +1506,7 @@ async def _run_mask_preview(wf, client_id, token=""):
             for message in messages:
                 if message and message[0] == "execution_error" and isinstance(message[1], dict):
                     detail = message[1].get("exception_message") or message[1].get("error") or "execution failed"
+                    detail = _preview_error_message(detail, wf)
                     if token:
                         _MASK_PREVIEW_PROGRESS[token]["done"] = True
                     return web.json_response({"ok": False, "error": str(detail), "prompt_id": prompt_id}, status=500)
@@ -1627,6 +1657,56 @@ def _smart_mask_run(model, image, positive, negative, refine_iterations=2, thres
     return plain
 
 
+def _despeckle_mask(mask, min_area=None):
+    """Drop tiny isolated regions so an object mask does not carry specks.
+
+    Segmentation of dark or patterned clothing sometimes keeps small
+    disconnected blobs that read as dots. Removes components that are tiny
+    relative to the object itself, so thin but legitimate features survive.
+    Skips masks that cover most of the frame, where a per-pixel scan is not
+    worth it."""
+    import numpy as np
+    import torch
+    m = mask.detach().cpu().numpy().astype(bool)
+    if not m.any() or m.sum() > m.size * 0.25:
+        return mask
+    h, w = m.shape
+    label = np.zeros((h, w), dtype=np.int32)
+    areas = []
+    queue = []
+    n = 0
+    for y0, x0 in np.argwhere(m):
+        y0, x0 = int(y0), int(x0)
+        if label[y0, x0]:
+            continue
+        n += 1
+        label[y0, x0] = n
+        queue.append((y0, x0))
+        count = 0
+        while queue:
+            cy, cx = queue.pop()
+            count += 1
+            for dy in (-1, 0, 1):
+                for dx in (-1, 0, 1):
+                    if dy == 0 and dx == 0:
+                        continue
+                    ny, nx = cy + dy, cx + dx
+                    if 0 <= ny < h and 0 <= nx < w and m[ny, nx] and not label[ny, nx]:
+                        label[ny, nx] = n
+                        queue.append((ny, nx))
+        areas.append(count)
+    if not areas:
+        return mask
+    biggest = max(areas)
+    if min_area is None:
+        min_area = max(40, int(round(0.005 * biggest)))
+    out = m.copy()
+    for i, a in enumerate(areas):
+        if a < min_area:
+            out[label == i + 1] = False
+    return torch.from_numpy(out.astype(np.float32))
+
+
 def _smart_mask_png(mask, width, height):
     """Render a binary mask tensor to black+white PNG bytes."""
     import io
@@ -1729,6 +1809,7 @@ async def smart_mask(request):
         import comfy.sd
         model, _clip, _vae, _metadata = comfy.sd.load_checkpoint_guess_config(checkpoint, output_vae=True, output_clip=True)
         mask = _smart_mask_run(model, frame, positive, negative, refine_iterations, threshold)
+        mask = _despeckle_mask(mask)
         if float(mask.sum().item()) <= 0:
             return web.json_response({"ok": False, "error": "SAM 3 did not find an object at that click, try clicking more clearly on the subject"}, status=422)
         png = _smart_mask_png(mask, width, height)
