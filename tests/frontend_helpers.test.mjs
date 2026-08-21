@@ -968,7 +968,7 @@ test("bundle passes the trim start to the mask editor so the paint lands on the 
 test("bundle wires the Smart click-to-segment tool in the mask editor", () => {
   const bundle = readFileSync(bundlePath, "utf8");
   assert.ok(bundle.includes("smartBtn=toolBtn(\"Smart\")"), "the paint editor must expose a Smart tool button");
-  assert.ok(bundle.includes("Smart on - left-click the character"), "turning Smart on must explain the gesture");
+  assert.ok(bundle.includes("Smart on - left-click adds to the mask"), "turning Smart on must explain the gesture");
   assert.ok(bundle.includes("posPts") && bundle.includes("negPts"), "Smart must accumulate positive and negative click points");
   assert.ok(bundle.includes('fetch("/h3one/smart_mask"'), "a Smart click must POST to the segmentation route");
   assert.ok(bundle.includes("positive:posPts.map"), "the route call must send the accumulated positive points");
@@ -997,6 +997,14 @@ test("bundle translates an empty tracked mask on a real run", () => {
   const bundle = readFileSync(bundlePath, "utf8");
   assert.ok(bundle.includes("maskRunErrorHint"), "a real-run empty-mask failure must be translated to guidance");
   assert.ok(bundle.includes('msg.includes("nothing to crop")'), "the raw crop error must be recognized");
+});
+
+test("bundle marks smart clicks visibly and explains the gestures", () => {
+  const bundle = readFileSync(bundlePath, "utf8");
+  assert.ok(bundle.includes("smartBtn.title="), "the Smart button must explain left and right click on hover");
+  assert.ok(bundle.includes("drawSmartPoints"), "smart clicks must draw visible markers");
+  assert.ok(bundle.includes("mark(negPts,\"#46a6ff\""), "negative clicks must show as a distinct marker");
+  assert.ok(bundle.includes("posPts.length=0;negPts.length=0"), "Clear must also reset the accumulated smart clicks");
 });
 
 test("lumaToAlpha turns an opaque black+white mask into a white mask with alpha", () => {

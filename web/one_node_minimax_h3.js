@@ -1177,6 +1177,7 @@ function openVideoMaskEditor({videoName,maskName,startTime,onSave,sam3Ckpt}){
     const zoomOutBtn=toolBtn("−"),zoomInBtn=toolBtn("+"),zoomFitBtn=toolBtn("Fit");
     const zoomLabel=mk("span",{fontSize:"9px",color:C.muted,minWidth:"38px",textAlign:"center"});tx(zoomLabel,"100%");
     const drawBtn=toolBtn("Paint"),eraseBtn=toolBtn("Erase"),circleBtn=toolBtn("Circle"),squareBtn=toolBtn("Square"),smartBtn=toolBtn("Smart"),undoBtn=toolBtn("Undo"),redoBtn=toolBtn("Redo"),clearBtn=toolBtn("Clear");
+    smartBtn.title="Left-click the character to add it to the mask (green marker). Right-click anything to keep it out, like a mic (blue marker). Each click re-segments with all your clicks together.";
     const sizeLabel=mk("label",{display:"flex",alignItems:"center",gap:"6px",fontSize:"10px",color:C.muted});
     const sizeText=mk("span",{});tx(sizeText,"Brush 48 px");
     const sizeInput=mk("input",{width:"150px",accentColor:C.lime},{type:"range",min:"4",max:"512",step:"2",value:"48"});
@@ -1273,7 +1274,30 @@ function openVideoMaskEditor({videoName,maskName,startTime,onSave,sam3Ckpt}){
       ctx.fillStyle="rgba(255,72,72,.68)";
       ctx.fillRect(0,0,canvas.width,canvas.height);
       ctx.globalCompositeOperation="source-over";
+      drawSmartPoints();
       updateMaskStats();
+    };
+    const drawSmartPoints=()=>{
+      if(!smart) return;
+      const r=Math.max(5,Math.round(Math.min(canvas.width,canvas.height)*.01));
+      const mark=(pts,color,neg)=>{
+        ctx.save();
+        ctx.strokeStyle=color;ctx.fillStyle=color;ctx.lineWidth=2;
+        for(const p of pts){
+          ctx.beginPath();ctx.arc(p.x,p.y,r,0,Math.PI*2);ctx.stroke();
+          const s=Math.max(3,Math.round(r*.55));
+          ctx.beginPath();
+          if(neg){
+            ctx.moveTo(p.x-s,p.y-s);ctx.lineTo(p.x+s,p.y+s);ctx.moveTo(p.x+s,p.y-s);ctx.lineTo(p.x-s,p.y+s);
+          }else{
+            ctx.moveTo(p.x-s,p.y);ctx.lineTo(p.x+s,p.y);ctx.moveTo(p.x,p.y-s);ctx.lineTo(p.x,p.y+s);
+          }
+          ctx.stroke();
+        }
+        ctx.restore();
+      };
+      mark(posPts,"#3ddc84",false);
+      mark(negPts,"#46a6ff",true);
     };
     const updateMaskStats=()=>{
       const w=maskCanvas.width,h=maskCanvas.height;
@@ -1423,7 +1447,7 @@ function openVideoMaskEditor({videoName,maskName,startTime,onSave,sam3Ckpt}){
     smartBtn.onclick=()=>{
       if(smart){exitSmart();return;}
       smart=true;mode="draw";renderMode();
-      tx(status,`Smart on - left-click the character, right-click anything to exclude (e.g. a mic)`);
+      tx(status,`Smart on - left-click adds to the mask (green +), right-click keeps a spot out (blue x). Click again to refine.`);
       status.style.color=C.lime;
     };
     canvas.addEventListener("contextmenu",e=>{if(smart){e.preventDefault();}});
@@ -1443,7 +1467,7 @@ function openVideoMaskEditor({videoName,maskName,startTime,onSave,sam3Ckpt}){
       scrollBox.scrollLeft=(scrollBox.scrollLeft+px)*scale-px;
       scrollBox.scrollTop=(scrollBox.scrollTop+py)*scale-py;
     },{passive:false});
-    clearBtn.onclick=()=>{if(!ready)return;pushUndo();maskCtx.clearRect(0,0,maskCanvas.width,maskCanvas.height);renderMask();tx(status,"Mask cleared");};
+    clearBtn.onclick=()=>{if(!ready)return;pushUndo();maskCtx.clearRect(0,0,maskCanvas.width,maskCanvas.height);posPts.length=0;negPts.length=0;renderMask();tx(status,"Mask cleared - smart clicks reset");};
     undoBtn.onclick=undo;redoBtn.onclick=redo;
     sizeInput.oninput=()=>tx(sizeText,`Brush ${sizeInput.value} px`);
     cancelBtn.onclick=()=>{if(!saving)close(null);};
