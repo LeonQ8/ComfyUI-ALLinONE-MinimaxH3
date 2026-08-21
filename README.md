@@ -21,6 +21,8 @@ No node graph to build, no wires to connect, no hunting through twelve custom no
 | **Mask** | Paint or describe a region in a video, track it, and replace only that area |
 | **Upscale** | RTX/Seed2VR Video Super Resolution hook |
 
+In Mask mode, painting a region and describing it with text are two separate paths. In my testing, mixing manual inpainting with a text prompt does not work well, so pick one approach per mask.
+
 ## Screenshots
 
 **Modes** — switch between modes, R2V, T2V, T2I, I2V, Audio Drive, Keyframes, Extend, Chain.
@@ -30,6 +32,10 @@ No node graph to build, no wires to connect, no hunting through twelve custom no
 **Live Preview** — live preview of your video while sampling.
 
 ![ALL in ONE MiniMaxH3 — demo](assets/liveprev.gif)
+
+**Masking** — paint or describe a region, track it, and replace only that area.
+
+![Masking demo](assets/Sam3Preview.gif)
 
 **History** — searchable, with prompt reuse and per-entry preview.
 
@@ -59,6 +65,12 @@ Restart ComfyUI, then double-click the canvas and search for **ALL in ONE MiniMa
 ## Compatibility
 
 I develop and test against a pinned stack (ComfyUI version, custom node commits, model files). It's all listed in **[COMPATIBILITY.md](COMPATIBILITY.md)**, if a render fails after you updated something, start there.
+
+## Contributing
+
+Contributions are welcome: bug fixes, compatibility improvements, and useful enhancements.
+
+Before opening a pull request, please read [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Credits
 
