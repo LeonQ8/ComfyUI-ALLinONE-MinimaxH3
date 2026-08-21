@@ -303,6 +303,17 @@ function viewQuery(item,type){
   return `filename=${encodeURIComponent(name)}&type=${encodeURIComponent(t)}&subfolder=${encodeURIComponent(src.subfolder||"")}&m=${m}`;
 }
 
+function thumbQuery(item,max=512,type){
+  const src=item||{};
+  const name=src.filename||src.video||"";
+  const t=type||src.type||"output";
+  return `filename=${encodeURIComponent(name)}&type=${encodeURIComponent(t)}&subfolder=${encodeURIComponent(src.subfolder||"")}&max=${max}`;
+}
+
+function isImageItem(item){
+  return !!(item&&(item.kind==="image"||/\.(png|jpe?g|webp|bmp)$/i.test(item.filename||"")));
+}
+
 function inputFileExists(files,name){
   const base=String(name||"").replace(/\\/g,"/").split("/").pop();
   if(!base) return false;
@@ -341,6 +352,42 @@ function planImageCanvas({mode="custom",width=1024,height=1024,megapixels=1.0,as
     }
   }
   return {width:w,height:h,megapixels:(w*h)/1e6,capped};
+}
+function planImageCanvasForRatio(megapixels,ratio){
+  const mp=clampImageMP(megapixels);
+  const r=Number.isFinite(ratio)&&ratio>0?ratio:1;
+  let w=Math.max(32,Math.round(Math.sqrt(mp*1e6*r)/32)*32);
+  let h=Math.max(32,Math.round(Math.sqrt(mp*1e6/r)/32)*32);
+  let capped=w*h>IMG_MAX_MP*1e6;
+  if(capped){
+    const scale=Math.sqrt((IMG_MAX_MP*1e6)/(w*h));
+    w=_floor32(w*scale);
+    h=_floor32(h*scale);
+    if(w*h>IMG_MAX_MP*1e6){
+      const shrink=Math.sqrt((IMG_MAX_MP*1e6)/(w*h));
+      w=_floor32(w*shrink);
+      h=_floor32(h*shrink);
+    }
+  }
+  return {width:w,height:h,megapixels:(w*h)/1e6,capped};
+}
+function planUpscaleTarget(srcW,srcH,factor,maxLongEdge=4096){
+  const w=Number(srcW);
+  const h=Number(srcH);
+  const f=Number(factor);
+  const cap=Number(maxLongEdge)>0?Number(maxLongEdge):4096;
+  if(!(w>0)||!(h>0)||!(f>0)) return null;
+  let tw=w*f;
+  let th=h*f;
+  const longEdge=Math.max(tw,th);
+  const capped=longEdge>cap;
+  if(capped){
+    const s=cap/longEdge;
+    tw*=s;
+    th*=s;
+  }
+  const snap8=v=>Math.max(8,Math.round(v/8)*8);
+  return {width:snap8(tw),height:snap8(th),capped};
 }
 
 function _captureFileSize(file){
@@ -2192,8 +2239,8 @@ function persist(){
         secResult.appendChild(srTitle);
         if(it.video){
           const fileType=it.type||(/^ComfyUI_temp_/i.test(it.video)?"temp":"output");
-          const vurl=api.apiURL(`/view?${viewQuery(it,fileType)}`);
           const isImageHistory=it.kind==="image"||/\.(png|jpe?g|webp|bmp)$/i.test(it.video||"");
+          const vurl=isImageHistory?api.apiURL(`/h3one/thumb?${thumbQuery(it,1600,fileType)}`):api.apiURL(`/view?${viewQuery(it,fileType)}`);
           if(isImageHistory){
             const v=mk("img",{width:"100%",height:"100%",maxHeight:"100%",borderRadius:"8px",background:"#000",objectFit:"contain",outline:"none",display:"block",flex:"1 1 0",minHeight:"180px"},{src:vurl,alt:"Generated image"});
             secResult.appendChild(v);
@@ -2283,7 +2330,7 @@ function persist(){
           if(it.video){
             const isImg=it.kind==="image"||/\.(png|jpe?g|webp|bmp)$/i.test(it.video||"");
             const thumb=isImg
-              ? mk("img",{width:"64px",height:"36px",borderRadius:"6px",background:"#000",objectFit:"cover",border:`1px solid ${C.border}`,flexShrink:"0",pointerEvents:"none",display:"block"},{src:api.apiURL(`/view?${viewQuery(it)}`),alt:""})
+              ? mk("img",{width:"64px",height:"36px",borderRadius:"6px",background:"#000",objectFit:"cover",border:`1px solid ${C.border}`,flexShrink:"0",pointerEvents:"none",display:"block"},{src:api.apiURL(`/h3one/thumb?${thumbQuery(it,128)}`),alt:""})
               : mk("video",{width:"64px",height:"36px",borderRadius:"6px",background:"#000",objectFit:"cover",border:`1px solid ${C.border}`,flexShrink:"0",pointerEvents:"none",display:"block"},{muted:true,preload:"metadata",playsInline:true});
             if(!isImg){
               thumb.src=api.apiURL(`/view?${viewQuery(it)}`);
@@ -2585,7 +2632,7 @@ function persist(){
         vis.forEach(item=>{
           const card=mk("div",{background:C.bg1,border:`1px solid ${C.border}`,borderRadius:"9px",overflow:"hidden",cursor:"pointer",display:"flex",flexDirection:"column",transition:"border-color .15s, background .15s"});
           card.style.position="relative";
-          const url=api.apiURL(`/view?${viewQuery(item)}`);
+          const url=api.apiURL(isImg?`/h3one/thumb?${thumbQuery(item,256)}`:`/view?${viewQuery(item)}`);
           const isImg=item.kind==="image"||/\.(png|jpe?g|webp|bmp)$/i.test(item.filename||"");
           const v=isImg
             ? mk("img",{width:"100%",height:"78px",objectFit:"cover",display:"block",background:"#000",pointerEvents:"none"},{src:url})
@@ -2656,8 +2703,8 @@ function persist(){
             tx(lbPromptBox,"No prompt recorded for this video.");
           }
         }catch(e){ tx(lbPromptBox,"No prompt recorded for this video."); }
-        const lbUrl=api.apiURL(`/view?${viewQuery(item)}`);
         const isImg=item.kind==="image"||/\.(png|jpe?g|webp|bmp)$/i.test(item.filename||"");
+        const lbUrl=api.apiURL(isImg?`/h3one/thumb?${thumbQuery(item,1600)}`:`/view?${viewQuery(item)}`);
         if(isImg){
           lbVideo.style.display="none";lbVideo.pause();lbVideo.src="";
           lbImg.style.display="block";lbImg.src=lbUrl;
@@ -2989,7 +3036,8 @@ function persist(){
       const _aspectItems=Object.keys(IMG_ASPECTS).map(k=>({label:`${imgAspectName(k)} (${k})`,value:k})).concat([{label:"Custom",value:"Custom"}]);
       const _aspectSel=S.imgAspect==="Custom"?"Custom":`${imgAspectName(S.imgAspect)} (${S.imgAspect})`;
       const imgAspectDD=DD(_aspectItems,_aspectSel,v=>{S.imgAspect=v;persist();_updImgCustom();});
-      const imgMPNI=NI("",S.imgMP,0.2,4,0.05,v=>{S.imgMP=v;persist();},"62px");
+      let _applyImgCustomMP=null;
+      const imgMPNI=NI("",S.imgMP,0.2,4,0.05,v=>{ if(_applyImgCustomMP) _applyImgCustomMP(v); },"62px");
       const imgMPLbl=mk("div",{fontSize:"9px",color:C.muted,flexShrink:"0"});tx(imgMPLbl,"MP");
       const imgCustom=mk("div",{display:"none",alignItems:"center",gap:"6px",width:"100%"});
       const _alignImgDimension=v=>Math.max(32,Math.round(v/32)*32);
@@ -3006,10 +3054,22 @@ function persist(){
       const _updImgCustom=()=>{
         const custom=S.imgAspect==="Custom";
         imgCustom.style.display=custom?"flex":"none";
-        imgMPNI._inp.disabled=custom;
-        imgMPNI.style.opacity=custom?"0.5":"";
+        imgMPNI._inp.disabled=false;
+        imgMPNI.style.opacity="";
         if(custom) _syncImgCustomMP();
         else imgMPNI.setVal(Number(S.imgMP)||1);
+      };
+      _applyImgCustomMP=v=>{
+        const mp=clampImageMP(v);
+        S.imgMP=mp;
+        if(S.imgAspect==="Custom"){
+          const ratio=S.imgH>0?(S.imgW||1024)/(S.imgH||1024):1;
+          const p=planImageCanvasForRatio(mp,ratio);
+          S.imgW=p.width;S.imgH=p.height;
+          imgCW.setVal(p.width);imgCH.setVal(p.height);
+          _syncImgCustomMP();
+        }
+        persist();
       };
       _updImgCustom();
       imgGeomRow.append(imgAspectDD.el,imgMPNI,imgMPLbl);
@@ -3051,6 +3111,7 @@ function persist(){
             if(size&&size.width>0&&size.height>0){
               const fit=fitResolutionToAspect(size.width,size.height,1344,768);
               S.imgAspect="Custom"; S.imgW=fit.width; S.imgH=fit.height;
+              _updImgCustom();
               persist();
             }
           },true);
@@ -4384,6 +4445,7 @@ function persist(){
       let _upscaleRun="";
       const _isImageItem=item=>!!(item&&(item.kind==="image"||/\.(png|jpe?g|webp|bmp)$/i.test(item.filename||"")));
       const _inputImageUrl=name=>api.apiURL(`/view?filename=${encodeURIComponent(name)}&type=input&subfolder=`);
+      const _outputImageThumb=item=>api.apiURL(`/h3one/thumb?${thumbQuery(item,1600)}`);
       const _outputImageUrl=item=>api.apiURL(`/view?${viewQuery(item)}`);
       const _syncCompareSourceSelect=()=>{
         cmpSourceSelect.innerHTML="";
@@ -4400,39 +4462,53 @@ function persist(){
         const source=_cmpImageRefs[_cmpImageRefIndex];
         if(!source||!_curItem) return false;
         cmpBaseImg.src=_inputImageUrl(source);
-        cmpGenImg.src=_outputImageUrl(_curItem);
+        cmpGenImg.src=_outputImageThumb(_curItem);
         cmpBaseImg.alt=`Comparison source @Image${_cmpImageRefIndex+1}`;
         cmpGenImg.alt="Generated image";
         tx(cmpLbl2,_cmpImageRefs.length>1?`@Image${_cmpImageRefIndex+1}`:"SOURCE");
         return true;
       };
-      const _setCompareMedia=imageMode=>{
-        cmpBase.style.display=imageMode?"none":"block";
-        cmpGenVid.style.display=imageMode?"none":"block";
-        cmpBaseImg.style.display=imageMode?"block":"none";
-        cmpGenImg.style.display=imageMode?"block":"none";
+      const _setCompareMedia=(baseIsImage,genIsImage)=>{
+        cmpBase.style.display=baseIsImage?"none":"block";
+        cmpGenVid.style.display=genIsImage?"none":"block";
+        cmpBaseImg.style.display=baseIsImage?"block":"none";
+        cmpGenImg.style.display=genIsImage?"block":"none";
       };
       cmpSourceSelect.onchange=()=>{
         _cmpImageRefIndex=Math.max(0,Math.min(_cmpImageRefs.length-1,parseInt(cmpSourceSelect.value)||0));
         if(_cmpMode&&_cmpImageMode){ _loadImageCompare();_cmpSetPct(50); }
       };
       const _enterCompare=()=>{
-        const imageMode=S.mode==="image"&&["edit","refmix"].includes(S.imgSub)&&_cmpImageRefs.length&&_isImageItem(_curItem);
+        const isUpscaleCompare=!!(_upResult&&_upOrig&&_curItem&&_upResult.media_key===mediaKey(_curItem));
+        const imageMode=!isUpscaleCompare&&S.mode==="image"&&["edit","refmix"].includes(S.imgSub)&&_cmpImageRefs.length&&_isImageItem(_curItem);
+        let baseIsImage=false,genIsImage=false;
         if(imageMode){
           if(!_loadImageCompare()) return;
+          baseIsImage=true;genIsImage=true;
           tx(cmpLbl1,"GENERATED");
         } else {
           if(!_upOrig||!_curItem) return;
-          const upUrl=api.apiURL(`/view?${viewQuery(_curItem)}`);
-          const orUrl=api.apiURL(`/view?${viewQuery(_upOrig)}`);
-          cmpGenVid.src=upUrl;
-          cmpBase.src=orUrl;
-          cmpGenVid.load();cmpBase.load();
-          tx(cmpLbl1,"UPSCALED");
-          tx(cmpLbl2,"ORIGINAL");
+          baseIsImage=_isImageItem(_upOrig);
+          genIsImage=_isImageItem(_curItem);
+          const orUrl=baseIsImage?api.apiURL(`/h3one/thumb?${thumbQuery(_upOrig,4096)}`):api.apiURL(`/view?${viewQuery(_upOrig)}`);
+          const upUrl=genIsImage?api.apiURL(`/h3one/thumb?${thumbQuery(_curItem,4096)}`):api.apiURL(`/view?${viewQuery(_curItem)}`);
+          if(baseIsImage) cmpBaseImg.src=orUrl;
+          else { cmpBase.src=orUrl;cmpBase.load(); }
+          if(genIsImage) cmpGenImg.src=upUrl;
+          else { cmpGenVid.src=upUrl;cmpGenVid.load(); }
+          const _dimsFor=it=>{
+            if(!it) return null;
+            if(it.width>0&&it.height>0) return {width:it.width,height:it.height};
+            const g=_galItems.find(x=>mediaKey(x)===mediaKey(it));
+            if(g&&g.width>0&&g.height>0) return {width:g.width,height:g.height};
+            return null;
+          };
+          const upD=_dimsFor(_curItem), orD=_dimsFor(_upOrig);
+          tx(cmpLbl1, upD?`UPSCALED ${upD.width}×${upD.height}`:"UPSCALED");
+          tx(cmpLbl2, orD?`ORIGINAL ${orD.width}×${orD.height}`:"ORIGINAL");
         }
         _cmpImageMode=!!imageMode;
-        _setCompareMedia(_cmpImageMode);
+        _setCompareMedia(baseIsImage,genIsImage);
         _cmpMode=true;
         _cmpSetPct(50);
         vidEl.style.display="none";
@@ -4440,7 +4516,8 @@ function persist(){
         comparerWrap.style.display="block";
         tx(cmpBtn,"Exit compare");
         _syncCompareSourceSelect();
-        if(!_cmpImageMode){ cmpGenVid.play().catch(()=>{});cmpBase.play().catch(()=>{}); }
+        if(!baseIsImage) cmpBase.play().catch(()=>{});
+        if(!genIsImage) cmpGenVid.play().catch(()=>{});
       };
       const _exitCompare=()=>{
         _cmpMode=false;
@@ -4448,7 +4525,7 @@ function persist(){
         cmpGenVid.pause();cmpBase.pause();
         cmpGenVid.src="";cmpBase.src="";
         cmpGenImg.src="";cmpBaseImg.src="";
-        _setCompareMedia(false);
+        _setCompareMedia(false,false);
         comparerWrap.style.display="none";
         cmpSourceSelect.style.display="none";
         const image=_isImageItem(_curItem);
@@ -4671,10 +4748,11 @@ function persist(){
         cmpSourceSelect.style.display="none";
         resolutionChip.style.display="none";
         const vtype=item.type||"output";
-        const url=api.apiURL(`/view?${viewQuery(item,vtype)}`);
-        if(item.kind==="image"||/\.(png|jpe?g|webp|bmp)$/i.test(item.filename||"")){
+        const isImgPreview=item.kind==="image"||/\.(png|jpe?g|webp|bmp)$/i.test(item.filename||"");
+        const url=isImgPreview?api.apiURL(`/h3one/thumb?${thumbQuery(item,1600,vtype)}`):api.apiURL(`/view?${viewQuery(item,vtype)}`);
+        if(isImgPreview){
           vidEl.style.display="none";vidEl.pause();vidEl.src="";
-          imgEl.onload=()=>_updateResolutionChip(imgEl.naturalWidth,imgEl.naturalHeight);
+          imgEl.onload=()=>_updateResolutionChip(item.width||imgEl.naturalWidth,item.height||imgEl.naturalHeight);
           imgEl.src=url;imgEl.style.display="block";
           placeholder.style.display="none";errorBox.style.display="none";
           const _pvKey=mediaKey(item);
@@ -4759,12 +4837,36 @@ function persist(){
           const wf=await _fetchTpl(rtx?"upscale_rtx.json":"upscale.json");
           wf["1"].inputs.file=sd.name;
           if(rtx){
-            wf["3"].inputs["resize_type.scale"]=S.upscaleFactor;
+            let srcW=0,srcH=0;
+            if(_curItem.width>0&&_curItem.height>0){ srcW=_curItem.width;srcH=_curItem.height; }
+            else{
+              try{
+                const dr=await fetch(`/h3one/dims?${viewQuery(_curItem)}`);
+                const dd=await dr.json();
+                if(dd&&dd.ok){ srcW=dd.width||0;srcH=dd.height||0; }
+              }catch(e){}
+            }
+            const target=planUpscaleTarget(srcW,srcH,S.upscaleFactor);
+            if(target){
+              wf["3"].inputs["resize_type"]="target dimensions";
+              wf["3"].inputs["resize_type.width"]=target.width;
+              wf["3"].inputs["resize_type.height"]=target.height;
+            }else{
+              wf["3"].inputs["resize_type.scale"]=S.upscaleFactor;
+            }
           }else{
             wf["3"].inputs.model=S.models.upscaleDit;
             wf["4"].inputs.model=S.models.upscaleVae;
             const resMap={2:1080,3:1440,4:2160};
             wf["5"].inputs.resolution=resMap[S.upscaleFactor]||1080;
+            wf["5"].inputs.max_resolution=4096;
+          }
+          if(_isImageItem(_curItem)){
+            const upId=rtx?"3":"5";
+            const saveId=String(parseInt(upId)+100);
+            delete wf[rtx?"4":"6"];
+            delete wf[rtx?"5":"7"];
+            wf[saveId]={class_type:"SaveImage",inputs:{images:[upId,0],filename_prefix:"one-node-minimax-h3/h3_upscaled"}};
           }
           _applyAutoSave(wf);
           const body={prompt:wf,client_id:api.clientId,extra_data:{enable_previews:true}};
@@ -4792,8 +4894,8 @@ function persist(){
         }
         _galItems.slice(0,30).forEach(item=>{
           const card=mk("div",{width:"96px",flexShrink:"0",cursor:"pointer",background:C.bg1,border:`1px solid ${C.border}`,borderRadius:"7px",overflow:"hidden"});
-          const url=api.apiURL(`/view?${viewQuery(item)}`);
           const isImg=item.kind==="image"||/\.(png|jpe?g|webp|bmp)$/i.test(item.filename||"");
+          const url=isImg?api.apiURL(`/h3one/thumb?${thumbQuery(item,256)}`):api.apiURL(`/view?${viewQuery(item)}`);
           const v=isImg
             ? mk("img",{width:"100%",height:"54px",objectFit:"cover",display:"block",background:"#000",pointerEvents:"none"},{src:url})
             : mk("video",{width:"100%",height:"54px",objectFit:"cover",display:"block",background:"#000",pointerEvents:"none"},{muted:true,preload:"metadata"});

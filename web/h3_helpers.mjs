@@ -190,6 +190,22 @@ export function viewQuery(item, type) {  const src = item || {};
   return `filename=${encodeURIComponent(name)}&type=${encodeURIComponent(t)}&subfolder=${encodeURIComponent(src.subfolder || "")}&m=${m}`;
 }
 
+// Query string for the /h3one/thumb route, which serves a downscaled JPEG so
+// the gallery and compare never decode a full-size image (an upscaled PNG can
+// be over 150 MB). Mirrored in the bundle; the bundle uses it everywhere an
+// image is shown as a preview.
+export function thumbQuery(item, max = 512, type) {
+  const src = item || {};
+  const name = src.filename || src.video || "";
+  const t = type || src.type || "output";
+  return `filename=${encodeURIComponent(name)}&type=${encodeURIComponent(t)}&subfolder=${encodeURIComponent(src.subfolder || "")}&max=${max}`;
+}
+
+// Whether a media item is a still image (by kind or extension).
+export function isImageItem(item) {
+  return !!(item && (item.kind === "image" || /\.(png|jpe?g|webp|bmp)$/i.test(item.filename || "")));
+}
+
 // Whether a media file is present in a listing returned by /h3one/input_files.
 // Compares basenames so a subfolder prefix on either side does not matter.
 export function inputFileExists(files, name) {
@@ -297,6 +313,58 @@ export function planImageCanvas({ mode = "custom", width = 1024, height = 1024, 
     }
   }
   return { width: w, height: h, megapixels: (w * h) / 1e6, capped };
+}
+
+// Derive W/H for a custom (arbitrary) aspect ratio from a megapixel request,
+// preserving the given ratio. Used by the Image Edit MP field when the user
+// dropped a source image and the aspect is locked to "Custom": changing MP
+// scales the canvas up or down instead of silently doing nothing. Same canvas
+// grid alignment and 8.5 MP ceiling as planImageCanvas; a non-positive or
+// non-finite ratio falls back to square.
+export function planImageCanvasForRatio(megapixels, ratio) {
+  const mp = clampImageMP(megapixels);
+  const r = Number.isFinite(ratio) && ratio > 0 ? ratio : 1;
+  let w = Math.max(32, Math.round(Math.sqrt(mp * 1e6 * r) / 32) * 32);
+  let h = Math.max(32, Math.round(Math.sqrt(mp * 1e6 / r) / 32) * 32);
+  let capped = w * h > IMG_MAX_MP * 1e6;
+  if (capped) {
+    const scale = Math.sqrt((IMG_MAX_MP * 1e6) / (w * h));
+    w = floor32(w * scale);
+    h = floor32(h * scale);
+    if (w * h > IMG_MAX_MP * 1e6) {
+      const shrink = Math.sqrt((IMG_MAX_MP * 1e6) / (w * h));
+      w = floor32(w * shrink);
+      h = floor32(h * shrink);
+    }
+  }
+  return { width: w, height: h, megapixels: (w * h) / 1e6, capped };
+}
+
+// Plan an upscale output canvas so the native upscaler never has to handle an
+// absurdly large frame. The RTX node's own engine caps around 16 MP (~4096 on
+// the long edge) and aborts natively above that; SeedVR2's official 4K example
+// caps max_resolution at 4096. We scale the source by the requested factor, then
+// pull the long edge back to `maxLongEdge` (default 4096) preserving aspect.
+// Returns { width, height, capped } with both dims rounded to a multiple of 8
+// (the RTX node snaps internally anyway); capped is true when the pure factor
+// output had to be shrunk. Invalid inputs return null.
+export function planUpscaleTarget(srcW, srcH, factor, maxLongEdge = 4096) {
+  const w = Number(srcW);
+  const h = Number(srcH);
+  const f = Number(factor);
+  const cap = Number(maxLongEdge) > 0 ? Number(maxLongEdge) : 4096;
+  if (!(w > 0) || !(h > 0) || !(f > 0)) return null;
+  let tw = w * f;
+  let th = h * f;
+  const longEdge = Math.max(tw, th);
+  const capped = longEdge > cap;
+  if (capped) {
+    const s = cap / longEdge;
+    tw *= s;
+    th *= s;
+  }
+  const snap8 = (v) => Math.max(8, Math.round(v / 8) * 8);
+  return { width: snap8(tw), height: snap8(th), capped };
 }
 
 // POST body for /prompt when queueing a job behind the running one. Mirrored in

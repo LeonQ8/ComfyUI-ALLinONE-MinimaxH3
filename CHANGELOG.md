@@ -2,12 +2,22 @@
 
 Newest first.
 
-## Unreleased
+## 0.9.0 (2026-08-21)
+
+### New
 
 - New feature mode add "Masking".
 - Paint a region or type a Mask target; SAM 3 tracks it through the clip and H3 reference inpainting replaces only that part, leaving the rest of the video unchanged.
 - Needs the SAM 3.1 checkpoint from [Comfy-Org/sam3.1](https://huggingface.co/Comfy-Org/sam3.1) and the [MaskVidExperiments](https://github.com/drozbay/MaskVidExperiments) node pack, the download pages say where each file goes.
 - Masking is in beta. If anything goes wrong, open an issue.
+
+### Fixes
+
+- Image compare in Image mode no longer opens a video player; upscaling an image now saves a PNG so the compare shows two still images, and the compare shows the real resolution on each side.
+- Upscaled images no longer come out huge. Upscales are capped to a 4096px long edge (the upscaler's own safe limit) and SeedVR2 gets a matching resolution cap, so a 4x upscale can no longer produce a 150 MB file or crash the RTX engine.
+- Large images are shown as downscaled previews in the gallery, library and compare instead of decoding the full file, which makes the browser stay smooth after a big upscale.
+- Models placed in subfolders no longer appear twice in Settings when the same folder is registered more than once.
+- The MP field in Image Edit now works right after loading a source image: it scales the canvas up or down and keeps the image's aspect instead of doing nothing until the ratio is changed.
 
 ## 0.8.0 (2026-08-19)
 
