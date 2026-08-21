@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { aspect, sizeOf, sameSize, mapMaskPoint, orientRes, fitResolutionToAspect, planMaskCrop, maskTrackingPlan, resolveFitPrimary, imgProfileShort, imgAspectName, viewQuery, inputFileExists, h3SamCheckpoints, clampImageMP, planImageCanvas, IMG_MAX_MP, IMG_MIN_MP, IMG_ASPECT_RATIOS, resolveQualityFlags, matchQualityPreset, QUALITY_PRESET_FLAGS, planExtend, queuePromptPayload, settleQueuedOutput, maskSpeechSyncPrompt, cropFrameIndex, cropBoxAt, cropReportText } from "../web/h3_helpers.mjs";
+import { aspect, sizeOf, sameSize, mapMaskPoint, orientRes, fitResolutionToAspect, planMaskCrop, maskTrackingPlan, resolveFitPrimary, imgProfileShort, imgAspectName, viewQuery, thumbQuery, isImageItem, inputFileExists, h3SamCheckpoints, clampImageMP, planImageCanvas, planImageCanvasForRatio, planUpscaleTarget, IMG_MAX_MP, IMG_MIN_MP, IMG_ASPECT_RATIOS, resolveQualityFlags, matchQualityPreset, QUALITY_PRESET_FLAGS, planExtend, queuePromptPayload, settleQueuedOutput, maskSpeechSyncPrompt, cropFrameIndex, cropBoxAt, cropReportText } from "../web/h3_helpers.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, "..");
@@ -46,12 +46,16 @@ test("helpers file is non-trivial and exports the core helpers", () => {
   assert.ok(src.includes("export function imgProfileShort"), "helpers must export imgProfileShort");
   assert.ok(src.includes("export function imgAspectName"), "helpers must export imgAspectName");
   assert.ok(src.includes("export function viewQuery"), "helpers must export viewQuery");
+  assert.ok(src.includes("export function thumbQuery"), "helpers must export thumbQuery");
+  assert.ok(src.includes("export function isImageItem"), "helpers must export isImageItem");
   assert.ok(src.includes("export function inputFileExists"), "helpers must export inputFileExists");
   assert.ok(src.includes("export function h3SamCheckpoints"), "helpers must export h3SamCheckpoints");
   assert.ok(src.includes("export function planMaskCrop"), "helpers must export planMaskCrop");
   assert.ok(src.includes("export function maskTrackingPlan"), "helpers must export maskTrackingPlan");
   assert.ok(src.includes("export function clampImageMP"), "helpers must export clampImageMP");
   assert.ok(src.includes("export function planImageCanvas"), "helpers must export planImageCanvas");
+  assert.ok(src.includes("export function planImageCanvasForRatio"), "helpers must export planImageCanvasForRatio");
+  assert.ok(src.includes("export function planUpscaleTarget"), "helpers must export planUpscaleTarget");
   assert.ok(src.includes("export function planExtend"), "helpers must export planExtend");
   assert.ok(src.includes("export function queuePromptPayload"), "helpers must export queuePromptPayload");
   assert.ok(src.includes("export function cropFrameIndex"), "helpers must export cropFrameIndex");
@@ -365,6 +369,30 @@ test("viewQuery: empty item produces empty filename", () => {
   assert.match(q, /^filename=&type=output&subfolder=&m=\d+$/);
 });
 
+test("thumbQuery: includes max and drops the cache-busting m param", () => {
+  const q = thumbQuery({ filename: "pic.png", subfolder: "one-node-minimax-h3", type: "output" }, 256);
+  assert.equal(q, "filename=pic.png&type=output&subfolder=one-node-minimax-h3&max=256");
+});
+
+test("thumbQuery: honors a type override and defaults max", () => {
+  const q = thumbQuery({ video: "preview.mp4", subfolder: "", type: "temp" }, undefined, "temp");
+  assert.match(q, /filename=preview\.mp4&type=temp&subfolder=&max=\d+/);
+});
+
+test("thumbQuery: encodes special characters", () => {
+  const q = thumbQuery({ filename: "my image (2).png", subfolder: "a b", type: "output" }, 512);
+  assert.equal(q, "filename=my%20image%20(2).png&type=output&subfolder=a%20b&max=512");
+});
+
+test("isImageItem: detects images by kind and extension", () => {
+  assert.equal(isImageItem({ filename: "a.png", kind: "image" }), true);
+  assert.equal(isImageItem({ filename: "a.jpeg" }), true);
+  assert.equal(isImageItem({ filename: "a.webp" }), true);
+  assert.equal(isImageItem({ filename: "a.mp4", kind: "video" }), false);
+  assert.equal(isImageItem({ filename: "a.mp4" }), false);
+  assert.equal(isImageItem(null), false);
+});
+
 test("inputFileExists: matches a file in the listing", () => {
   assert.equal(inputFileExists(["a.mp3", "b.mp3"], "b.mp3"), true);
   assert.equal(inputFileExists(["a.mp3", "b.mp3"], "c.mp3"), false);
@@ -462,6 +490,68 @@ test("planImageCanvas: extreme portrait custom dims keep ratio and cap", () => {
   assert.ok(p.width < p.height, "stays portrait");
   const ratio = p.height / p.width;
   assert.ok(Math.abs(Math.log(ratio / (12000 / 1024))) < 0.05, "portrait ratio preserved");
+});
+
+test("planImageCanvasForRatio: scales a custom aspect up and down with MP", () => {
+  const wide = planImageCanvasForRatio(1.0, 16 / 9);
+  assert.ok(wide.width > wide.height, "wide stays wide");
+  const drift = Math.abs(Math.log((wide.width / wide.height) / (16 / 9)));
+  assert.ok(drift < 0.05, `ratio preserved (drift ${drift})`);
+  assert.ok(wide.width % 32 === 0 && wide.height % 32 === 0, "stays on the 32 grid");
+  const bigger = planImageCanvasForRatio(2.0, 16 / 9);
+  assert.ok(bigger.width * bigger.height > wide.width * wide.height, "more MP gives a bigger canvas");
+  assert.ok(bigger.width * bigger.height <= IMG_MAX_MP * 1e6, "never exceeds the ceiling");
+});
+
+test("planImageCanvasForRatio: clamps above the ceiling and floors invalid ratios", () => {
+  const huge = planImageCanvasForRatio(24.92, 1);
+  assert.ok(huge.width * huge.height <= IMG_MAX_MP * 1e6, "caps at the ceiling");
+  assert.ok(huge.megapixels > 8.0 && huge.megapixels <= IMG_MAX_MP, `lands near ceiling (${huge.megapixels})`);
+  const square = planImageCanvasForRatio(1.0, 0);
+  assert.ok(Math.abs(square.width - square.height) < 2, "invalid ratio falls back to square");
+  const nan = planImageCanvasForRatio(1.0, NaN);
+  assert.ok(nan.width >= 32 && nan.height >= 32);
+});
+
+test("planImageCanvasForRatio: preserves a source image ratio when MP changes", () => {
+  const fit = fitResolutionToAspect(1234, 680, 1344, 768);
+  const sourceRatio = fit.width / fit.height;
+  const p1 = planImageCanvasForRatio(1.0, sourceRatio);
+  const p2 = planImageCanvasForRatio(1.5, sourceRatio);
+  for (const p of [p1, p2]) {
+    const drift = Math.abs(Math.log((p.width / p.height) / sourceRatio));
+    assert.ok(drift < 0.05, `keeps the source ratio (drift ${drift})`);
+  }
+  assert.ok(p2.width * p2.height > p1.width * p1.height, "higher MP scales up");
+});
+
+test("planUpscaleTarget: a normal 2x upscale stays a true 2x", () => {
+  const p = planUpscaleTarget(1024, 576, 2);
+  assert.equal(p.width, 2048);
+  assert.equal(p.height, 1152);
+  assert.equal(p.capped, false);
+});
+
+test("planUpscaleTarget: 4x on a large source is capped to 4096 long edge", () => {
+  const p = planUpscaleTarget(4032, 2520, 4);
+  assert.ok(Math.max(p.width, p.height) <= 4096, `long edge must not exceed 4096 (got ${Math.max(p.width, p.height)})`);
+  assert.equal(p.capped, true);
+  assert.ok(p.width % 8 === 0 && p.height % 8 === 0, "dims stay on the 8 grid");
+  const drift = Math.abs(Math.log((p.width / p.height) / (4032 / 2520)));
+  assert.ok(drift < 0.05, `aspect preserved (drift ${drift})`);
+});
+
+test("planUpscaleTarget: a custom cap is honored", () => {
+  const p = planUpscaleTarget(2000, 1000, 2, 2560);
+  assert.ok(Math.max(p.width, p.height) <= 2560, "respects a smaller cap");
+  assert.equal(p.capped, true);
+});
+
+test("planUpscaleTarget: invalid input returns null", () => {
+  assert.equal(planUpscaleTarget(0, 100, 2), null);
+  assert.equal(planUpscaleTarget(100, -5, 2), null);
+  assert.equal(planUpscaleTarget(100, 100, 0), null);
+  assert.equal(planUpscaleTarget(NaN, 100, 2), null);
 });
 
 // -- Extend mode length planning ---------------------------------------------
@@ -964,6 +1054,21 @@ test("mapMaskPoint: maps display coordinates to source pixels", () => {
 test("mapMaskPoint: clamps outside coordinates and rejects empty geometry", () => {
   assert.deepEqual(mapMaskPoint(-10, 999, { left: 0, top: 0, width: 100, height: 100 }, 1000, 500), { x: 0, y: 499 });
   assert.equal(mapMaskPoint(1, 1, { left: 0, top: 0, width: 0, height: 10 }, 100, 100), null);
+});
+
+test("bundle: compare in Image mode prefers the upscale original over the input source", () => {
+  const bundle = readFileSync(bundlePath, "utf8");
+  assert.ok(
+    bundle.includes("isUpscaleCompare=!!(_upResult&&_upOrig&&_curItem&&_upResult.media_key===mediaKey(_curItem))"),
+    "bundle must detect an upscale compare by matching the current item to the upscale result",
+  );
+  assert.ok(
+    bundle.includes("const imageMode=!isUpscaleCompare&&S.mode===\"image\""),
+    "the source-vs-generated image compare must yield to an active upscale compare",
+  );
+  assert.ok(bundle.includes('tx(cmpLbl1,"UPSCALED")') || bundle.includes("UPSCALED ${upD.width}"), "the upscale branch must label the result UPSCALED");
+  assert.ok(bundle.includes("ORIGINAL ${orD.width}×${orD.height}"), "the upscale branch must show the pre-upscale resolution on the ORIGINAL label");
+  assert.ok(bundle.includes("_galItems.find(x=>mediaKey(x)===mediaKey(it))"), "compare dims must fall back to the gallery scan when the item lacks them");
 });
 
 // -- Queued-output history fallback retry -------------------------------------

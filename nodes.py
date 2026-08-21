@@ -1,4 +1,5 @@
 import os
+import io
 import json
 import glob
 import math
@@ -357,13 +358,19 @@ def _scan(folder_key, extensions=None):
     except Exception:
         return []
     found = []
+    seen = set()
     for base in bases:
         if not os.path.isdir(base):
             continue
         for root, _dirs, files in os.walk(base, followlinks=True):
             for fn in files:
                 if any(fn.lower().endswith(e) for e in exts):
-                    found.append(os.path.relpath(os.path.join(root, fn), base))
+                    rel = os.path.relpath(os.path.join(root, fn), base)
+                    key = rel.replace("\\", "/").lower()
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    found.append(rel)
     return sorted(found)
 
 
@@ -381,16 +388,68 @@ def _scan_output_videos():
                 continue
             full = os.path.join(root, fn)
             sub = os.path.relpath(os.path.dirname(full), str(base)).replace("\\", "/")
-            found.append({
+            item = {
                 "filename": fn,
                 "subfolder": sub,
                 "type": "output",
                 "mtime": os.path.getmtime(full),
                 "kind": kind,
                 "media_key": _media_key(fn, sub, "output"),
-            })
+            }
+            if kind == "image":
+                dims = _image_dims(full)
+                if dims:
+                    item["width"], item["height"] = dims
+            found.append(item)
     found.sort(key=lambda x: x["mtime"], reverse=True)
     return found
+
+
+def _image_dims(path):
+    """Read the pixel size of a PNG or JPEG without a decoder, so the UI can
+    show true dimensions while displaying a downscaled thumbnail."""
+    try:
+        with open(path, "rb") as fh:
+            head = fh.read(32)
+    except Exception:
+        return None
+    try:
+        if head[:8] == b"\x89PNG\r\n\x1a\n" and head[12:16] == b"IHDR":
+            import struct
+            return struct.unpack(">II", head[16:24])
+        if head[:2] == b"\xff\xd8":
+            return _jpeg_dims(path)
+    except Exception:
+        return None
+    return None
+
+
+def _jpeg_dims(path):
+    """Scan JPEG markers for a SOF segment that carries the real dimensions."""
+    import struct
+    with open(path, "rb") as fh:
+        fh.seek(2)
+        while True:
+            marker = fh.read(2)
+            if len(marker) != 2:
+                return None
+            while marker[0] != 0xFF:
+                marker = marker[1:] + fh.read(1)
+                if len(marker) != 2:
+                    return None
+            if marker[1] in (0xD8, 0x01) or 0xD0 <= marker[1] <= 0xD7:
+                continue
+            length_bytes = fh.read(2)
+            if len(length_bytes) != 2:
+                return None
+            length = struct.unpack(">H", length_bytes)[0] - 2
+            if marker[1] in (0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7, 0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF):
+                data = fh.read(5)
+                if len(data) != 5:
+                    return None
+                return struct.unpack(">HH", data[1:5])
+            if length > 0:
+                fh.seek(length, os.SEEK_CUR)
 
 
 def _favorite_matches(video, favs):
@@ -714,6 +773,120 @@ async def delete_history(request):
         return web.json_response({"ok": True})
     except Exception as e:
         return web.json_response({"ok": False, "error": str(e)}, status=500)
+
+
+def _thumb_bytes(path, max_dim=512):
+    """Downscale an image so the browser never decodes a full-size PNG for a
+    small thumbnail or compare view. Returns JPEG bytes, or None when the file
+    is not an image or no decoder is available."""
+    low = str(path).lower()
+    if not low.endswith(_IMAGE_EXTS):
+        return None
+    try:
+        from PIL import Image
+    except Exception:
+        return None
+    try:
+        with Image.open(path) as img:
+            img.load()
+            if img.mode not in ("RGB", "L"):
+                img = img.convert("RGB")
+            img.thumbnail((max_dim, max_dim), Image.LANCZOS)
+            buf = io.BytesIO()
+            img.save(buf, format="JPEG", quality=85)
+            return buf.getvalue()
+    except Exception:
+        return None
+
+
+@PromptServer.instance.routes.get("/h3one/thumb")
+async def get_thumb(request):
+    """Serve a downscaled JPEG of an output/temp image so the gallery and
+    compare never decode huge full-res files. Falls back to the raw file when
+    no decoder is available."""
+    try:
+        filename = request.query.get("filename", "")
+        subfolder = request.query.get("subfolder", "")
+        ftype = request.query.get("type", "output")
+        try:
+            max_dim = max(32, min(4096, int(request.query.get("max", "512"))))
+        except Exception:
+            max_dim = 512
+        if not filename:
+            return web.Response(status=400, body=b"no filename")
+        name = Path(str(filename).replace("\\", "/")).name
+        if ftype == "temp":
+            base = str(Path(folder_paths.get_temp_directory()).resolve())
+        elif ftype == "input":
+            base = str(Path(folder_paths.get_input_directory()).resolve())
+        else:
+            base = _get_output_dir()
+        path = _safe_join(base, subfolder, name)
+        if not os.path.isfile(path):
+            return web.Response(status=404, body=b"not found")
+        data = _thumb_bytes(path, max_dim)
+        if data is None:
+            with open(path, "rb") as fh:
+                data = fh.read()
+            return web.Response(body=data, content_type="application/octet-stream")
+        return web.Response(body=data, content_type="image/jpeg")
+    except ValueError:
+        return web.Response(status=400, body=b"invalid path")
+    except Exception as e:
+        print(f"[H3One] thumb error: {e}")
+        return web.Response(status=500, body=b"thumb error")
+
+
+def _video_dims(path):
+    """Read a video's frame size via PyAV so the upscale planner can cap the
+    output resolution before it reaches the native RTX/SeedVR2 engines."""
+    try:
+        import av
+        with av.open(path) as container:
+            stream = next(s for s in container.streams if s.type == "video")
+            w = getattr(stream, "codec_context", None)
+            if w is not None and w.width and w.height:
+                return (w.width, w.height)
+            if stream.width and stream.height:
+                return (stream.width, stream.height)
+    except Exception:
+        pass
+    return None
+
+
+@PromptServer.instance.routes.get("/h3one/dims")
+async def get_media_dims(request):
+    """Return {width, height} for an output/temp/input image or video, so the
+    upscale planner can cap the output long edge instead of letting the native
+    upscaler blow up on an absurdly large frame. Returns null dims when the
+    file type or size can't be read."""
+    try:
+        filename = request.query.get("filename", "")
+        subfolder = request.query.get("subfolder", "")
+        ftype = request.query.get("type", "output")
+        if not filename:
+            return web.json_response({"ok": False, "width": None, "height": None}, status=400)
+        name = Path(str(filename).replace("\\", "/")).name
+        if ftype == "temp":
+            base = str(Path(folder_paths.get_temp_directory()).resolve())
+        elif ftype == "input":
+            base = str(Path(folder_paths.get_input_directory()).resolve())
+        else:
+            base = _get_output_dir()
+        path = _safe_join(base, subfolder, name)
+        if not os.path.isfile(path):
+            return web.json_response({"ok": False, "width": None, "height": None}, status=404)
+        dims = _image_dims(path)
+        if dims is None and str(path).lower().endswith(_VIDEO_EXTS):
+            dims = _video_dims(path)
+        if dims is None:
+            return web.json_response({"ok": False, "width": None, "height": None})
+        return web.json_response({"ok": True, "width": dims[0], "height": dims[1]})
+    except ValueError:
+        return web.json_response({"ok": False, "width": None, "height": None}, status=400)
+    except Exception as e:
+        print(f"[H3One] dims error: {e}")
+        return web.json_response({"ok": False, "width": None, "height": None}, status=500)
 
 
 @PromptServer.instance.routes.get("/h3one/gallery")

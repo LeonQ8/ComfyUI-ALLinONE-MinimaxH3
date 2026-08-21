@@ -250,6 +250,31 @@ class TestScan(_NodesTestBase):
         found = self.nodes._scan("checkpoints", [".safetensors"])
         self.assertEqual(found, ["a.safetensors", "m.safetensors", "z.safetensors"])
 
+    def test_dedupes_overlapping_base_folders(self):
+        import sys
+
+        import folder_paths as _folder_paths
+
+        base_a = self.tmp / "models" / "diffusion_models"
+        base_b = self.tmp / "models" / "unet"
+        base_a.mkdir(parents=True, exist_ok=True)
+        base_b.mkdir(parents=True, exist_ok=True)
+        (base_a / "MiniMaxH3").mkdir()
+        (base_b / "MiniMaxH3").mkdir()
+        (base_a / "MiniMaxH3" / "minimax_h3_video_vae_fp16.safetensors").write_bytes(b"")
+        (base_b / "MiniMaxH3" / "minimax_h3_video_vae_fp16.safetensors").write_bytes(b"")
+        (base_a / "root.safetensors").write_bytes(b"")
+        original = _folder_paths.get_folder_paths
+        _folder_paths.get_folder_paths = lambda key: [str(base_a), str(base_b)]
+        try:
+            found = self.nodes._scan("diffusion_models", [".safetensors"])
+        finally:
+            _folder_paths.get_folder_paths = original
+        self.assertEqual(
+            found,
+            ["MiniMaxH3" + os.sep + "minimax_h3_video_vae_fp16.safetensors", "root.safetensors"],
+        )
+
     def test_empty_when_missing_dir(self):
         self.assertEqual(self.nodes._scan("nonexistent", [".safetensors"]), [])
 
@@ -264,6 +289,94 @@ class TestScan(_NodesTestBase):
         (self.tmp / "input" / "clip.m4v").write_bytes(b"")
         response = _run(self.nodes.list_input_files(_FakeRequest({}, query={"type": "video"})))
         self.assertEqual(response.kwargs["data"]["files"], ["clip.m4v"])
+
+    def test_image_dims_reads_png_header(self):
+        import struct
+
+        png = (
+            b"\x89PNG\r\n\x1a\n"
+            + struct.pack(">I", 13)
+            + b"IHDR"
+            + struct.pack(">II", 1920, 1080)
+            + b"\x08\x02\x00\x00\x00"
+        )
+        path = self.tmp / "output" / "one-node-minimax-h3"
+        path.mkdir(parents=True, exist_ok=True)
+        (path / "pic.png").write_bytes(png)
+        self.assertEqual(self.nodes._image_dims(str(path / "pic.png")), (1920, 1080))
+
+    def test_image_dims_rejects_non_image(self):
+        path = self.tmp / "output" / "one-node-minimax-h3"
+        path.mkdir(parents=True, exist_ok=True)
+        (path / "readme.txt").write_text("not an image")
+        self.assertIsNone(self.nodes._image_dims(str(path / "readme.txt")))
+
+    def test_thumb_route_serves_file_without_decoder(self):
+        import struct
+
+        png = (
+            b"\x89PNG\r\n\x1a\n"
+            + struct.pack(">I", 13)
+            + b"IHDR"
+            + struct.pack(">II", 64, 64)
+            + b"\x08\x02\x00\x00\x00"
+        )
+        out = self.tmp / "output" / "one-node-minimax-h3"
+        out.mkdir(parents=True, exist_ok=True)
+        (out / "pic.png").write_bytes(png)
+        response = _run(self.nodes.get_thumb(_FakeRequest({}, query={"filename": "pic.png", "subfolder": "one-node-minimax-h3", "max": "256"})))
+        self.assertEqual(response.kwargs["body"], png)
+        self.assertEqual(response.kwargs["content_type"], "application/octet-stream")
+
+    def test_thumb_route_neutralizes_path_traversal(self):
+        response = _run(self.nodes.get_thumb(_FakeRequest({}, query={"filename": "..\\..\\evil.png", "subfolder": "", "max": "256"})))
+        self.assertEqual(response.kwargs["status"], 404)
+
+    def test_thumb_route_blocks_escaping_subfolder(self):
+        escape = os.sep.join(["..", ".."])
+        response = _run(self.nodes.get_thumb(_FakeRequest({}, query={"filename": "pic.png", "subfolder": escape, "max": "256"})))
+        self.assertEqual(response.kwargs["status"], 400)
+
+    def test_thumb_route_404_when_missing(self):
+        response = _run(self.nodes.get_thumb(_FakeRequest({}, query={"filename": "ghost.png", "subfolder": "", "max": "256"})))
+        self.assertEqual(response.kwargs["status"], 404)
+
+    def test_thumb_route_defaults_max(self):
+        response = _run(self.nodes.get_thumb(_FakeRequest({}, query={"filename": "ghost.png", "subfolder": ""})))
+        self.assertEqual(response.kwargs["status"], 404)
+
+    def test_dims_route_reads_png_size(self):
+        import struct
+
+        png = (
+            b"\x89PNG\r\n\x1a\n"
+            + struct.pack(">I", 13)
+            + b"IHDR"
+            + struct.pack(">II", 800, 600)
+            + b"\x08\x02\x00\x00\x00"
+        )
+        out = self.tmp / "output" / "one-node-minimax-h3"
+        out.mkdir(parents=True, exist_ok=True)
+        (out / "pic.png").write_bytes(png)
+        response = _run(self.nodes.get_media_dims(_FakeRequest({}, query={"filename": "pic.png", "subfolder": "one-node-minimax-h3"})))
+        data = response.kwargs["data"]
+        self.assertTrue(data["ok"])
+        self.assertEqual(data["width"], 800)
+        self.assertEqual(data["height"], 600)
+
+    def test_dims_route_404_when_missing(self):
+        response = _run(self.nodes.get_media_dims(_FakeRequest({}, query={"filename": "ghost.png", "subfolder": ""})))
+        self.assertEqual(response.kwargs["status"], 404)
+
+    def test_dims_route_null_for_non_media(self):
+        out = self.tmp / "output" / "one-node-minimax-h3"
+        out.mkdir(parents=True, exist_ok=True)
+        (out / "readme.txt").write_text("hello")
+        response = _run(self.nodes.get_media_dims(_FakeRequest({}, query={"filename": "readme.txt", "subfolder": "one-node-minimax-h3"})))
+        data = response.kwargs["data"]
+        self.assertFalse(data["ok"])
+        self.assertIsNone(data["width"])
+        self.assertIsNone(data["height"])
 
 
 class _FakeRequest:
