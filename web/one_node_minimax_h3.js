@@ -3296,7 +3296,7 @@ function persist(){
               _refImageUploadsPending--;
             }
             upImg.value="";
-            if(S.mode==="mask") _renderMask(); else _renderRefs();
+            if(S.mode==="mask") _renderMask({refreshPreview:false}); else _renderRefs();
           };
           upImg.click();
         };
@@ -3831,24 +3831,24 @@ function persist(){
       );
       maskArea.appendChild(maskOpts);
       const maskRefsBox=mk("div",{display:"flex",flexDirection:"column",gap:"6px"});maskArea.appendChild(maskRefsBox);
-      const _renderMask=()=>{
+      const _renderMask=(opts)=>{
         tx(maskPaintState,S.maskSeed?"Mask ready - click preview to edit":"No mask yet - paint one or enter a text target");
         maskPaintState.style.color=S.maskSeed?C.lime:C.muted;
         maskClearBtn.style.display=S.maskSeed?"block":"none";
-        _renderMaskPreview();
+        if(!opts||opts.refreshPreview!==false) _renderMaskPreview();
         maskRefsBox.innerHTML="";
         const h=mk("div",{fontSize:"9px",fontWeight:"700",color:C.muted,textTransform:"uppercase",letterSpacing:".07em"});
         tx(h,`Replacement references (${S.refImages.length}/9${_refImageUploadsPending?`, ${_refImageUploadsPending} uploading`:""})`);maskRefsBox.appendChild(h);
         const row=mk("div",{display:"grid",gridTemplateColumns:"repeat(auto-fill, 76px)",gap:"8px",alignItems:"start"});
         S.refImages.forEach((name,idx)=>{
-          const slot=ImgSlot(false,n=>{const current=S.refImages.indexOf(name);if(current<0)return;if(n===null)S.refImages.splice(current,1);else S.refImages[current]=n;persist();_renderMask();},(nm,size)=>{if(nm&&size){S.refImageSizes[nm]=size;persist();}},true);
+          const slot=ImgSlot(false,n=>{const current=S.refImages.indexOf(name);if(current<0)return;if(n===null)S.refImages.splice(current,1);else S.refImages[current]=n;persist();_renderMask({refreshPreview:false});},(nm,size)=>{if(nm&&size){S.refImageSizes[nm]=size;persist();}},true);
           row.appendChild(slot.el);if(name)slot._restorePreview(name);
         });
         if(!_refImageUploadsPending&&S.refImages.length<9){
           const add=mk("button",{width:"72px",height:"72px",borderRadius:"12px",border:"1.5px dashed rgba(90,168,255,.4)",background:"rgba(90,168,255,.05)",color:"rgba(90,168,255,.8)",fontSize:"18px",fontWeight:"700",cursor:"pointer"},{type:"button",title:"Add replacement reference"});tx(add,"+");
           const input=mk("input",{display:"none"},{type:"file",accept:IMAGE_FILE_EXTS.join(",")});
           add.onclick=()=>{input.value="";input.click();};
-          input.onchange=async()=>{const file=input.files&&input.files[0];if(!file||!_fileMatches(file,IMAGE_FILE_EXTS)||_refImageUploadsPending||S.refImages.length>=9)return;_refImageUploadsPending++;_renderMask();try{const name=await _uploadImage(file);if(S.refImages.length<9){S.refImages.push(name);const size=await _captureFileSize(file);if(size)S.refImageSizes[name]=size;persist();}}catch(e){if(_h3ShowError)_h3ShowError("Reference upload failed: "+fmtErr(e));}finally{_refImageUploadsPending--;_renderMask();}};
+          input.onchange=async()=>{const file=input.files&&input.files[0];if(!file||!_fileMatches(file,IMAGE_FILE_EXTS)||_refImageUploadsPending||S.refImages.length>=9)return;_refImageUploadsPending++;_renderMask({refreshPreview:false});try{const name=await _uploadImage(file);if(S.refImages.length<9){S.refImages.push(name);const size=await _captureFileSize(file);if(size)S.refImageSizes[name]=size;persist();}}catch(e){if(_h3ShowError)_h3ShowError("Reference upload failed: "+fmtErr(e));}finally{_refImageUploadsPending--;_renderMask({refreshPreview:false});}};
           row.append(add,input);
         }
         maskRefsBox.appendChild(row);
@@ -6241,7 +6241,7 @@ function persist(){
         } else if(S.mode==="r2v"||S.mode==="mask"){
           if(_refImageUploadsPending||S.refImages.length>=9) return;
           _refImageUploadsPending++;
-          if(S.mode==="mask") _renderMask(); else _renderRefs();
+          if(S.mode==="mask") _renderMask({refreshPreview:false}); else _renderRefs();
           try{
             const _nm=await _uploadImage(file);
             if(S.refImages.length<9){
@@ -6251,7 +6251,7 @@ function persist(){
               persist();
             }
           }catch(err){ console.warn("[H3One] paste upload:",err); if(_h3ShowError)_h3ShowError("Pasted image upload failed: "+fmtErr(err)); }
-          finally{_refImageUploadsPending--;if(S.mode==="mask") _renderMask(); else _renderRefs();}
+          finally{_refImageUploadsPending--;if(S.mode==="mask") _renderMask({refreshPreview:false}); else _renderRefs();}
         } else if(S.mode==="keyframes"){
           let empty=S.kf.find(k=>!k.img);
           if(!empty){

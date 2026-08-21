@@ -908,6 +908,28 @@ test("bundle rides the tracking overlay along with the real mask generation", ()
   assert.ok(bundle.includes("_showTrackingPreview(d,false)"), "the standalone button must render the non-live note");
 });
 
+test("bundle keeps the tracking preview when a replacement reference image changes", () => {
+  const bundle = readFileSync(bundlePath, "utf8");
+  assert.ok(
+    bundle.includes("if(!opts||opts.refreshPreview!==false) _renderMaskPreview()"),
+    "mask re-renders must only refresh the painted preview when asked to, so reference edits cannot wipe a live tracking preview",
+  );
+  assert.ok(
+    bundle.includes("_renderMask({refreshPreview:false})"),
+    "reference image operations must pass refreshPreview:false",
+  );
+  const count = bundle.split("_renderMask({refreshPreview:false})").length - 1;
+  assert.ok(count >= 4, "the ref upload, ref slot replace, paste, and shared ref upload paths must all skip the preview refresh");
+  assert.ok(
+    bundle.includes("maskClearBtn.onclick=()=>{S.maskSeed=null;persist();_renderMask();}"),
+    "clearing the painted mask must still refresh the preview",
+  );
+  assert.ok(
+    bundle.includes("S.maskSeed=name;persist();_renderMask();"),
+    "saving a new painted mask must still refresh the preview",
+  );
+});
+
 test("cropFrameIndex: maps playback time to the tracked frame, clamped", () => {
   assert.equal(cropFrameIndex(0, 24, 120), 0);
   assert.equal(cropFrameIndex(0.5, 24, 120), 12);
