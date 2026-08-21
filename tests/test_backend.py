@@ -1027,6 +1027,22 @@ class TestMaskPreviewWorkflow(_NodesTestBase):
         self.assertEqual(wf["22"]["inputs"]["object_indices"], "0")
         self.assertIn("conditioning", wf["21"]["inputs"])
 
+    def test_threads_trim_start_time_into_the_video_slice(self):
+        wf = self._build(start_time=41.2)
+        self.assertEqual(wf["34"]["inputs"]["start_time"], 41.2)
+
+    def test_defaults_trim_start_time_to_zero(self):
+        wf = self._build()
+        self.assertEqual(wf["34"]["inputs"]["start_time"], 0.0)
+
+    def test_clamps_bad_trim_start_time_to_zero(self):
+        wf = self._build(start_time="oops")
+        self.assertEqual(wf["34"]["inputs"]["start_time"], 0.0)
+
+    def test_clamps_negative_trim_start_time_to_zero(self):
+        wf = self._build(start_time=-3.0)
+        self.assertEqual(wf["34"]["inputs"]["start_time"], 0.0)
+
     def test_text_target_keeps_conditioning_and_ignores_paint(self):
         wf = self._build(text="face", initial_mask="mask.png")
         self.assertIn("conditioning", wf["21"]["inputs"])
@@ -1044,15 +1060,15 @@ class TestMaskPreviewWorkflow(_NodesTestBase):
         self.assertEqual(wf["201"]["inputs"]["image"], ["200", 0])
         self.assertEqual(wf["201"]["inputs"]["channel"], "red")
 
-    def test_paint_unions_with_the_track_as_the_replacement_region(self):
+    def test_paint_follows_the_track_as_the_replacement_region(self):
         wf = self._build(text="", initial_mask="mask.png")
-        self.assertEqual(wf["202"]["class_type"], "H3MaskUnion")
-        self.assertEqual(wf["202"]["inputs"]["masks_a"], ["201", 0])
-        self.assertEqual(wf["202"]["inputs"]["masks_b"], ["23", 0])
+        self.assertEqual(wf["202"]["class_type"], "H3PaintedRegion")
+        self.assertEqual(wf["202"]["inputs"]["painted"], ["201", 0])
+        self.assertEqual(wf["202"]["inputs"]["track"], ["23", 0])
         self.assertEqual(wf["24"]["inputs"]["masks"], ["202", 0])
         self.assertEqual(wf["101"]["inputs"]["masks"], ["202", 0])
 
-    def test_text_target_does_not_add_the_union_node(self):
+    def test_text_target_does_not_add_the_region_node(self):
         wf = self._build(text="face", initial_mask="mask.png")
         self.assertNotIn("202", wf)
         self.assertEqual(wf["24"]["inputs"]["masks"], ["23", 0])
@@ -1232,48 +1248,72 @@ class TestCropReport(_NodesTestBase):
 
 
 @unittest.skipUnless(_HAS_TORCH, "torch not available")
-class TestMaskUnion(_NodesTestBase):
+class TestPaintedRegion(_NodesTestBase):
     def _node(self):
-        return self.nodes.H3MaskUnion()
+        return self.nodes.H3PaintedRegion()
 
-    def test_or_of_two_masks(self):
-        a = torch.zeros((3, 8, 8))
-        a[:, 1:4, 1:4] = 1.0
-        b = torch.zeros((3, 8, 8))
-        b[:, 5:7, 5:7] = 1.0
-        out = self._node().union(a, b)[0]
+    def test_static_track_leaves_the_painted_region_in_place(self):
+        paint = torch.zeros((1, 8, 8))
+        paint[0, 1:4, 1:4] = 1.0
+        track = torch.zeros((3, 8, 8))
+        track[:, 3:5, 3:5] = 1.0
+        out = self._node().follow(paint, track, grow=0)[0]
         self.assertEqual(out.shape, (3, 8, 8))
-        self.assertEqual(out[:, 1:4, 1:4].min().item(), 1.0)
-        self.assertEqual(out[:, 5:7, 5:7].min().item(), 1.0)
-        self.assertEqual(out[:, 0, 0].item(), 0.0)
+        for f in range(3):
+            self.assertEqual(out[f, 1:4, 1:4].min().item(), 1.0, "painted region must survive every frame")
+            self.assertEqual(out[f, 3:5, 3:5].min().item(), 1.0, "track region must survive every frame")
 
-    def test_overlapping_region_is_still_one(self):
-        a = torch.ones((1, 8, 8))
-        b = torch.ones((1, 8, 8))
-        out = self._node().union(a, b)[0]
-        self.assertEqual(out.max().item(), 1.0)
-        self.assertEqual(out.sum().item(), 8 * 8)
+    def test_painted_region_follows_track_motion(self):
+        paint = torch.zeros((1, 12, 12))
+        paint[0, 2:5, 2:5] = 1.0
+        track = torch.zeros((3, 12, 12))
+        for f, dx in enumerate((0, 3, 6)):
+            track[f, 4:6, 4 + dx:6 + dx] = 1.0
+        out = self._node().follow(paint, track, grow=0)[0]
+        # the painted region must shift with the track's centroid drift
+        self.assertGreater(out[2, 2:5, 2 + 6:5 + 6].max().item(), 0.0,
+                           "painted region must move with the head")
+        self.assertLess(out[2, 2:5, 2:5].max().item(), 0.9,
+                        "painted region must not stay anchored at the first-frame spot")
 
-    def test_single_frame_paint_broadcasts_to_the_track(self):
+    def test_painted_region_follows_downward_motion(self):
+        paint = torch.zeros((1, 12, 12))
+        paint[0, 2:5, 2:5] = 1.0
+        track = torch.zeros((2, 12, 12))
+        track[0, 4:6, 4:6] = 1.0
+        track[1, 7:9, 4:6] = 1.0  # head moves down by 3
+        out = self._node().follow(paint, track, grow=0)[0]
+        self.assertGreater(out[1, 5:8, 2:5].max().item(), 0.0,
+                           "painted region must move down with the head")
+        self.assertLess(out[1, 2:5, 2:5].max().item(), 0.9,
+                        "painted region must not stay at the first-frame row")
+
+    def test_track_gap_falls_back_to_last_shift(self):
+        paint = torch.zeros((1, 12, 12))
+        paint[0, 2:5, 2:5] = 1.0
+        track = torch.zeros((3, 12, 12))
+        track[0, 4:6, 4:6] = 1.0
+        track[1, 4:6, 7:9] = 1.0
+        # frame 2 empty: painted region must keep the previous shift, not vanish
+        out = self._node().follow(paint, track, grow=0)[0]
+        self.assertGreater(out[2, 2:5, 2 + 3:5 + 3].max().item(), 0.9,
+                           "a track gap must not drop the painted region")
+
+    def test_painted_region_single_frame_broadcasts(self):
         paint = torch.zeros((1, 8, 8))
         paint[0, 0:3, 0:3] = 1.0
         track = torch.zeros((5, 8, 8))
         track[2, 6:8, 6:8] = 1.0
-        out = self._node().union(paint, track)[0]
+        out = self._node().follow(paint, track, grow=0)[0]
         self.assertEqual(out.shape, (5, 8, 8))
-        for f in range(5):
-            self.assertEqual(out[f, 0:3, 0:3].max().item(), 1.0, "painted region must broadcast to every frame")
         self.assertEqual(out[2, 6:8, 6:8].max().item(), 1.0)
 
-    def test_track_single_frame_and_paint_multi_frame(self):
+    def test_grow_dilates_the_painted_region(self):
+        paint = torch.zeros((1, 8, 8))
+        paint[0, 3, 3] = 1.0
         track = torch.zeros((1, 8, 8))
-        track[0, 4:6, 4:6] = 1.0
-        paint = torch.zeros((3, 8, 8))
-        paint[1, 0:2, 0:2] = 1.0
-        out = self._node().union(track, paint)[0]
-        self.assertEqual(out.shape, (3, 8, 8))
-        for f in range(3):
-            self.assertEqual(out[f, 4:6, 4:6].max().item(), 1.0)
+        out = self._node().follow(paint, track, grow=3)[0]
+        self.assertGreater(out[0].sum().item(), 1.0, "grow must widen the painted region")
 
 
 class TestAudioJoinSmooth(_NodesTestBase):

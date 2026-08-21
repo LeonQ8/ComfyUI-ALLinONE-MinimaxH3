@@ -908,17 +908,89 @@ test("bundle rides the tracking overlay along with the real mask generation", ()
   assert.ok(bundle.includes("_showTrackingPreview(d,false)"), "the standalone button must render the non-live note");
 });
 
-test("bundle unions the painted whole-head region with the SAM3 track for replacement", () => {
+test("bundle follows the painted whole-head region with the SAM3 track for replacement", () => {
   const bundle = readFileSync(bundlePath, "utf8");
-  assert.ok(bundle.includes("H3MaskUnion"), "the mask branch must union the painted region with the SAM3 track");
+  assert.ok(bundle.includes("H3PaintedRegion"), "the mask branch must follow the painted region with the SAM3 track");
   assert.ok(
-    bundle.includes('masks_a:[toMask,0],masks_b:["23",0]'),
-    "the union must combine the painted mask with the tracked mask",
+    bundle.includes('painted:[toMask,0],track:["23",0]'),
+    "the region must combine the painted mask with the tracked mask",
   );
-  assert.ok(bundle.includes('wf["24"].inputs.masks=[unionMask,0]'), "the subject crop must cover the union so the crop includes hair/hat");
+  assert.ok(bundle.includes('wf["24"].inputs.masks=[regionMask,0]'), "the subject crop must cover the region so the crop includes hair/hat");
   assert.ok(
-    bundle.includes('masks:maskUnionId?[maskUnionId,0]:["23",0]'),
-    "the crop report must inspect the union when it exists, else the plain track",
+    bundle.includes('masks:maskRegionId?[maskRegionId,0]:["23",0]'),
+    "the crop report must inspect the region when it exists, else the plain track",
+  );
+});
+
+test("bundle threads the trim start time through the real mask run", () => {
+  const bundle = readFileSync(bundlePath, "utf8");
+  assert.ok(
+    bundle.includes('wf["34"].inputs.start_time=Math.max(0,Number(S.maskStartTime)||0)'),
+    "the real mask build must set the Video Slice start_time from the saved trim",
+  );
+  assert.ok(
+    bundle.includes("start_time:Math.max(0,Number(S.maskStartTime)||0)"),
+    "the tracking preview request must send the same trim start so preview matches the run",
+  );
+});
+
+test("bundle passes the trim start to the mask editor so the paint lands on the trimmed first frame", () => {
+  const bundle = readFileSync(bundlePath, "utf8");
+  assert.ok(
+    bundle.includes("startTime:S.maskStartTime||0"),
+    "the paint editor must open at the trim start so the mask aligns to the sliced first frame",
+  );
+  assert.ok(
+    bundle.includes("openVideoMaskEditor({videoName,maskName,startTime,onSave})"),
+    "the editor must accept a startTime option",
+  );
+  assert.ok(
+    bundle.includes('video.currentTime=Math.min((Number(startTime)||0)'),
+    "the editor must seek the source to the trim start",
+  );
+});
+
+test("bundle clears a painted mask when the trim start changes", () => {
+  const bundle = readFileSync(bundlePath, "utf8");
+  assert.ok(
+    bundle.includes("if(hadMask&&trimChanged){S.maskSeed=null;}"),
+    "moving the trim after painting must clear the now-misaligned mask",
+  );
+});
+
+test("bundle exposes the trim controls and active-start chip", () => {
+  const bundle = readFileSync(bundlePath, "utf8");
+  assert.ok(bundle.includes("Trim start"), "the mask action column must offer a trim button");
+  assert.ok(bundle.includes("Start here"), "the trim overlay must offer a Start here action");
+  assert.ok(bundle.includes("fmtClock"), "the trim chip must format the active start time");
+  assert.ok(bundle.includes("Reset to 0"), "the trim must be resettable");
+  assert.ok(
+    bundle.includes('justifyContent:"center",textAlign:"center"'),
+    "the trim chip must center its label text",
+  );
+  assert.ok(
+    bundle.includes("trimSlotBadge"),
+    "the source video slot must carry a trim-start badge so the user sees where the clip begins",
+  );
+  assert.ok(
+    bundle.includes('tx(trimSlotBadge,`Start ${fmtClock(S.maskStartTime)}`)'),
+    "the source slot badge must mirror the active trim start",
+  );
+  assert.ok(
+    bundle.includes('maskSrcSlot.style.boxShadow=trimOn&&S.maskVideo'),
+    "a trim must draw a lime ring on the source slot so the start point is visible",
+  );
+  assert.ok(
+    bundle.includes('"masked region"+(Number(S.maskStartTime)>0'),
+    "the big preview caption must state the trim start so it is unmissable",
+  );
+  assert.ok(
+    bundle.includes("startLbl"),
+    "the trim overlay must show a live START marker on the video while scrubbing",
+  );
+  assert.ok(
+    bundle.includes("`START ${fmt(t)}`"),
+    "the START marker must update live with the scrub position",
   );
 });
 

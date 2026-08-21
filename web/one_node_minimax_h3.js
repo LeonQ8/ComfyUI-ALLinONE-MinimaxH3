@@ -1138,7 +1138,7 @@ const _uploadMedia=async(file)=>{
   }finally{_uploadsPending--;}
 };
 
-function openVideoMaskEditor({videoName,maskName,onSave}){
+function openVideoMaskEditor({videoName,maskName,startTime,onSave}){
   return new Promise((resolve)=>{
     const overlay=mk("div",{position:"fixed",inset:"0",zIndex:"1000001",background:"rgba(0,0,0,.88)",display:"flex",alignItems:"center",justifyContent:"center",padding:"24px",boxSizing:"border-box"});
     const panel=mk("div",{width:"min(980px,94vw)",maxHeight:"94vh",overflowY:"auto",background:C.bg1,border:`1px solid ${C.borderH}`,borderRadius:"12px",boxShadow:"0 24px 80px rgba(0,0,0,.9)",padding:"14px",display:"flex",flexDirection:"column",gap:"10px",boxSizing:"border-box"});
@@ -1259,7 +1259,7 @@ function openVideoMaskEditor({videoName,maskName,onSave}){
       sizeInput.max=String(Math.max(64,Math.round(Math.min(vw,vh)*.3)));
       sizeInput.value=String(brush);tx(sizeText,`Brush ${brush} px`);
       loadMask();
-      try{video.currentTime=Math.min(.01,video.duration||.01);}catch(e){}
+      try{video.currentTime=Math.min((Number(startTime)||0),Math.max(0,(video.duration||0)-.001));}catch(e){}
     };
     video.onerror=()=>{tx(status,"Source video could not be opened");status.style.color=C.err;};
     video.src=api.apiURL(`/view?filename=${encodeURIComponent(videoName)}&type=input&subfolder=&t=${Date.now()}`);
@@ -1660,6 +1660,7 @@ app.registerExtension({
           extendVideoSize: (saved.extendVideoSize&&saved.extendVideoSize.width>0&&saved.extendVideoSize.height>0)?{width:Number(saved.extendVideoSize.width),height:Number(saved.extendVideoSize.height)}:null,
           maskVideo:       saved.maskVideo||null,
           maskVideoSize:   (saved.maskVideoSize&&saved.maskVideoSize.width>0&&saved.maskVideoSize.height>0)?{width:Number(saved.maskVideoSize.width),height:Number(saved.maskVideoSize.height)}:null,
+          maskStartTime:   Number.isFinite(Number(saved.maskStartTime))&&Number(saved.maskStartTime)>0?Number(saved.maskStartTime):0,
           maskSeed:        saved.maskSeed||null,
           maskTarget:      saved.maskTarget||"",
           maskThreshold:   Number.isFinite(Number(saved.maskThreshold))?Number(saved.maskThreshold):0.5,
@@ -1752,7 +1753,7 @@ function persist(){
           refVideos:S.refVideos,refAudios:S.refAudios,
           audioFile:S.audioFile,extendVideo:S.extendVideo,extendVideoSize:S.extendVideoSize,
           maskVideo:S.maskVideo,maskVideoSize:S.maskVideoSize,maskSeed:S.maskSeed,
-          maskTarget:S.maskTarget,maskThreshold:S.maskThreshold,maskCropScale:S.maskCropScale,
+          maskStartTime:S.maskStartTime,maskTarget:S.maskTarget,maskThreshold:S.maskThreshold,maskCropScale:S.maskCropScale,
           maskAudioMode:S.maskAudioMode,
           kf:(S.kf||[]).map(k=>({img:k.img||null,pos:k.pos||0,width:k.width||null,height:k.height||null})),
           models:S.models,speedLora:S.speedLora,audioOn:S.audioOn,fps:S.fps,
@@ -3473,6 +3474,7 @@ function persist(){
       // Masked video inpainting
       const maskSrcSlot=MediaSlot("video",n=>{
         S.maskSeed=null;
+        S.maskStartTime=0;
         S.maskVideo=n;
         if(!n) S.maskVideoSize=null;
         persist();
@@ -3486,12 +3488,20 @@ function persist(){
       const maskActions=mk("div",{display:"flex",flexDirection:"column",gap:"6px",minWidth:"170px",paddingTop:"2px"});
       const maskPaintBtn=mk("button",{}, {type:"button",className:"h3-actbtn"});
       tx(maskPaintBtn,"Paint first-frame mask");
+      const maskTrimBtn=mk("button",{}, {type:"button",className:"h3-actbtn",title:"Pick where in the source video to begin. Useful when the subject you want to replace appears later in the clip. The mask pipeline reads from this point onward; only up to the Source max (s) after it gets replaced."});
+      tx(maskTrimBtn,"Trim start");
       const maskPreviewBtn=mk("button",{}, {type:"button",className:"h3-actbtn",title:"Run only the SAM 3 tracking on the current source video and show the overlay before you commit to a full generation. Best used while ComfyUI is idle; during a run the tracking overlay already appears live."});
       tx(maskPreviewBtn,"Preview tracking");
       const maskClearBtn=mk("button",{height:"28px",borderRadius:"7px",border:`1px solid ${C.border}`,background:C.bg2,color:C.muted,fontSize:"9px",fontWeight:"700",cursor:"pointer",outline:"none"},{type:"button"});
       tx(maskClearBtn,"Remove painted mask");
-      maskActions.append(maskPaintBtn,maskPreviewBtn,maskClearBtn);maskTop.append(maskSrcCard,maskActions);
+      maskActions.append(maskPaintBtn,maskTrimBtn,maskPreviewBtn,maskClearBtn);maskTop.append(maskSrcCard,maskActions);
       maskArea.appendChild(maskTop);
+      const trimChipWrap=mk("div",{display:"flex",alignItems:"center",gap:"8px",marginTop:"0px"});
+      const trimChip=mk("button",{display:"none",alignItems:"center",justifyContent:"center",textAlign:"center",height:"26px",padding:"0 12px",borderRadius:"7px",border:`1px solid ${C.lime}`,background:"rgba(88,224,111,.08)",color:C.lime,fontSize:"9px",fontWeight:"700",cursor:"pointer",outline:"none",lineHeight:"1"},{type:"button",title:"The source video starts at this point. Click to change or reset it."});
+      maskArea.appendChild(trimChipWrap);trimChipWrap.appendChild(trimChip);
+      const trimSlotBadge=mk("div",{position:"absolute",top:"2px",left:"50%",transform:"translateX(-50%)",background:"rgba(0,0,0,.82)",border:`1px solid ${C.lime}`,color:C.lime,fontSize:"9px",fontWeight:"700",padding:"3px 8px",borderRadius:"999px",pointerEvents:"none",display:"none",whiteSpace:"nowrap",zIndex:"9",boxSizing:"border-box",lineHeight:"1.2"});
+      maskSrcSlot.appendChild(trimSlotBadge);
+      const fmtClock=(t)=>{const s=Math.max(0,Number(t)||0);const m=Math.floor(s/60),r=(s-m*60);return m>0?`${m}m ${r.toFixed(1)}s`:`${r.toFixed(1)}s`;};
 
       const maskPreviewRow=mk("div",{display:"flex",alignItems:"center",gap:"10px",background:C.bg1,border:`1px solid ${C.border}`,borderRadius:"8px",padding:"8px",boxSizing:"border-box",minHeight:"92px",cursor:"pointer"});
       const maskPreviewCol=mk("div",{display:"flex",flexDirection:"column",alignItems:"center",flexShrink:"0",width:"150px"});
@@ -3556,7 +3566,7 @@ function persist(){
             const scale=Math.min(BOX_W/vw,BOX_H/vh);
             canvas.width=Math.max(1,Math.round(vw*scale));
             canvas.height=Math.max(1,Math.round(vh*scale));
-            try{v.currentTime=Math.min(.01,v.duration||.01);}catch(e){finish(false);}
+            try{v.currentTime=Math.min((Number(S.maskStartTime)||0),Math.max(0,(v.duration||0)-.001));}catch(e){finish(false);}
           };
           v.onseeked=()=>{try{ctx.drawImage(v,0,0,canvas.width,canvas.height);finish(true);}catch(e){finish(false);}};
           v.onerror=()=>finish(false);
@@ -3594,7 +3604,7 @@ function persist(){
         if(token!==_maskPrevToken) return;
         maskPreviewBox.innerHTML="";
         maskPreviewBox.appendChild(canvas);
-        const cap=mk("div",{position:"absolute",left:"0",right:"0",bottom:"0",background:"rgba(0,0,0,.55)",color:"#fff",fontSize:"8px",padding:"2px 6px",textAlign:"center",pointerEvents:"none"});tx(cap,"masked region");
+        const cap=mk("div",{position:"absolute",left:"0",right:"0",bottom:"0",background:"rgba(0,0,0,.55)",color:"#fff",fontSize:"8px",padding:"2px 6px",textAlign:"center",pointerEvents:"none"});tx(cap,"masked region"+(Number(S.maskStartTime)>0?` · starts ${fmtClock(S.maskStartTime)}`:""));
         maskPreviewBox.appendChild(cap);
       };
 
@@ -3769,6 +3779,7 @@ function persist(){
           const r=await fetch("/h3one/mask_preview",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({
             file:S.maskVideo,
             duration:Math.min(15,Math.max(.2,Number(S.duration)||5)),
+            start_time:Math.max(0,Number(S.maskStartTime)||0),
             ckpt_name:S.models.sam3,
             text:S.maskTarget||"",
             detection_threshold:Math.max(0,Math.min(1,Number(S.maskThreshold)||0)),
@@ -3832,9 +3843,15 @@ function persist(){
       maskArea.appendChild(maskOpts);
       const maskRefsBox=mk("div",{display:"flex",flexDirection:"column",gap:"6px"});maskArea.appendChild(maskRefsBox);
       const _renderMask=(opts)=>{
-        tx(maskPaintState,S.maskSeed?"Mask ready - click preview to edit":"No mask yet - paint one or enter a text target");
+        const trimOn=Number(S.maskStartTime)>0;
+        tx(maskPaintState,(S.maskSeed?"Mask ready":"No mask yet")+(trimOn?` · starts at ${fmtClock(S.maskStartTime)}`:"")+" - click preview to paint or edit");
         maskPaintState.style.color=S.maskSeed?C.lime:C.muted;
         maskClearBtn.style.display=S.maskSeed?"block":"none";
+        trimChip.style.display=trimOn?"inline-flex":"none";
+        if(trimOn) tx(trimChip,`Start ${fmtClock(S.maskStartTime)}`);
+        trimSlotBadge.style.display=(trimOn&&S.maskVideo)?"block":"none";
+        if(trimOn&&S.maskVideo) tx(trimSlotBadge,`Start ${fmtClock(S.maskStartTime)}`);
+        maskSrcSlot.style.boxShadow=trimOn&&S.maskVideo?`0 0 0 2px rgba(88,224,111,.5) inset`:"none";
         if(!opts||opts.refreshPreview!==false) _renderMaskPreview();
         maskRefsBox.innerHTML="";
         const h=mk("div",{fontSize:"9px",fontWeight:"700",color:C.muted,textTransform:"uppercase",letterSpacing:".07em"});
@@ -3857,9 +3874,91 @@ function persist(){
       maskArea._render=_renderMask;
       maskPaintBtn.onclick=async()=>{
         if(!S.maskVideo){if(_h3ShowError)_h3ShowError("Add a source video before painting a mask.");return;}
-        await openVideoMaskEditor({videoName:S.maskVideo,maskName:S.maskSeed,onSave:async name=>{S.maskSeed=name;persist();_renderMask();}});
+        await openVideoMaskEditor({videoName:S.maskVideo,maskName:S.maskSeed,startTime:S.maskStartTime||0,onSave:async name=>{S.maskSeed=name;persist();_renderMask();}});
       };
       maskClearBtn.onclick=()=>{S.maskSeed=null;persist();_renderMask();};
+      const openTrimEditor=()=>{
+        if(!S.maskVideo){if(_h3ShowError)_h3ShowError("Add a source video before trimming.");return;}
+        return new Promise((resolve)=>{
+          const overlay=mk("div",{position:"fixed",inset:"0",zIndex:"1000001",background:"rgba(0,0,0,.88)",display:"flex",alignItems:"center",justifyContent:"center",padding:"24px",boxSizing:"border-box"});
+          const panel=mk("div",{width:"min(860px,94vw)",background:C.bg1,border:`1px solid ${C.borderH}`,borderRadius:"12px",boxShadow:"0 24px 80px rgba(0,0,0,.9)",padding:"14px",display:"flex",flexDirection:"column",gap:"10px",boxSizing:"border-box"});
+          const head=mk("div",{display:"flex",flexDirection:"column",gap:"3px"});
+          const title=mk("div",{fontSize:"13px",fontWeight:"800",color:C.text});tx(title,"Choose where to start");
+          const help=mk("div",{fontSize:"10px",color:C.muted,lineHeight:"1.5"});tx(help,"Scrub to the moment your subject appears. The green START badge on the video shows the exact frame the clip will begin on - the mask you paint later lands there. Hit Start here to set it. The source file stays unchanged; only up to the Source max (s) after this point gets replaced.");
+          head.append(title,help);
+          const box=mk("div",{overflow:"hidden",background:"#000",border:`1px solid ${C.border}`,borderRadius:"8px",display:"flex",alignItems:"center",justifyContent:"center",position:"relative",height:"min(52vh,360px)"});
+          const video=mk("video",{width:"100%",height:"100%",objectFit:"contain",display:"block",background:"#000"},{muted:true,preload:"auto",playsInline:true,controls:false});
+          box.appendChild(video);
+          const startLbl=mk("div",{position:"absolute",top:"8px",left:"50%",transform:"translateX(-50%)",background:"rgba(0,0,0,.85)",border:`1px solid ${C.lime}`,color:C.lime,fontSize:"10px",fontWeight:"800",padding:"4px 12px",borderRadius:"999px",pointerEvents:"none",zIndex:"6",whiteSpace:"nowrap",lineHeight:"1.2",display:"none"});tx(startLbl,"START");
+          box.appendChild(startLbl);
+          const scrubRow=mk("div",{display:"flex",alignItems:"center",gap:"10px"});
+          const scrub=mk("input",{flex:"1",accentColor:C.lime},{type:"range",min:"0",max:"1000",step:"1",value:"0"});
+          const timeLbl=mk("div",{fontSize:"10px",color:C.muted,minWidth:"150px",textAlign:"right"});tx(timeLbl,"0.0s / 0.0s");
+          const windowLbl=mk("div",{fontSize:"9px",color:C.muted,textAlign:"center"});tx(windowLbl,"");
+          scrubRow.append(scrub,timeLbl);
+          const actions=mk("div",{display:"flex",alignItems:"center",gap:"8px",justifyContent:"flex-end"});
+          const mkBtn=(label,extra)=>tx(mk("button",{height:"30px",padding:"0 14px",borderRadius:"7px",border:`1px solid ${C.border}`,background:C.bg2,color:C.text,fontSize:"10px",fontWeight:"700",cursor:"pointer",outline:"none",...(extra||{})},{type:"button"}),label);
+          const cancelBtn=mkBtn("Cancel");
+          const resetBtn=mkBtn("Reset to 0");
+          const startBtn=mkBtn("Start here",{borderColor:C.lime,color:C.lime});
+          actions.append(resetBtn,cancelBtn,startBtn);
+          panel.append(head,box,scrubRow,windowLbl,actions);
+          overlay.appendChild(panel);document.body.appendChild(overlay);
+          let closed=false,playing=false,ready=false,total=0;
+          const close=(val)=>{if(closed)return;closed=true;video.pause();video.removeAttribute("src");overlay.remove();resolve(val);};
+          const fmt=(t)=>fmtClock(t);
+          const updateWindow=()=>{
+            const start=Math.max(0,Number(scrub.value)/1000*total)||0;
+            const cap=Math.min(15,Math.max(.2,Number(S.duration)||5));
+            const end=Math.min(total,start+cap);
+            tx(windowLbl,`Start ${fmt(start)} / ${fmt(total)}. Replaces up to ${cap.toFixed(1)}s after it${end<start+cap?` (only ${fmt(end-start)} remain in the source)`:""}.`);
+          };
+          const syncScrub=()=>{
+            if(!ready||!total)return;
+            scrub.value=String(Math.round((Math.min(video.currentTime||0,total))/total*1000));
+            tx(timeLbl,`${fmt(video.currentTime||0)} / ${fmt(total)}`);
+            updateWindow();
+            const t=Math.min(video.currentTime||0,total);
+            startLbl.style.display=ready&&t>=0?"block":"none";
+            tx(startLbl,`START ${fmt(t)}`);
+          };
+          scrub.oninput=()=>{
+            if(!ready||!total)return;
+            const t=Math.min(total,(Number(scrub.value)/1000)*total);
+            try{video.currentTime=t;}catch(e){}
+            tx(timeLbl,`${fmt(t)} / ${fmt(total)}`);updateWindow();
+          };
+          video.addEventListener("timeupdate",syncScrub);
+          video.addEventListener("seeked",syncScrub);
+          video.onloadedmetadata=()=>{
+            total=video.duration||0;ready=total>0;
+            if(!ready){tx(timeLbl,"Could not read duration");return;}
+            const cur=Math.min((S.maskStartTime||0),total);
+            try{video.currentTime=cur;}catch(e){}
+            syncScrub();
+          };
+          video.onerror=()=>{tx(timeLbl,"Source video could not be opened");};
+          video.src=api.apiURL(`/view?filename=${encodeURIComponent(S.maskVideo)}&type=input&subfolder=&t=${Date.now()}`);
+          cancelBtn.onclick=()=>close();
+          resetBtn.onclick=()=>{S.maskStartTime=0;persist();_renderMask();close();};
+          startBtn.onclick=()=>{
+            if(!ready){return;}
+            const start=Math.min(total,(video.currentTime||0));
+            const trimChanged=Math.abs(start-(Number(S.maskStartTime)||0))>0.05;
+            const hadMask=!!S.maskSeed;
+            S.maskStartTime=Math.max(0,start);
+            if(hadMask&&trimChanged){S.maskSeed=null;}
+            persist();_renderMask();close();
+          };
+          overlay.addEventListener("pointerdown",e=>e.stopPropagation());
+          const onKey=(e)=>{if(e.key==="Escape")close();};
+          document.addEventListener("keydown",onKey);
+          const origClose=close;
+          close=(val)=>{document.removeEventListener("keydown",onKey);return origClose(val);};
+        });
+      };
+      maskTrimBtn.onclick=()=>openTrimEditor();
+      trimChip.onclick=()=>openTrimEditor();
       if(S.maskVideo) maskSrcSlot._restorePreview(S.maskVideo);
       _renderMask();
 
@@ -5769,6 +5868,7 @@ function persist(){
           wf["16"].inputs.file=S.maskVideo;
           const maskSeconds=Math.min(15,Math.max(.2,Number(S.duration)||5));
           wf["34"].inputs.duration=maskSeconds;
+          wf["34"].inputs.start_time=Math.max(0,Number(S.maskStartTime)||0);
           wf["18"].inputs.max_seconds=maskSeconds;
           wf["18"].inputs.target_fps=24;
           wf["19"].inputs.ckpt_name=S.models.sam3;
@@ -5779,15 +5879,15 @@ function persist(){
           const tracking=maskTrackingPlan(S.maskSeed,maskTarget);
           wf["21"].inputs.max_objects=tracking.maxObjects;
           wf["22"].inputs.object_indices=tracking.objectIndices;
-          let maskUnionId=null;
+          let maskRegionId=null;
           if(S.maskSeed&&tracking.seedPaint){
-            const loadMask=newId(),toMask=newId(),unionMask=newId();
+            const loadMask=newId(),toMask=newId(),regionMask=newId();
             wf[loadMask]={class_type:"LoadImage",inputs:{image:S.maskSeed},_meta:{title:"Painted First-Frame Mask"}};
             wf[toMask]={class_type:"ImageToMask",inputs:{image:[loadMask,0],channel:"red"},_meta:{title:"Painted Mask To SAM"}};
             wf["21"].inputs.initial_mask=[toMask,0];
-            wf[unionMask]={class_type:"H3MaskUnion",inputs:{masks_a:[toMask,0],masks_b:["23",0]},_meta:{title:"Painted + Tracked Region"}};
-            wf["24"].inputs.masks=[unionMask,0];
-            maskUnionId=unionMask;
+            wf[regionMask]={class_type:"H3PaintedRegion",inputs:{painted:[toMask,0],track:["23",0],grow:8},_meta:{title:"Painted + Tracked Region"}};
+            wf["24"].inputs.masks=[regionMask,0];
+            maskRegionId=regionMask;
           }
           S.refImages.forEach((name,idx)=>{
             const id=newId();
@@ -5808,7 +5908,7 @@ function persist(){
           if(wf["14"]){wf["14"].inputs.fps=["18",3];wf["14"].inputs.audio=maskAudio;}
           else if(wf["15"]&&wf["15"].class_type==="VHS_VideoCombine"){wf["15"].inputs.frame_rate=["18",3];wf["15"].inputs.audio=maskAudio;}
           wf["500"]={class_type:"SAM3_TrackPreview",inputs:{track_data:["21",0],images:["18",0],opacity:0.5,fps:24},_meta:{title:"Tracking Overlay"}};
-          wf["501"]={class_type:"H3OneSAM3CropCheck",inputs:{bboxes:["24",2],track_data:["21",0],masks:maskUnionId?[maskUnionId,0]:["23",0],confidence_threshold:0.4},_meta:{title:"Crop + Confidence Report"}};
+          wf["501"]={class_type:"H3OneSAM3CropCheck",inputs:{bboxes:["24",2],track_data:["21",0],masks:maskRegionId?[maskRegionId,0]:["23",0],confidence_threshold:0.4},_meta:{title:"Crop + Confidence Report"}};
         }
         return wf;
       };
