@@ -4,6 +4,8 @@ Newest first.
 
 ## 0.12.0 (2026-08-21)
 
+ - Mask mode's new Smart tool and tracking preview are in BETA and may have issues.
+
  - Preview tracking now shows live progress right in the preview box: how many frames SAM 3 has tracked and roughly how many seconds are left, instead of just a spinner. Each preview is its own run, so clicking again or changing the clip duration always starts fresh.
 
  - A new Smart tool in the Mask paint editor builds your first-frame mask with a click. Click the character and SAM 3 paints just that object, respecting hard edges and the shape it holds; right-click anything in hand (like a microphone) to carve it back out. The mask shows live in red over the video and you can still touch it up by hand before saving.
@@ -13,6 +15,7 @@ Newest first.
  - A Mask run now refuses a Detection level of 90% or higher with an explanation, because SAM 3 almost never detects anything there, and shows the same guidance if tracking still comes back empty.
  - In the Smart mask tool, each click now shows a marker on the video: a green plus adds to the mask, a blue cross keeps that spot out, and Clear also resets the clicks. The Smart button explains both clicks when you hover over it.
  - The paint editor has a Move tool: click the painted region and drag it into place if SAM 3 put it slightly off.
+ - In Smart mode, a right-click now works on an existing painted mask even after moving it: Smart uses your mask's center as the selection point instead of asking for another left-click. Right-clicking with no mask at all explains that a positive click is needed first.
 
 ## 0.11.0 (2026-08-21)
 

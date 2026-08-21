@@ -1230,6 +1230,7 @@ function openVideoMaskEditor({videoName,maskName,startTime,onSave,sam3Ckpt}){
       if(smartBusy||!ready) return;
       const hasAny=posPts.length>0||negPts.length>0;
       if(!hasAny) return;
+      if(!posPts.length){tx(status,"Left-click the character first - Smart needs a positive click");status.style.color=C.err;return;}
       if(!String(sam3Ckpt||"").trim()){tx(status,"Pick the SAM 3 checkpoint under Settings first");status.style.color=C.err;return;}
       smartBusy=true;canvas.style.cursor="progress";
       tx(status,`Segmenting ${posPts.length} in / ${negPts.length} out...`);
@@ -1321,6 +1322,19 @@ function openVideoMaskEditor({videoName,maskName,startTime,onSave,sam3Ckpt}){
       tx(maskStats,`Mask: ${count.toLocaleString()} px · ${pct}% of frame · ${maxX-minX+1}×${maxY-minY+1}px`);
       maskStats.style.color=C.lime;
     };
+    const maskCentroid=()=>{
+      const w=maskCanvas.width,h=maskCanvas.height;
+      if(!w||!h) return null;
+      const data=maskCtx.getImageData(0,0,w,h).data;
+      let n=0,sx=0,sy=0;
+      for(let y=0;y<h;y++){
+        for(let x=0;x<w;x++){
+          if(data[(y*w+x)*4+3]>8){n++;sx+=x;sy+=y;}
+        }
+      }
+      if(!n) return null;
+      return {x:Math.round(sx/n),y:Math.round(sy/n)};
+    };
     const close=(value=null)=>{
       if(closed) return;
       closed=true;
@@ -1400,8 +1414,14 @@ function openVideoMaskEditor({videoName,maskName,startTime,onSave,sam3Ckpt}){
         e.preventDefault();
         if(!ready||smartBusy) return;
         const p=point(e);if(!p)return;
-        if(e.button===2) negPts.push(p);
-        else posPts.push(p);
+        if(e.button===2){
+          if(!posPts.length){
+            const c=maskCentroid();
+            if(!c){tx(status,"Left-click the character first - Smart needs a positive click");status.style.color=C.err;return;}
+            posPts.push(c);
+          }
+          negPts.push(p);
+        }else posPts.push(p);
         runSmart();
         return;
       }

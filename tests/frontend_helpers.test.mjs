@@ -1015,6 +1015,12 @@ test("bundle lets the user move the painted region into place", () => {
   assert.ok(bundle.includes('mode!=="move"||moved'), "a Move with no actual movement must not add an undo step");
 });
 
+test("bundle seeds a smart positive from the painted mask on right-click", () => {
+  const bundle = readFileSync(bundlePath, "utf8");
+  assert.ok(bundle.includes("maskCentroid"), "Smart must find the painted mask's center to refine with");
+  assert.ok(bundle.includes("Left-click the character first"), "a right-click with no mask must explain that a positive click is needed");
+});
+
 test("lumaToAlpha turns an opaque black+white mask into a white mask with alpha", () => {
   const data = new Uint8ClampedArray([
     255, 255, 255, 255,
