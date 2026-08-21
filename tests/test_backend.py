@@ -317,7 +317,8 @@ class TestScan(_NodesTestBase):
         self.assertEqual(response.kwargs["status"], 404)
 
     def test_thumb_route_blocks_escaping_subfolder(self):
-        response = _run(self.nodes.get_thumb(_FakeRequest({}, query={"filename": "pic.png", "subfolder": "..\\..", "max": "256"})))
+        escape = os.sep.join(["..", ".."])
+        response = _run(self.nodes.get_thumb(_FakeRequest({}, query={"filename": "pic.png", "subfolder": escape, "max": "256"})))
         self.assertEqual(response.kwargs["status"], 400)
 
     def test_thumb_route_404_when_missing(self):
