@@ -26,6 +26,38 @@ export function sameSize(a, b) {
   return a.width === b.width && a.height === b.height;
 }
 
+export function lumaToAlpha(data) {
+  for (let i = 0; i < data.length; i += 4) {
+    const v = Math.max(data[i], data[i + 1], data[i + 2]);
+    data[i] = 255;
+    data[i + 1] = 255;
+    data[i + 2] = 255;
+    data[i + 3] = v;
+  }
+  return data;
+}
+
+export function maskDetectionHint(text, threshold) {
+  const target = String(text || "").trim();
+  const th = Math.max(0, Math.min(1, Number(threshold) || 0.5));
+  if (target) {
+    const pct = Math.round(th * 100);
+    if (th >= 0.9) {
+      return `SAM 3 found no '${target}' at Detection ${pct}%. That is a near-impossible bar; lower the Detection slider toward 50% and try again.`;
+    }
+    return `SAM 3 found no '${target}' at Detection ${pct}%. Try a clearer Mask target (face, jacket, car) or lower the Detection slider, then try again.`;
+  }
+  return "SAM 3 found nothing to track. Enter a Mask target or paint a first-frame mask, then try again.";
+}
+
+export function maskRunErrorHint(message, state) {
+  const msg = String(message || "");
+  if ((msg.includes("all masks are empty") || msg.includes("nothing to crop")) && state) {
+    return maskDetectionHint(state.maskTarget, state.maskThreshold);
+  }
+  return msg;
+}
+
 export function orientRes(res, orientation) {
   if (!res || orientation !== "portrait" || res.width <= res.height) return res;
   const flipped = {

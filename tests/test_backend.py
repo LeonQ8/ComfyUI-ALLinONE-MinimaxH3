@@ -220,6 +220,18 @@ class TestConfig(_NodesTestBase):
             self.assertNotIn("speaks", prompt, "presets must not bake in lip-sync; the Audio mode owns it")
             self.assertNotIn("mouth", prompt, "presets must not bake in lip-sync; the Audio mode owns it")
 
+    def test_mask_prompt_uses_the_source_crop_as_a_motion_reference(self):
+        cfg = self.nodes._load_builtin_config()
+        mask = cfg.get("prompt_templates", {}).get("mask", {})
+        self.assertIn("<Video 1>", mask.get("wrap", ""), "the mask template must label the source crop as a motion reference")
+        self.assertIn("movement and performance come from <Video 1>", mask.get("wrap", ""), "identity and motion must be split between the ref image and the ref video")
+        self.assertIn("weak_reference", mask.get("wrap", ""), "the ref video must be a motion-only reference, never the identity")
+        for preset in mask.get("presets", []):
+            prompt = preset.get("prompt", "")
+            self.assertIn("<Video 1>", prompt)
+            self.assertIn("the face of the person in <Video 1> never appears", prompt,
+                          "the source dancer's face must not leak into the replacement")
+
     def test_user_overrides_builtin(self):
         user = self.user_dir()
         (user / "config.json").write_text(
@@ -1068,6 +1080,29 @@ class TestMaskPreviewWorkflow(_NodesTestBase):
         self.assertEqual(wf["24"]["inputs"]["masks"], ["202", 0])
         self.assertEqual(wf["101"]["inputs"]["masks"], ["202", 0])
 
+    def test_preview_error_passes_unrelated_failures_through(self):
+        wf = self._build()
+        self.assertEqual(self.nodes._preview_error_message("some other error", wf), "some other error")
+
+    def test_preview_error_translates_empty_masks_with_a_text_target(self):
+        wf = self._build(text="person", detection_threshold=1.0)
+        msg = self.nodes._preview_error_message("all masks are empty, nothing to crop", wf)
+        self.assertIn("person", msg)
+        self.assertIn("100%", msg)
+        self.assertIn("lower the Detection slider", msg)
+
+    def test_preview_error_translates_empty_masks_with_a_reasonable_threshold(self):
+        wf = self._build(text="person", detection_threshold=0.5)
+        msg = self.nodes._preview_error_message("nothing to crop", wf)
+        self.assertIn("person", msg)
+        self.assertIn("clearer Mask target", msg)
+
+    def test_preview_error_translates_empty_masks_with_no_text(self):
+        wf = self._build(text="", initial_mask="")
+        msg = self.nodes._preview_error_message("all masks are empty, nothing to crop", wf)
+        self.assertIn("Mask target", msg)
+        self.assertIn("paint a first-frame mask", msg)
+
     def test_text_target_does_not_add_the_region_node(self):
         wf = self._build(text="face", initial_mask="mask.png")
         self.assertNotIn("202", wf)
@@ -1316,6 +1351,47 @@ class TestPaintedRegion(_NodesTestBase):
         self.assertGreater(out[0].sum().item(), 1.0, "grow must widen the painted region")
 
 
+class TestMaskPreviewProgress(_NodesTestBase):
+    def test_snapshot_unknown_token_is_empty(self):
+        snap = self.nodes._preview_progress_snapshot("nope")
+        self.assertFalse(snap["found"])
+        self.assertEqual(snap["value"], 0)
+        self.assertEqual(snap["max"], 0)
+
+    def test_snapshot_missing_token_is_empty(self):
+        self.assertFalse(self.nodes._preview_progress_snapshot("")["found"])
+
+    def test_snapshot_reads_registered_entry(self):
+        self.nodes._MASK_PREVIEW_PROGRESS["abc"] = {"pid": "p1", "value": 45, "max": 124, "done": False}
+        snap = self.nodes._preview_progress_snapshot("abc")
+        self.assertTrue(snap["found"])
+        self.assertEqual(snap["value"], 45)
+        self.assertEqual(snap["max"], 124)
+        self.assertFalse(snap["done"])
+
+    def test_snapshot_surfaces_done(self):
+        self.nodes._MASK_PREVIEW_PROGRESS["abc"] = {"pid": "p1", "value": 124, "max": 124, "done": True}
+        self.assertTrue(self.nodes._preview_progress_snapshot("abc")["done"])
+
+    def test_progress_route_returns_snapshot(self):
+        self.nodes._MASK_PREVIEW_PROGRESS["tok"] = {"pid": "p1", "value": 10, "max": 100, "done": False}
+        resp = _run(self.nodes.mask_preview_progress(_FakeRequest({}, query={"token": "tok"})))
+        self.assertEqual(resp.kwargs["data"]["value"], 10)
+        self.assertEqual(resp.kwargs["data"]["max"], 100)
+
+    def test_progress_route_unknown_token(self):
+        resp = _run(self.nodes.mask_preview_progress(_FakeRequest({}, query={"token": "ghost"})))
+        self.assertFalse(resp.kwargs["data"]["found"])
+
+    def test_sync_unknown_token_is_noop(self):
+        self.nodes._sync_preview_progress("ghost", "p1")
+
+    def test_sync_ignores_other_prompt(self):
+        self.nodes._MASK_PREVIEW_PROGRESS["abc"] = {"pid": "p1", "value": 0, "max": 0, "done": False}
+        self.nodes._sync_preview_progress("abc", "p2")
+        self.assertEqual(self.nodes._MASK_PREVIEW_PROGRESS["abc"]["value"], 0)
+
+
 class TestAudioJoinSmooth(_NodesTestBase):
     def _node(self):
         return self.nodes.H3AudioJoinSmooth()
@@ -1368,6 +1444,273 @@ class TestAudioJoinSmooth(_NodesTestBase):
         audio = {"waveform": wave, "sample_rate": sr}
         out = self._node().smooth(audio, self._img(src), 30.0, self._img(cont), 24.0, 0.1)
         self.assertEqual(out[0]["waveform"].shape[-1], total)
+
+
+class TestSmartMask(_NodesTestBase):
+    def _stub_comfy_utils(self):
+        """Register the comfy helpers _smart_mask_segment needs so it runs
+        standalone. _install_stubs only wires comfy.model_base, so the smart
+        helper must get its own model_management/utils/mapping stubs."""
+        import sys
+
+        comfy = sys.modules.get("comfy")
+        comfy.__path__ = []
+        mm = sys.modules.get("comfy.model_management") or types.ModuleType("comfy.model_management")
+        sys.modules["comfy.model_management"] = mm
+        mm.get_torch_device = lambda: "cpu"
+        mm.load_model_gpu = lambda model: None
+        mm.intermediate_device = lambda: "cpu"
+        cu = sys.modules.get("comfy.utils") or types.ModuleType("comfy.utils")
+        sys.modules["comfy.utils"] = cu
+
+        def common_upscale(tensor, width, height, method, crop="disabled"):
+            return torch.nn.functional.interpolate(tensor, size=(height, width), mode="bilinear", align_corners=False)
+
+        cu.common_upscale = common_upscale
+        comfy.model_management = mm
+        comfy.utils = cu
+        return mm, cu
+
+    def _fake_model(self):
+        captured = {}
+
+        def forward_segment(self, _frame, point_inputs=None, mask_inputs=None, **kwargs):
+            if point_inputs is not None:
+                captured["point_coords"] = point_inputs["point_coords"]
+                captured["point_labels"] = point_inputs["point_labels"]
+            return torch.ones((1, 1, 1008, 1008)) * 2.0
+
+        decoder = type("Decoder", (), {"forward_segment": forward_segment})()
+        fake = type("Model", (), {})()
+        fake.diffusion_model = decoder
+        fake.get_dtype = lambda: torch.float32
+        model = type("Wrapped", (), {})()
+        model.model = fake
+        return model, captured
+
+    @unittest.skipUnless(_HAS_TORCH, "torch not available")
+    def test_segment_builds_point_inputs_and_thresholds(self):
+        self._stub_comfy_utils()
+        model, captured = self._fake_model()
+        image = torch.zeros((1, 40, 60, 3))
+        mask = self.nodes._smart_mask_segment(model, image, [(10, 10)], [(30, 20)], refine_iterations=2, threshold=0.5)
+        self.assertEqual(mask.shape, (40, 60))
+        self.assertEqual(mask.max().item(), 1.0)
+        labels = captured["point_labels"]
+        self.assertEqual(labels[0].tolist(), [1, 0])
+        coords = captured["point_coords"][0]
+        self.assertAlmostEqual(float(coords[0][0]), 10 / 60 * 1008, places=4)
+        self.assertAlmostEqual(float(coords[1][1]), 20 / 40 * 1008, places=4)
+
+    def test_parse_smart_points_normalizes_ints(self):
+        self.assertEqual(
+            self.nodes._parse_smart_points([{"x": 1.7, "y": 2.4}, {"x": "5", "y": 0}]),
+            [(2, 2), (5, 0)],
+        )
+
+    def test_corner_points_tuck_into_the_frame_border(self):
+        pts = self.nodes._smart_mask_corner_points(1920, 1080)
+        self.assertEqual(len(pts), 4)
+        self.assertTrue(all(0 <= x < 1920 and 0 <= y < 1080 for x, y in pts))
+        self.assertIn((32, 32), pts)
+        self.assertIn((1887, 32), pts)
+        self.assertIn((32, 1047), pts)
+        self.assertIn((1887, 1047), pts)
+
+    def test_corner_points_clamp_on_tiny_frames(self):
+        pts = self.nodes._smart_mask_corner_points(10, 10)
+        self.assertTrue(all(0 <= x < 10 and 0 <= y < 10 for x, y in pts))
+
+    @unittest.skipUnless(_HAS_TORCH, "torch not available")
+    def test_run_keeps_tight_masks_without_corners(self):
+        self._stub_comfy_utils()
+        model, captured = self._fake_model_blob()
+        image = torch.zeros((1, 100, 100, 3))
+        mask = self.nodes._smart_mask_run(model, image, [(50, 50)], [])
+        self.assertEqual(mask.shape, (100, 100))
+        cov = float(mask.sum().item()) / (100 * 100)
+        self.assertLess(cov, 0.4, "a tight mask must not pull in the corner fallback")
+        self.assertEqual(captured["point_labels"][0].tolist(), [1], "no negatives should be added for a tight mask")
+
+    @unittest.skipUnless(_HAS_TORCH, "torch not available")
+    def test_run_keeps_a_non_empty_mask_even_when_sam3_returns_the_whole_scene(self):
+        self._stub_comfy_utils()
+        model, _captured = self._fake_model_allpos()
+        image = torch.zeros((1, 100, 100, 3))
+        mask = self.nodes._smart_mask_run(model, image, [(50, 50)], [])
+        self.assertGreater(mask.sum().item(), 0)
+
+    @unittest.skipUnless(_HAS_TORCH, "torch not available")
+    def test_run_respects_user_negatives_and_skips_the_auto_fallback(self):
+        self._stub_comfy_utils()
+        model, captured = self._fake_model_allpos()
+        image = torch.zeros((1, 100, 100, 3))
+        mask = self.nodes._smart_mask_run(model, image, [(50, 50)], [(10, 10)])
+        self.assertEqual(mask.sum().item(), 100 * 100, "user negatives must be honored without the corner fallback")
+        labels = captured["point_labels"][0].tolist()
+        self.assertEqual(labels, [1, 0], "the user negative must stay the only negative")
+
+    def _fake_model_blob(self):
+        captured = {}
+
+        def forward_segment(self, _frame, point_inputs=None, mask_inputs=None, **kwargs):
+            if point_inputs is not None:
+                captured["point_labels"] = point_inputs["point_labels"]
+            h = torch.full((1, 1, 1008, 1008), -3.0)
+            h[:, :, 450:550, 450:550] = 2.0
+            return h
+
+        decoder = type("Decoder", (), {"forward_segment": forward_segment})()
+        fake = type("Model", (), {})()
+        fake.diffusion_model = decoder
+        fake.get_dtype = lambda: torch.float32
+        model = type("Wrapped", (), {})()
+        model.model = fake
+        return model, captured
+
+    def _fake_model_allpos(self):
+        captured = {}
+
+        def forward_segment(self, _frame, point_inputs=None, mask_inputs=None, **kwargs):
+            if point_inputs is not None:
+                captured["point_labels"] = point_inputs["point_labels"]
+            return torch.ones((1, 1, 1008, 1008)) * 2.0
+
+        decoder = type("Decoder", (), {"forward_segment": forward_segment})()
+        fake = type("Model", (), {})()
+        fake.diffusion_model = decoder
+        fake.get_dtype = lambda: torch.float32
+        model = type("Wrapped", (), {})()
+        model.model = fake
+        return model, captured
+
+    def test_parse_smart_points_rejects_bad_shape(self):
+        with self.assertRaises(ValueError):
+            self.nodes._parse_smart_points("nope")
+        with self.assertRaises(ValueError):
+            self.nodes._parse_smart_points([{"x": "a", "y": 1}])
+        with self.assertRaises(ValueError):
+            self.nodes._parse_smart_points([1, 2])
+
+    def test_clamp_smart_points_into_bounds(self):
+        pts = self.nodes._clamp_smart_points([(-5, 200), (300, -2)], 100, 50)
+        self.assertEqual(pts, [(0, 49), (99, 0)])
+
+    def test_clamp_smart_points_empty_frame(self):
+        self.assertEqual(self.nodes._clamp_smart_points([(1, 1)], 0, 0), [])
+
+    def test_smart_mask_route_rejects_missing_fields(self):
+        resp = _run(self.nodes.smart_mask(_FakeRequest({})))
+        self.assertEqual(resp.kwargs["status"], 400)
+        resp = _run(self.nodes.smart_mask(_FakeRequest({"source": "a.mp4"})))
+        self.assertEqual(resp.kwargs["status"], 400)
+        resp = _run(self.nodes.smart_mask(_FakeRequest({"source": "a.mp4", "ckpt_name": "x"})))
+        self.assertEqual(resp.kwargs["status"], 400)
+        resp = _run(self.nodes.smart_mask(_FakeRequest({"source": "a.mp4", "ckpt_name": "x", "positive": []})))
+        self.assertEqual(resp.kwargs["status"], 400)
+
+    def test_smart_mask_route_rejects_bad_json(self):
+        resp = _run(self.nodes.smart_mask(_FakeRequest("not a dict")))
+        self.assertEqual(resp.kwargs["status"], 400)
+
+    @unittest.skipUnless(_HAS_TORCH, "torch not available")
+    def test_smart_mask_route_rejects_an_empty_segmentation(self):
+        (self.tmp / "input" / "clip.mp4").write_bytes(b"\x00\x00")
+        (self.tmp / "models" / "checkpoints").mkdir(parents=True, exist_ok=True)
+        (self.tmp / "models" / "checkpoints" / "sam.safetensors").write_bytes(b"\x00")
+        import folder_paths as _fp
+        original_full = getattr(_fp, "get_full_path", None)
+        original_frame = self.nodes._mask_source_frame
+        original_run = self.nodes._smart_mask_run
+
+        def fake_full(key, name):
+            return str(self.tmp / "models" / "checkpoints" / "sam.safetensors")
+
+        _fp.get_full_path = fake_full
+        self.nodes._mask_source_frame = lambda _path, _t: (torch.zeros((1, 40, 60, 3)), (60, 40))
+        self.nodes._smart_mask_run = lambda *a, **k: torch.zeros((40, 60))
+        self._stub_comfy_sd()
+        try:
+            resp = _run(self.nodes.smart_mask(_FakeRequest({
+                "source": "clip.mp4", "ckpt_name": "sam.safetensors",
+                "positive": [{"x": 30, "y": 20}], "negative": [],
+            })))
+        finally:
+            if original_full is None:
+                _fp.__dict__.pop("get_full_path", None)
+            else:
+                _fp.get_full_path = original_full
+            self.nodes._mask_source_frame = original_frame
+            self.nodes._smart_mask_run = original_run
+        self.assertEqual(resp.kwargs["status"], 422)
+        self.assertIn("did not find an object", resp.kwargs["data"]["error"])
+
+    @unittest.skipUnless(_HAS_TORCH and _HAS_NUMPY, "torch/numpy not available")
+    def test_smart_mask_route_rejects_a_mask_that_is_only_a_speck(self):
+        (self.tmp / "input" / "clip.mp4").write_bytes(b"\x00\x00")
+        (self.tmp / "models" / "checkpoints").mkdir(parents=True, exist_ok=True)
+        (self.tmp / "models" / "checkpoints" / "sam.safetensors").write_bytes(b"\x00")
+        import folder_paths as _fp
+        original_full = getattr(_fp, "get_full_path", None)
+        original_frame = self.nodes._mask_source_frame
+        original_run = self.nodes._smart_mask_run
+
+        def fake_full(key, name):
+            return str(self.tmp / "models" / "checkpoints" / "sam.safetensors")
+
+        _fp.get_full_path = fake_full
+        self.nodes._mask_source_frame = lambda _path, _t: (torch.zeros((1, 40, 60, 3)), (60, 40))
+        speck = torch.zeros((40, 60))
+        speck[20, 30] = 1.0
+        self.nodes._smart_mask_run = lambda *a, **k: speck
+        self._stub_comfy_sd()
+        try:
+            resp = _run(self.nodes.smart_mask(_FakeRequest({
+                "source": "clip.mp4", "ckpt_name": "sam.safetensors",
+                "positive": [{"x": 30, "y": 20}], "negative": [],
+            })))
+        finally:
+            if original_full is None:
+                _fp.__dict__.pop("get_full_path", None)
+            else:
+                _fp.get_full_path = original_full
+            self.nodes._mask_source_frame = original_frame
+            self.nodes._smart_mask_run = original_run
+        self.assertEqual(resp.kwargs["status"], 422)
+        self.assertIn("did not find an object", resp.kwargs["data"]["error"])
+
+    @unittest.skipUnless(_HAS_TORCH and _HAS_NUMPY, "torch/numpy not available")
+    def test_despeckle_mask_keeps_the_object_and_drops_specks(self):
+        m = torch.zeros((40, 60))
+        m[10:30, 20:40] = 1.0
+        m[5, 5] = 1.0
+        m[35:38, 50:53] = 1.0
+        out = self.nodes._despeckle_mask(m)
+        self.assertEqual(float(out[5, 5]), 0.0, "a single stray pixel must be removed")
+        self.assertEqual(float(out[35, 50]), 0.0, "a tiny isolated blob must be removed")
+        self.assertEqual(float(out[10, 20]), 1.0, "the main object must survive")
+        self.assertEqual(float(out[29, 39]), 1.0, "the main object must keep its full area")
+        self.assertEqual(float(out.sum().item()), 400, "only the 20x20 object should remain")
+
+    @unittest.skipUnless(_HAS_TORCH and _HAS_NUMPY, "torch/numpy not available")
+    def test_despeckle_mask_skips_empty_and_full_frame_masks(self):
+        empty = torch.zeros((10, 10))
+        self.assertIs(self.nodes._despeckle_mask(empty), empty, "an empty mask must pass through untouched")
+        full = torch.ones((10, 10))
+        self.assertIs(self.nodes._despeckle_mask(full), full, "a whole-scene mask must pass through untouched")
+
+    def _stub_comfy_sd(self):
+        import sys
+        comfy = sys.modules.get("comfy")
+        comfy.__path__ = []
+        sd = sys.modules.get("comfy.sd") or types.ModuleType("comfy.sd")
+        sys.modules["comfy.sd"] = sd
+
+        def load_checkpoint_guess_config(path, output_vae=True, output_clip=True, **kwargs):
+            return type("Model", (), {})(), None, None, None
+
+        sd.load_checkpoint_guess_config = load_checkpoint_guess_config
+        comfy.sd = sd
 
 
 if __name__ == "__main__":

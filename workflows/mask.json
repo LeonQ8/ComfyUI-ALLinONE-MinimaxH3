@@ -4,7 +4,7 @@
   "3": { "class_type": "VAELoader", "inputs": { "vae_name": "" }, "_meta": { "title": "Load Video VAE" } },
   "4": { "class_type": "VAELoader", "inputs": { "vae_name": "" }, "_meta": { "title": "Load Audio VAE" } },
   "5": { "class_type": "MiniMaxH3SigmaShift", "inputs": { "model": ["2", 0], "shift_video": 12, "shift_audio": 3 }, "_meta": { "title": "Sigma Shift" } },
-  "6": { "class_type": "MiniMaxH3ReferenceToVideo", "inputs": { "clip": ["1", 0], "vae": ["3", 0], "audio_vae": ["4", 0], "prompt": "", "width": ["25", 0], "height": ["25", 1], "length": ["18", 4], "ref_image_size": "max", "ref_audios.ref_audio_0": ["18", 1] }, "_meta": { "title": "H3 Inpaint Conditioning" } },
+  "6": { "class_type": "MiniMaxH3ReferenceToVideo", "inputs": { "clip": ["1", 0], "vae": ["3", 0], "audio_vae": ["4", 0], "prompt": "", "width": ["25", 0], "height": ["25", 1], "length": ["18", 4], "ref_image_size": "max", "ref_videos.ref_video_0": ["24", 0], "ref_audios.ref_audio_0": ["18", 1] }, "_meta": { "title": "H3 Inpaint Conditioning" } },
   "7": { "class_type": "BasicGuider", "inputs": { "model": ["5", 0], "conditioning": ["6", 0] }, "_meta": { "title": "Basic Guider" } },
   "8": { "class_type": "RandomNoise", "inputs": { "noise_seed": 0 }, "_meta": { "title": "Noise" } },
   "9": { "class_type": "BasicScheduler", "inputs": { "model": ["5", 0], "scheduler": "simple", "steps": 20, "denoise": 1 }, "_meta": { "title": "Scheduler" } },

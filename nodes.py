@@ -1392,18 +1392,88 @@ def _crop_report(bboxes, scores, masks=None, width=0, height=0, confidence_thres
 _MASK_PREVIEW_TIMEOUT = 600.0
 
 
+_MASK_PREVIEW_PROGRESS = {}
+
+
+def _preview_progress_snapshot(token):
+    if not token:
+        return {"found": False, "value": 0, "max": 0, "done": False}
+    entry = _MASK_PREVIEW_PROGRESS.get(token)
+    if not entry:
+        return {"found": False, "value": 0, "max": 0, "done": False}
+    return {
+        "found": True,
+        "value": float(entry.get("value", 0)),
+        "max": float(entry.get("max", 0)),
+        "done": bool(entry.get("done")),
+    }
+
+
+def _sync_preview_progress(token, prompt_id):
+    if not token:
+        return
+    entry = _MASK_PREVIEW_PROGRESS.get(token)
+    if not entry or entry.get("pid") != prompt_id:
+        return
+    try:
+        from comfy_execution.progress import get_progress_state
+        state = get_progress_state()
+        if state.prompt_id != prompt_id:
+            return
+        node = state.nodes.get("21")
+        if node:
+            entry["value"] = float(node.get("value", 0))
+            entry["max"] = float(node.get("max", 0)) or 0
+    except Exception:
+        pass
+
+
 def _mask_preview_queue_number(current):
     """Negative queue number so the preview runs ahead of pending jobs."""
     return -abs(float(current)) - 1.0
 
 
-async def _run_mask_preview(wf, client_id):
+def _mask_empty_crop_hint(wf):
+    """Explain an empty tracked mask so the crop failure reads as guidance.
+
+    SAM 3 found no object, so the tracked mask came through empty and MVEx
+    Subject Crop refused to crop. The most actionable cause depends on whether
+    the preview was told to detect by text or to follow a painted mask."""
+    text = ""
+    threshold = 0.5
+    try:
+        text = str(wf.get("20", {}).get("inputs", {}).get("text", "") or "").strip()
+        threshold = max(0.0, min(1.0, float(wf.get("21", {}).get("inputs", {}).get("detection_threshold", 0.5) or 0.5)))
+    except (TypeError, ValueError):
+        pass
+    if text:
+        pct = int(round(threshold * 100))
+        if threshold >= 0.9:
+            return f"SAM 3 found no '{text}' at Detection {pct}%. That is a near-impossible bar; lower the Detection slider toward 50% and Preview tracking again."
+        return f"SAM 3 found no '{text}' at Detection {pct}%. Try a clearer Mask target (face, jacket, car) or lower the Detection slider, then Preview tracking again."
+    return "SAM 3 found nothing to track. Enter a Mask target or paint a first-frame mask, then Preview tracking again."
+
+
+def _preview_error_message(detail, wf):
+    """Turn a raw preview execution failure into a friendly, actionable message."""
+    msg = str(detail or "")
+    if "all masks are empty" in msg or "nothing to crop" in msg:
+        return _mask_empty_crop_hint(wf)
+    return msg
+
+
+async def _run_mask_preview(wf, client_id, token=""):
     """Queue the preview graph at the front and wait for its temp overlay video."""
     import asyncio
     import execution
     server = PromptServer.instance
     prompt_id = str(uuid.uuid4())
     extra_data = {"client_id": str(client_id or ""), "enable_previews": False}
+    if token:
+        _MASK_PREVIEW_PROGRESS[token] = {"pid": prompt_id, "value": 0, "max": 0, "done": False}
+        if len(_MASK_PREVIEW_PROGRESS) > 100:
+            for stale in list(_MASK_PREVIEW_PROGRESS)[:-100]:
+                _MASK_PREVIEW_PROGRESS.pop(stale, None)
     valid = await execution.validate_prompt(prompt_id, wf, None)
     if not valid[0]:
         detail = valid[1] if isinstance(valid[1], str) else json.dumps(valid[1] or "validation failed")
@@ -1414,10 +1484,13 @@ async def _run_mask_preview(wf, client_id):
     server.prompt_queue.put((_mask_preview_queue_number(number), prompt_id, wf, extra_data, outputs_to_execute, {}))
     deadline = time.time() + _MASK_PREVIEW_TIMEOUT
     while True:
+        _sync_preview_progress(token, prompt_id)
         entry = server.prompt_queue.get_history(prompt_id=prompt_id).get(prompt_id)
         if entry is not None:
             status = entry.get("status") or {}
             if status.get("completed"):
+                if token:
+                    _MASK_PREVIEW_PROGRESS[token]["done"] = True
                 item = _extract_preview_item(entry)
                 if item:
                     response = {"ok": True, "prompt_id": prompt_id, "kind": "video", **item}
@@ -1433,8 +1506,13 @@ async def _run_mask_preview(wf, client_id):
             for message in messages:
                 if message and message[0] == "execution_error" and isinstance(message[1], dict):
                     detail = message[1].get("exception_message") or message[1].get("error") or "execution failed"
+                    detail = _preview_error_message(detail, wf)
+                    if token:
+                        _MASK_PREVIEW_PROGRESS[token]["done"] = True
                     return web.json_response({"ok": False, "error": str(detail), "prompt_id": prompt_id}, status=500)
         if time.time() >= deadline:
+            if token:
+                _MASK_PREVIEW_PROGRESS[token]["done"] = True
             return web.json_response({"ok": False, "error": "tracking preview timed out", "prompt_id": prompt_id}, status=504)
         await asyncio.sleep(0.5)
 
@@ -1457,7 +1535,292 @@ async def mask_preview(request):
         wf = _mask_preview_workflow(template, data)
     except Exception as e:
         return web.json_response({"ok": False, "error": str(e)}, status=400)
-    return await _run_mask_preview(wf, data.get("client_id", ""))
+    return await _run_mask_preview(wf, data.get("client_id", ""), str(data.get("token", "") or ""))
+
+
+@PromptServer.instance.routes.get("/h3one/mask_preview_progress")
+async def mask_preview_progress(request):
+    return web.json_response(_preview_progress_snapshot(str(request.query.get("token", "") or "")))
+
+
+# ---------------------------------------------------------------------------
+# Smart inpainting: SAM3 point-prompt click-to-segment for the mask editor
+# ---------------------------------------------------------------------------
+# Reproduces SAM3_Detect's point-prompt path in-process so a click in the paint
+# editor can produce an object-aware first-frame mask without a full queue run.
+# Positive points include the object, negative points carve it out (e.g. a mic
+# held in the hand). Kept as pure helpers so the backend tests can assert the
+# coordinate math and mask thresholding without a ComfyUI install.
+def _parse_smart_points(raw):
+    """Normalize a client point list to [(x, y)] int pairs, clamped later.
+
+    Accepts [{"x": int, "y": int}, ...] and returns a list of (int, int).
+    Raises ValueError for a non-list or a malformed entry so the route can
+    reject bad payloads instead of crashing mid-segment."""
+    if not isinstance(raw, list):
+        raise ValueError("expected a list of points")
+    out = []
+    for entry in raw:
+        if not isinstance(entry, dict):
+            raise ValueError("each point must be an object")
+        try:
+            x = int(round(float(entry.get("x", 0))))
+            y = int(round(float(entry.get("y", 0))))
+        except (TypeError, ValueError):
+            raise ValueError("point coordinates must be numeric")
+        out.append((x, y))
+    return out
+
+
+def _clamp_smart_points(points, width, height):
+    """Clamp pixel points into the frame bounds and drop empty frames."""
+    w, h = int(width), int(height)
+    if w <= 0 or h <= 0:
+        return []
+    out = []
+    for x, y in points:
+        out.append((max(0, min(w - 1, x)), max(0, min(h - 1, y))))
+    return out
+
+
+def _smart_mask_segment(model, image, positive, negative, refine_iterations=2, threshold=0.5):
+    """Run SAM3 point prompting on a single source-res frame and return a mask.
+
+    model: the SAM3 wrapped model (model.model.diffusion_model is the decoder).
+    image: [1, H, W, 3] float frame tensor in 0..1 (source resolution).
+    positive/negative: lists of (x, y) int pixel coords.
+    refine_iterations: SAM decoder refinement passes after the first point pass.
+    threshold: final binarization level.
+    Returns a [H, W] float mask tensor (1.0 on the object, 0.0 off) on the
+    same device the decoder ran on."""
+    import torch
+    import torch.nn.functional as F
+    import comfy.model_management
+    import comfy.utils
+
+    B, H, W, C = image.shape
+    frame_in = comfy.utils.common_upscale(image[..., :3].movedim(-1, 1), 1008, 1008, "bilinear", crop="disabled")
+    comfy.model_management.load_model_gpu(model)
+    device = comfy.model_management.get_torch_device()
+    dtype = model.model.get_dtype()
+    sam3_model = model.model.diffusion_model
+
+    all_coords = [[x / W * 1008, y / H * 1008] for x, y in positive] + \
+                 [[x / W * 1008, y / H * 1008] for x, y in negative]
+    all_labels = [1] * len(positive) + [0] * len(negative)
+    point_inputs = {
+        "point_coords": torch.tensor([all_coords], dtype=dtype, device=device),
+        "point_labels": torch.tensor([all_labels], dtype=torch.int32, device=device),
+    }
+
+    frame_t = frame_in.to(device=device, dtype=dtype)
+    mask_logit = sam3_model.forward_segment(frame_t, point_inputs=point_inputs)
+    for _ in range(max(0, int(refine_iterations) - 1)):
+        mask_logit = sam3_model.forward_segment(frame_t, mask_inputs=mask_logit)
+    mask = F.interpolate(mask_logit, size=(H, W), mode="bilinear", align_corners=False)
+    return (mask[0, 0] > float(threshold)).float()
+
+
+def _smart_mask_corner_points(width, height, inset=0.03):
+    """Four negative points tucked into the frame corners.
+
+    A bare SAM3 point prompt on a wide frame often returns the whole scene as
+    one connected region. Seeding the corners as background tells SAM3 the
+    frame border is not the object, so a click on a character yields just the
+    character instead of everything around it."""
+    w, h = int(width), int(height)
+    s = max(1, int(min(w, h) * max(0.0, float(inset))))
+    return [(s, s), (max(0, w - 1 - s), s), (s, max(0, h - 1 - s)), (max(0, w - 1 - s), max(0, h - 1 - s))]
+
+
+def _smart_mask_run(model, image, positive, negative, refine_iterations=2, threshold=0.5):
+    """Point-prompt segmentation with a whole-scene guard.
+
+    Runs the click once; if the mask covers most of the frame (a wide shot
+    where a bare point grabs the whole scene), re-runs with the frame corners
+    marked as background and keeps whichever result is tighter but non-empty.
+    Only auto-constrains on the first click: once the user has right-clicked
+    their own negatives, those refinements are respected as-is."""
+    _, H, W, _ = image.shape
+    plain = _smart_mask_segment(model, image, positive, negative, refine_iterations, threshold)
+    plain_cov = float(plain.sum().item()) / float(H * W)
+    if plain_cov <= 0.4 or negative:
+        return plain
+    corners = _smart_mask_corner_points(W, H)
+    # A bare refine pass over the corner-constrained logits can collapse the
+    # mask, so the fallback stays on the single point pass and only swaps when
+    # the result is meaningfully smaller without going degenerate.
+    constrained = _smart_mask_segment(model, image, positive, negative + corners, refine_iterations=1, threshold=threshold)
+    constrained_cov = float(constrained.sum().item()) / float(H * W)
+    if 0.003 < constrained_cov < plain_cov * 0.7:
+        return constrained
+    return plain
+
+
+def _despeckle_mask(mask, min_area=None):
+    """Drop tiny isolated regions so an object mask does not carry specks.
+
+    Segmentation of dark or patterned clothing sometimes keeps small
+    disconnected blobs that read as dots. Removes components that are tiny
+    relative to the object itself, so thin but legitimate features survive.
+    Skips masks that cover most of the frame, where a per-pixel scan is not
+    worth it."""
+    import numpy as np
+    import torch
+    m = mask.detach().cpu().numpy().astype(bool)
+    if not m.any() or m.sum() > m.size * 0.25:
+        return mask
+    h, w = m.shape
+    label = np.zeros((h, w), dtype=np.int32)
+    areas = []
+    queue = []
+    n = 0
+    for y0, x0 in np.argwhere(m):
+        y0, x0 = int(y0), int(x0)
+        if label[y0, x0]:
+            continue
+        n += 1
+        label[y0, x0] = n
+        queue.append((y0, x0))
+        count = 0
+        while queue:
+            cy, cx = queue.pop()
+            count += 1
+            for dy in (-1, 0, 1):
+                for dx in (-1, 0, 1):
+                    if dy == 0 and dx == 0:
+                        continue
+                    ny, nx = cy + dy, cx + dx
+                    if 0 <= ny < h and 0 <= nx < w and m[ny, nx] and not label[ny, nx]:
+                        label[ny, nx] = n
+                        queue.append((ny, nx))
+        areas.append(count)
+    if not areas:
+        return mask
+    biggest = max(areas)
+    if min_area is None:
+        min_area = max(40, int(round(0.005 * biggest)))
+    out = m.copy()
+    for i, a in enumerate(areas):
+        if a < min_area:
+            out[label == i + 1] = False
+    return torch.from_numpy(out.astype(np.float32))
+
+
+def _smart_mask_png(mask, width, height):
+    """Render a binary mask tensor to black+white PNG bytes."""
+    import io
+    import numpy as np
+    from PIL import Image
+    arr = (mask.detach().cpu().numpy() * 255).astype("uint8")
+    img = Image.fromarray(arr, mode="L").resize((int(width), int(height)), Image.NEAREST)
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def _mask_source_frame(path, start_time=0.0):
+    """Extract the frame at the trim start of a source video as a tensor.
+
+    Mirrors what LoadVideo + Video Slice at start_time hand SAM3 in a real run:
+    seek to the nearest frame at the given time and return [1, H, W, 3] float
+    plus (width, height). Falls back to frame 0 when the seek or container
+    cannot be read."""
+    import numpy as np
+    import torch
+    try:
+        import av
+    except Exception:
+        return None, None
+    try:
+        with av.open(path) as container:
+            stream = next(s for s in container.streams if s.type == "video")
+            stream.thread_type = "AUTO"
+            seconds = max(0.0, float(start_time))
+            if seconds > 0:
+                try:
+                    container.seek(int(seconds * stream.time_base.denominator), backward=True, stream=stream)
+                except Exception:
+                    pass
+            frame = next(iter(container.decode(stream)))
+            arr = frame.to_ndarray(format="rgb24")
+            h, w = arr.shape[:2]
+            f = torch.from_numpy(arr.astype(np.float32) / 255.0)[None,]
+            return f, (w, h)
+    except Exception:
+        return None, None
+
+
+@PromptServer.instance.routes.post("/h3one/smart_mask")
+async def smart_mask(request):
+    try:
+        data = await request.json()
+    except Exception:
+        return web.json_response({"ok": False, "error": "invalid JSON"}, status=400)
+    if not isinstance(data, dict):
+        return web.json_response({"ok": False, "error": "invalid payload"}, status=400)
+    source = str(data.get("source", "") or "").strip()
+    ckpt_name = str(data.get("ckpt_name", "") or "").strip()
+    if not source:
+        return web.json_response({"ok": False, "error": "a source video file is required"}, status=400)
+    if not ckpt_name:
+        return web.json_response({"ok": False, "error": "a SAM 3 checkpoint is required"}, status=400)
+    try:
+        positive = _parse_smart_points(data.get("positive"))
+        negative = _parse_smart_points(data.get("negative"))
+    except ValueError as e:
+        return web.json_response({"ok": False, "error": str(e)}, status=400)
+    if not positive:
+        return web.json_response({"ok": False, "error": "at least one positive point is required"}, status=400)
+    try:
+        start_time = max(0.0, float(data.get("start", 0.0) or 0.0))
+    except (TypeError, ValueError):
+        start_time = 0.0
+    try:
+        refine_iterations = max(0, min(5, int(data.get("refine_iterations", 2) or 2)))
+    except (TypeError, ValueError):
+        refine_iterations = 2
+    try:
+        threshold = max(0.0, min(1.0, float(data.get("threshold", 0.5) or 0.5)))
+    except (TypeError, ValueError):
+        threshold = 0.5
+
+    try:
+        name = Path(str(source).replace("\\", "/")).name
+        path = _safe_join(str(Path(folder_paths.get_input_directory()).resolve()), "", name)
+    except ValueError:
+        return web.json_response({"ok": False, "error": "invalid source path"}, status=400)
+    if not os.path.isfile(path):
+        return web.json_response({"ok": False, "error": "source video not found"}, status=404)
+
+    frame, dims = _mask_source_frame(path, start_time)
+    if frame is None or not dims:
+        return web.json_response({"ok": False, "error": "could not read the source video"}, status=500)
+    width, height = dims
+    positive = _clamp_smart_points(positive, width, height)
+    negative = _clamp_smart_points(negative, width, height)
+    if not positive:
+        return web.json_response({"ok": False, "error": "positive points fell outside the frame"}, status=400)
+
+    try:
+        checkpoint = folder_paths.get_full_path("checkpoints", ckpt_name)
+        if not checkpoint or not os.path.isfile(checkpoint):
+            raise ValueError("checkpoint not found")
+        import comfy.sd
+        model, _clip, _vae, _metadata = comfy.sd.load_checkpoint_guess_config(checkpoint, output_vae=True, output_clip=True)
+        mask = _smart_mask_run(model, frame, positive, negative, refine_iterations, threshold)
+        mask = _despeckle_mask(mask)
+        if float(mask.sum().item()) <= 0:
+            return web.json_response({"ok": False, "error": "SAM 3 did not find an object at that click, try clicking more clearly on the subject"}, status=422)
+        png = _smart_mask_png(mask, width, height)
+        mask_name = f"h3_smart_{uuid.uuid4().hex[:10]}.png"
+        input_dir = folder_paths.get_input_directory()
+        with open(os.path.join(input_dir, mask_name), "wb") as fh:
+            fh.write(png)
+        return web.json_response({"ok": True, "mask": mask_name, "width": width, "height": height})
+    except Exception as e:
+        print(f"[H3One] smart mask error: {e}")
+        return web.json_response({"ok": False, "error": str(e)}, status=500)
 
 
 def _empty_image_tensor():

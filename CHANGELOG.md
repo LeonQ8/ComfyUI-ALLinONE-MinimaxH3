@@ -2,6 +2,19 @@
 
 Newest first.
 
+## 0.12.0 (2026-08-21)
+
+ - Mask mode now feeds the tracked source region back to H3 as a motion reference, so a replaced person keeps the original video's movements instead of inventing new ones.
+
+ - Mask mode's new Smart tool and tracking preview are in BETA and may have issues.
+
+ - Preview tracking now shows live progress right in the preview box: how many frames SAM 3 has tracked and roughly how many seconds are left.
+
+ - A new Smart tool in the Mask paint editor builds your first-frame mask with a click. Click the character and SAM 3 paints just that object.
+ - On wide shots the Smart tool used to paint the whole scene in one click. It now picks just the character you click, and the red overlay marks only that region instead of the full frame.
+ - In the Smart mask tool, each click now shows a marker on the video: a green plus adds to the mask, a blue cross keeps that spot out, and Clear also resets the clicks. The Smart button explains both clicks when you hover over it.
+ - The paint editor has a Move tool: click the painted region and drag it into place if SAM 3 put it slightly off.
+
 ## 0.11.0 (2026-08-21)
 
  - In Mask mode, painting a whole head now replaces that whole region, not just the face SAM 3 detects. So long hair, hats and accessories from the replacement reference appear, and they stay attached to the head as it moves instead of flashing in and out.

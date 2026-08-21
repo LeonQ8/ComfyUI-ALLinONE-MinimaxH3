@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { aspect, sizeOf, sameSize, mapMaskPoint, orientRes, fitResolutionToAspect, planMaskCrop, maskTrackingPlan, resolveFitPrimary, imgProfileShort, imgAspectName, viewQuery, thumbQuery, isImageItem, inputFileExists, h3SamCheckpoints, clampImageMP, planImageCanvas, planImageCanvasForRatio, planUpscaleTarget, IMG_MAX_MP, IMG_MIN_MP, IMG_ASPECT_RATIOS, resolveQualityFlags, matchQualityPreset, QUALITY_PRESET_FLAGS, planExtend, queuePromptPayload, settleQueuedOutput, maskSpeechSyncPrompt, cropFrameIndex, cropBoxAt, cropReportText } from "../web/h3_helpers.mjs";
+import { aspect, sizeOf, sameSize, mapMaskPoint, orientRes, fitResolutionToAspect, planMaskCrop, maskTrackingPlan, resolveFitPrimary, imgProfileShort, imgAspectName, viewQuery, thumbQuery, isImageItem, inputFileExists, h3SamCheckpoints, clampImageMP, planImageCanvas, planImageCanvasForRatio, planUpscaleTarget, IMG_MAX_MP, IMG_MIN_MP, IMG_ASPECT_RATIOS, resolveQualityFlags, matchQualityPreset, QUALITY_PRESET_FLAGS, planExtend, queuePromptPayload, settleQueuedOutput, maskSpeechSyncPrompt, cropFrameIndex, cropBoxAt, cropReportText, lumaToAlpha, maskDetectionHint, maskRunErrorHint } from "../web/h3_helpers.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, "..");
@@ -858,6 +858,18 @@ test("bundle wires the Mask mode, brush editor, and runtime preflight", () => {
   );
 });
 
+test("bundle feeds the tracked source crop to H3 as a motion reference", () => {
+  const bundle = readFileSync(bundlePath, "utf8");
+  assert.ok(bundle.includes("ref_videos.ref_video_0"), "Mask must wire the source crop as a ref_video motion reference");
+  assert.ok(
+    bundle.includes("instead of inventing new motion"),
+    "the motion-reference wiring must be documented as a motion fix",
+  );
+  assert.ok(bundle.includes('wf["7"].inputs.conditioning=[kfId,0]'), "the mask identity anchor must rewire the guider");
+  assert.ok(bundle.includes('class_type:"H3IdentityAnchor"'), "Mask must pin the replacement identity at frame 0");
+  assert.ok(bundle.includes("frame_count:[\"18\",4]"), "the mask identity anchor must use the prepared frame count");
+});
+
 test("bundle makes uploads stale-safe and part of the workflow build barrier", () => {
   const bundle = readFileSync(bundlePath, "utf8");
   assert.ok(bundle.includes("const token=++_loadToken"), "media slots must invalidate stale upload responses");
@@ -896,6 +908,21 @@ test("bundle wires the SAM3 tracking preview button and route call", () => {
   assert.ok(bundle.includes("ComfyUI is busy with another job"), "an external busy queue must be worded as another job, not this generation");
   assert.ok(bundle.includes("Showing the last SAM 3 tracking preview"), "clicking preview again must re-show the last preview instead of dead-ending");
   assert.ok(bundle.includes("_trackingPreviewItem"), "the node must remember the last tracking preview to re-show it");
+});
+
+test("bundle shows live SAM3 tracking progress in the preview box", () => {
+  const bundle = readFileSync(bundlePath, "utf8");
+  assert.ok(bundle.includes("crypto.randomUUID"), "the preview must mint a fresh token per run");
+  assert.ok(
+    bundle.includes("/h3one/mask_preview_progress?token="),
+    "the preview must poll the progress route with its token",
+  );
+  assert.ok(bundle.includes("about ${eta}s left"), "the preview box must show frames done and seconds left");
+  assert.ok(bundle.includes("token,"), "the preview POST must carry the token so progress stays scoped to this run");
+  assert.ok(
+    bundle.includes("_activeNode._h3_S.generating!==true"),
+    "standalone preview progress must not flip the main preview chip to Sampling",
+  );
 });
 
 test("bundle rides the tracking overlay along with the real mask generation", () => {
@@ -941,13 +968,112 @@ test("bundle passes the trim start to the mask editor so the paint lands on the 
     "the paint editor must open at the trim start so the mask aligns to the sliced first frame",
   );
   assert.ok(
-    bundle.includes("openVideoMaskEditor({videoName,maskName,startTime,onSave})"),
-    "the editor must accept a startTime option",
+    bundle.includes("openVideoMaskEditor({videoName,maskName,startTime,onSave,sam3Ckpt})"),
+    "the editor must accept a startTime option and the SAM 3 checkpoint",
   );
   assert.ok(
     bundle.includes('video.currentTime=Math.min((Number(startTime)||0)'),
     "the editor must seek the source to the trim start",
   );
+});
+
+test("bundle wires the Smart click-to-segment tool in the mask editor", () => {
+  const bundle = readFileSync(bundlePath, "utf8");
+  assert.ok(bundle.includes("smartBtn=toolBtn(\"Smart\")"), "the paint editor must expose a Smart tool button");
+  assert.ok(bundle.includes("Smart on - left-click adds to the mask"), "turning Smart on must explain the gesture");
+  assert.ok(bundle.includes("posPts") && bundle.includes("negPts"), "Smart must accumulate positive and negative click points");
+  assert.ok(bundle.includes('fetch("/h3one/smart_mask"'), "a Smart click must POST to the segmentation route");
+  assert.ok(bundle.includes("positive:posPts.map"), "the route call must send the accumulated positive points");
+  assert.ok(bundle.includes("negative:negPts.map"), "the route call must send the accumulated negative points");
+  assert.ok(bundle.includes("e.button===2"), "a right-click must be treated as an exclude point");
+  assert.ok(bundle.includes('contextmenu') && bundle.includes('e.preventDefault()'), "the right-click exclude must not open the browser menu");
+  assert.ok(bundle.includes("smartBusy"), "Smart must guard against overlapping in-flight segments");
+  assert.ok(bundle.includes("applySmartMask"), "the returned mask must be merged into the canvas");
+  assert.ok(bundle.includes("maskCtx.drawImage(tmp,0,0)"), "the returned mask must be OR-drawn over the existing paint");
+  assert.ok(bundle.includes("stencil.data[i+3]=v"), "the opaque black+white PNG must become a white mask on a transparent background before merging");
+  assert.ok(bundle.includes("smartEsc"), "Escape must exit Smart mode");
+  assert.ok(bundle.includes("exitSmart()"), "the editor must leave Smart mode when another tool is chosen");
+  assert.ok(bundle.includes("ckpt_name:sam3Ckpt"), "Smart must send the configured SAM 3 checkpoint passed into the editor");
+  assert.ok(bundle.includes("sam3Ckpt:S.models.sam3"), "the mask editor must receive the configured SAM 3 checkpoint from the Mask card");
+  assert.ok(bundle.includes("refine_iterations:2"), "Smart must request decoder refinement for crisp edges");
+  assert.ok(bundle.includes("Smart segment failed"), "a failed segment must surface an in-box error");
+});
+
+test("bundle guards an impossible Detection level before a mask run", () => {
+  const bundle = readFileSync(bundlePath, "utf8");
+  assert.ok(bundle.includes("Number(S.maskThreshold)>=0.9"), "the run and preview must refuse a near-100% Detection");
+  assert.ok(bundle.includes("maskDetectionHint(S.maskTarget,S.maskThreshold)"), "the refusal must explain the Detection bar");
+});
+
+test("bundle translates an empty tracked mask on a real run", () => {
+  const bundle = readFileSync(bundlePath, "utf8");
+  assert.ok(bundle.includes("maskRunErrorHint"), "a real-run empty-mask failure must be translated to guidance");
+  assert.ok(bundle.includes('msg.includes("nothing to crop")'), "the raw crop error must be recognized");
+});
+
+test("bundle marks smart clicks visibly and explains the gestures", () => {
+  const bundle = readFileSync(bundlePath, "utf8");
+  assert.ok(bundle.includes("smartBtn.title="), "the Smart button must explain left and right click on hover");
+  assert.ok(bundle.includes("drawSmartPoints"), "smart clicks must draw visible markers");
+  assert.ok(bundle.includes("mark(negPts,\"#46a6ff\""), "negative clicks must show as a distinct marker");
+  assert.ok(bundle.includes("posPts.length=0;negPts.length=0"), "Clear must also reset the accumulated smart clicks");
+});
+
+test("bundle lets the user move the painted region into place", () => {
+  const bundle = readFileSync(bundlePath, "utf8");
+  assert.ok(bundle.includes("moveBtn=toolBtn(\"Move\")"), "the paint editor must expose a Move tool");
+  assert.ok(bundle.includes("moveSnapshot"), "Move must grab the mask before dragging");
+  assert.ok(bundle.includes("putImageData(moveSnapshot,dx,dy)"), "dragging must translate the grabbed mask");
+  assert.ok(bundle.includes('mode!=="move"||moved'), "a Move with no actual movement must not add an undo step");
+});
+
+test("bundle seeds a smart positive from the painted mask on right-click", () => {
+  const bundle = readFileSync(bundlePath, "utf8");
+  assert.ok(bundle.includes("maskCentroid"), "Smart must find the painted mask's center to refine with");
+  assert.ok(bundle.includes("Left-click the character first"), "a right-click with no mask must explain that a positive click is needed");
+});
+
+test("lumaToAlpha turns an opaque black+white mask into a white mask with alpha", () => {
+  const data = new Uint8ClampedArray([
+    255, 255, 255, 255,
+    0, 0, 0, 255,
+    128, 128, 128, 255,
+    0, 255, 0, 128,
+  ]);
+  lumaToAlpha(data);
+  assert.deepEqual(Array.from(data), [
+    255, 255, 255, 255,
+    255, 255, 255, 0,
+    255, 255, 255, 128,
+    255, 255, 255, 255,
+  ]);
+});
+
+test("maskDetectionHint explains an impossible Detection level", () => {
+  const msg = maskDetectionHint("person", 1.0);
+  assert.ok(msg.includes("person"), "the hint must name the Mask target");
+  assert.ok(msg.includes("100%"), "the hint must name the Detection level");
+  assert.ok(msg.includes("near-impossible"), "a 100% Detection must be flagged as unusable");
+  const normal = maskDetectionHint("person", 0.5);
+  assert.ok(normal.includes("person"));
+  assert.ok(normal.includes("clearer Mask target"), "a normal threshold points at the target instead");
+});
+
+test("maskDetectionHint guides an empty target to paint a mask", () => {
+  const msg = maskDetectionHint("", 0.5);
+  assert.ok(msg.includes("Mask target"));
+  assert.ok(msg.includes("paint a first-frame mask"));
+});
+
+test("maskRunErrorHint translates an empty-crop failure and passes others through", () => {
+  const state = { maskTarget: "person", maskThreshold: 1.0 };
+  const msg = maskRunErrorHint("all masks are empty, nothing to crop", state);
+  assert.ok(msg.includes("person"));
+  assert.ok(msg.includes("100%"));
+  const passthrough = maskRunErrorHint("some unrelated error", state);
+  assert.equal(passthrough, "some unrelated error");
+  const noState = maskRunErrorHint("all masks are empty, nothing to crop", null);
+  assert.equal(noState, "all masks are empty, nothing to crop");
 });
 
 test("bundle clears a painted mask when the trim start changes", () => {
