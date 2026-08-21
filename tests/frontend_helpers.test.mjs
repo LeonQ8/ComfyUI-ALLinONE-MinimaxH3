@@ -983,6 +983,7 @@ test("bundle wires the Smart click-to-segment tool in the mask editor", () => {
   assert.ok(bundle.includes("ckpt_name:sam3Ckpt"), "Smart must send the configured SAM 3 checkpoint passed into the editor");
   assert.ok(bundle.includes("sam3Ckpt:S.models.sam3"), "the mask editor must receive the configured SAM 3 checkpoint from the Mask card");
   assert.ok(bundle.includes("refine_iterations:2"), "Smart must request decoder refinement for crisp edges");
+  assert.ok(bundle.includes("Smart segment failed"), "a failed segment must surface an in-box error");
 });
 
 test("bundle clears a painted mask when the trim start changes", () => {

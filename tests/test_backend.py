@@ -1473,6 +1473,82 @@ class TestSmartMask(_NodesTestBase):
             [(2, 2), (5, 0)],
         )
 
+    def test_corner_points_tuck_into_the_frame_border(self):
+        pts = self.nodes._smart_mask_corner_points(1920, 1080)
+        self.assertEqual(len(pts), 4)
+        self.assertTrue(all(0 <= x < 1920 and 0 <= y < 1080 for x, y in pts))
+        self.assertIn((32, 32), pts)
+        self.assertIn((1887, 32), pts)
+        self.assertIn((32, 1047), pts)
+        self.assertIn((1887, 1047), pts)
+
+    def test_corner_points_clamp_on_tiny_frames(self):
+        pts = self.nodes._smart_mask_corner_points(10, 10)
+        self.assertTrue(all(0 <= x < 10 and 0 <= y < 10 for x, y in pts))
+
+    @unittest.skipUnless(_HAS_TORCH, "torch not available")
+    def test_run_keeps_tight_masks_without_corners(self):
+        self._stub_comfy_utils()
+        model, captured = self._fake_model_blob()
+        image = torch.zeros((1, 100, 100, 3))
+        mask = self.nodes._smart_mask_run(model, image, [(50, 50)], [])
+        self.assertEqual(mask.shape, (100, 100))
+        cov = float(mask.sum().item()) / (100 * 100)
+        self.assertLess(cov, 0.4, "a tight mask must not pull in the corner fallback")
+        self.assertEqual(captured["point_labels"][0].tolist(), [1], "no negatives should be added for a tight mask")
+
+    @unittest.skipUnless(_HAS_TORCH, "torch not available")
+    def test_run_keeps_a_non_empty_mask_even_when_sam3_returns_the_whole_scene(self):
+        self._stub_comfy_utils()
+        model, _captured = self._fake_model_allpos()
+        image = torch.zeros((1, 100, 100, 3))
+        mask = self.nodes._smart_mask_run(model, image, [(50, 50)], [])
+        self.assertGreater(mask.sum().item(), 0)
+
+    @unittest.skipUnless(_HAS_TORCH, "torch not available")
+    def test_run_respects_user_negatives_and_skips_the_auto_fallback(self):
+        self._stub_comfy_utils()
+        model, captured = self._fake_model_allpos()
+        image = torch.zeros((1, 100, 100, 3))
+        mask = self.nodes._smart_mask_run(model, image, [(50, 50)], [(10, 10)])
+        self.assertEqual(mask.sum().item(), 100 * 100, "user negatives must be honored without the corner fallback")
+        labels = captured["point_labels"][0].tolist()
+        self.assertEqual(labels, [1, 0], "the user negative must stay the only negative")
+
+    def _fake_model_blob(self):
+        captured = {}
+
+        def forward_segment(self, _frame, point_inputs=None, mask_inputs=None, **kwargs):
+            if point_inputs is not None:
+                captured["point_labels"] = point_inputs["point_labels"]
+            h = torch.full((1, 1, 1008, 1008), -3.0)
+            h[:, :, 450:550, 450:550] = 2.0
+            return h
+
+        decoder = type("Decoder", (), {"forward_segment": forward_segment})()
+        fake = type("Model", (), {})()
+        fake.diffusion_model = decoder
+        fake.get_dtype = lambda: torch.float32
+        model = type("Wrapped", (), {})()
+        model.model = fake
+        return model, captured
+
+    def _fake_model_allpos(self):
+        captured = {}
+
+        def forward_segment(self, _frame, point_inputs=None, mask_inputs=None, **kwargs):
+            if point_inputs is not None:
+                captured["point_labels"] = point_inputs["point_labels"]
+            return torch.ones((1, 1, 1008, 1008)) * 2.0
+
+        decoder = type("Decoder", (), {"forward_segment": forward_segment})()
+        fake = type("Model", (), {})()
+        fake.diffusion_model = decoder
+        fake.get_dtype = lambda: torch.float32
+        model = type("Wrapped", (), {})()
+        model.model = fake
+        return model, captured
+
     def test_parse_smart_points_rejects_bad_shape(self):
         with self.assertRaises(ValueError):
             self.nodes._parse_smart_points("nope")
@@ -1501,6 +1577,51 @@ class TestSmartMask(_NodesTestBase):
     def test_smart_mask_route_rejects_bad_json(self):
         resp = _run(self.nodes.smart_mask(_FakeRequest("not a dict")))
         self.assertEqual(resp.kwargs["status"], 400)
+
+    @unittest.skipUnless(_HAS_TORCH, "torch not available")
+    def test_smart_mask_route_rejects_an_empty_segmentation(self):
+        (self.tmp / "input" / "clip.mp4").write_bytes(b"\x00\x00")
+        (self.tmp / "models" / "checkpoints").mkdir(parents=True, exist_ok=True)
+        (self.tmp / "models" / "checkpoints" / "sam.safetensors").write_bytes(b"\x00")
+        import folder_paths as _fp
+        original_full = getattr(_fp, "get_full_path", None)
+        original_frame = self.nodes._mask_source_frame
+        original_run = self.nodes._smart_mask_run
+
+        def fake_full(key, name):
+            return str(self.tmp / "models" / "checkpoints" / "sam.safetensors")
+
+        _fp.get_full_path = fake_full
+        self.nodes._mask_source_frame = lambda _path, _t: (torch.zeros((1, 40, 60, 3)), (60, 40))
+        self.nodes._smart_mask_run = lambda *a, **k: torch.zeros((40, 60))
+        self._stub_comfy_sd()
+        try:
+            resp = _run(self.nodes.smart_mask(_FakeRequest({
+                "source": "clip.mp4", "ckpt_name": "sam.safetensors",
+                "positive": [{"x": 30, "y": 20}], "negative": [],
+            })))
+        finally:
+            if original_full is None:
+                _fp.__dict__.pop("get_full_path", None)
+            else:
+                _fp.get_full_path = original_full
+            self.nodes._mask_source_frame = original_frame
+            self.nodes._smart_mask_run = original_run
+        self.assertEqual(resp.kwargs["status"], 422)
+        self.assertIn("did not find an object", resp.kwargs["data"]["error"])
+
+    def _stub_comfy_sd(self):
+        import sys
+        comfy = sys.modules.get("comfy")
+        comfy.__path__ = []
+        sd = sys.modules.get("comfy.sd") or types.ModuleType("comfy.sd")
+        sys.modules["comfy.sd"] = sd
+
+        def load_checkpoint_guess_config(path, output_vae=True, output_clip=True, **kwargs):
+            return type("Model", (), {})(), None, None, None
+
+        sd.load_checkpoint_guess_config = load_checkpoint_guess_config
+        comfy.sd = sd
 
 
 if __name__ == "__main__":

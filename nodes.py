@@ -1591,6 +1591,42 @@ def _smart_mask_segment(model, image, positive, negative, refine_iterations=2, t
     return (mask[0, 0] > float(threshold)).float()
 
 
+def _smart_mask_corner_points(width, height, inset=0.03):
+    """Four negative points tucked into the frame corners.
+
+    A bare SAM3 point prompt on a wide frame often returns the whole scene as
+    one connected region. Seeding the corners as background tells SAM3 the
+    frame border is not the object, so a click on a character yields just the
+    character instead of everything around it."""
+    w, h = int(width), int(height)
+    s = max(1, int(min(w, h) * max(0.0, float(inset))))
+    return [(s, s), (max(0, w - 1 - s), s), (s, max(0, h - 1 - s)), (max(0, w - 1 - s), max(0, h - 1 - s))]
+
+
+def _smart_mask_run(model, image, positive, negative, refine_iterations=2, threshold=0.5):
+    """Point-prompt segmentation with a whole-scene guard.
+
+    Runs the click once; if the mask covers most of the frame (a wide shot
+    where a bare point grabs the whole scene), re-runs with the frame corners
+    marked as background and keeps whichever result is tighter but non-empty.
+    Only auto-constrains on the first click: once the user has right-clicked
+    their own negatives, those refinements are respected as-is."""
+    _, H, W, _ = image.shape
+    plain = _smart_mask_segment(model, image, positive, negative, refine_iterations, threshold)
+    plain_cov = float(plain.sum().item()) / float(H * W)
+    if plain_cov <= 0.4 or negative:
+        return plain
+    corners = _smart_mask_corner_points(W, H)
+    # A bare refine pass over the corner-constrained logits can collapse the
+    # mask, so the fallback stays on the single point pass and only swaps when
+    # the result is meaningfully smaller without going degenerate.
+    constrained = _smart_mask_segment(model, image, positive, negative + corners, refine_iterations=1, threshold=threshold)
+    constrained_cov = float(constrained.sum().item()) / float(H * W)
+    if 0.003 < constrained_cov < plain_cov * 0.7:
+        return constrained
+    return plain
+
+
 def _smart_mask_png(mask, width, height):
     """Render a binary mask tensor to black+white PNG bytes."""
     import io
@@ -1692,7 +1728,9 @@ async def smart_mask(request):
             raise ValueError("checkpoint not found")
         import comfy.sd
         model, _clip, _vae, _metadata = comfy.sd.load_checkpoint_guess_config(checkpoint, output_vae=True, output_clip=True)
-        mask = _smart_mask_segment(model, frame, positive, negative, refine_iterations, threshold)
+        mask = _smart_mask_run(model, frame, positive, negative, refine_iterations, threshold)
+        if float(mask.sum().item()) <= 0:
+            return web.json_response({"ok": False, "error": "SAM 3 did not find an object at that click, try clicking more clearly on the subject"}, status=422)
         png = _smart_mask_png(mask, width, height)
         mask_name = f"h3_smart_{uuid.uuid4().hex[:10]}.png"
         input_dir = folder_paths.get_input_directory()
