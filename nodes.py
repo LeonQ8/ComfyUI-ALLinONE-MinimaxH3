@@ -1153,11 +1153,16 @@ def _mask_preview_workflow(template, p):
         seconds = max(0.2, min(15.0, float(p.get("duration", 5.0) or 5.0)))
     except (TypeError, ValueError):
         seconds = 5.0
+    try:
+        start_time = max(0.0, float(p.get("start_time", 0.0) or 0.0))
+    except (TypeError, ValueError):
+        start_time = 0.0
     text = str(p.get("text", "") or "").strip()
     initial = str(p.get("initial_mask", "") or "").strip()
     seed_paint = bool(initial) and not bool(text)
     wf["16"]["inputs"]["file"] = str(p.get("file", "") or "")
     wf["34"]["inputs"]["duration"] = seconds
+    wf["34"]["inputs"]["start_time"] = start_time
     wf["18"]["inputs"]["max_seconds"] = seconds
     wf["18"]["inputs"]["target_fps"] = 24
     wf["19"]["inputs"]["ckpt_name"] = str(p.get("ckpt_name", "") or "")
@@ -1175,10 +1180,18 @@ def _mask_preview_workflow(template, p):
     wf["22"]["inputs"]["object_indices"] = str(p.get("object_indices", "0") or "0")
     if not text:
         wf["21"]["inputs"].pop("conditioning", None)
+    crop_check_masks = ["23", 0]
     if seed_paint:
         wf["200"] = {"class_type": "LoadImage", "inputs": {"image": initial}, "_meta": {"title": "Painted First-Frame Mask"}}
         wf["201"] = {"class_type": "ImageToMask", "inputs": {"image": ["200", 0], "channel": "red"}, "_meta": {"title": "Painted Mask To SAM"}}
         wf["21"]["inputs"]["initial_mask"] = ["201", 0]
+        # The painted whole-head region must count as replacement area too, not
+        # just a SAM seed. Follow it through the video with the SAM track so the
+        # hair and accessories stay attached to the head, then the crop box and
+        # latent region cover that whole region.
+        wf["202"] = {"class_type": "H3PaintedRegion", "inputs": {"painted": ["201", 0], "track": ["23", 0], "grow": 8}, "_meta": {"title": "Painted + Tracked Region"}}
+        wf["24"]["inputs"]["masks"] = ["202", 0]
+        crop_check_masks = ["202", 0]
     # The crop box the preview shows must be the one the real run would use, so
     # mirror the JS build's Subject Crop dials. upscale is disabled here: it
     # resizes the crop for H3 but never moves the box, and the preview does not
@@ -1200,7 +1213,7 @@ def _mask_preview_workflow(template, p):
         "inputs": {
             "bboxes": ["24", 2],
             "track_data": ["21", 0],
-            "masks": ["23", 0],
+            "masks": crop_check_masks,
             "confidence_threshold": 0.4,
         },
         "_meta": {"title": "Crop + Confidence Report"},
@@ -1846,6 +1859,82 @@ class H3AudioJoinSmooth:
         return (out,)
 
 
+class H3PaintedRegion:
+    """Follows a user-painted whole-head region through the video using the SAM3
+    track, so hair and accessories stay attached to the head instead of sitting
+    at their first-frame spot. Each frame the painted mask is shifted by the
+    track's centroid drift since frame 0, then OR-ed with that frame's track
+    mask. A track gap falls back to the last shift so the region never jumps or
+    vanishes. The painted mask is one frame; the track is one frame per video
+    frame."""
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "painted": ("MASK",),
+                "track": ("MASK",),
+                "grow": ("INT", {"default": 8, "min": 0, "max": 64, "step": 1}),
+            }
+        }
+
+    RETURN_TYPES = ("MASK",)
+    RETURN_NAMES = ("masks",)
+    FUNCTION = "follow"
+    CATEGORY = "One Node"
+
+    def follow(self, painted, track, grow=8):
+        import torch
+        import torch.nn.functional as F
+        p = painted
+        t = track
+        if p is None or t is None:
+            raise ValueError("H3PaintedRegion needs both painted and track connected")
+        n = max(p.shape[0], t.shape[0])
+        t = t[:n] if t.shape[0] > 1 else t.repeat(n, 1, 1)
+        t_bin = (t > 0.5).float()
+        p0 = (p[:1] > 0.5).float()
+        if grow > 0:
+            p0 = (F.max_pool2d(p0[:, None], grow * 2 + 1, 1, grow)[:, 0] > 0).float()
+        p_bin = p0.repeat(n, 1, 1)
+
+        def centroid(m):
+            total = m.sum()
+            if total <= 0:
+                return None, None
+            ys = torch.arange(m.shape[-2], device=m.device, dtype=m.dtype)
+            xs = torch.arange(m.shape[-1], device=m.device, dtype=m.dtype)
+            cy = (m.sum(-1) * ys).sum() / total
+            cx = (m.sum(-2) * xs).sum() / total
+            return cx, cy
+
+        base = centroid(t_bin[0])
+        prev_shift = (0, 0)
+        out = []
+        for f in range(n):
+            c = centroid(t_bin[f])
+            if c[0] is None or base[0] is None:
+                shift = prev_shift
+            else:
+                shift = (int(round(float(c[0] - base[0]))), int(round(float(c[1] - base[1]))))
+                prev_shift = shift
+            dx, dy = shift
+            moved = torch.zeros_like(p_bin[f])
+            h, w = moved.shape
+            # dest[y+dy, x+dx] = src[y, x]: the painted region follows the head
+            srow0 = max(0, -dy)
+            srow1 = min(h, h - dy)
+            scol0 = max(0, -dx)
+            scol1 = min(w, w - dx)
+            if srow1 > srow0 and scol1 > scol0:
+                drow0 = srow0 + dy
+                dcol0 = scol0 + dx
+                moved[drow0:drow0 + (srow1 - srow0), dcol0:dcol0 + (scol1 - scol0)] = p_bin[f][srow0:srow1, scol0:scol1]
+            out.append((moved + t_bin[f]).clamp_(0, 1))
+        result = torch.stack(out)
+        return (result.to(dtype=painted.dtype, device=painted.device),)
+
+
 class H3OneSAM3CropCheck:
     """Hands the frontend a JSON report of the crop MVEx Subject Crop plans
     around the tracked subject plus SAM3's own per-object confidence, so the
@@ -1883,5 +1972,5 @@ class H3OneSAM3CropCheck:
         return {"result": (payload,), "ui": {"text": [payload]}}
 
 
-NODE_CLASS_MAPPINGS = {"H3OneNode": H3OneNode, "H3CacheBust": H3CacheBust, "H3MaskVideoPrepare": H3MaskVideoPrepare, "H3IdentityAnchor": H3IdentityAnchor, "H3AudioTrim": H3AudioTrim, "H3AudioJoinSmooth": H3AudioJoinSmooth, "H3OneSAM3CropCheck": H3OneSAM3CropCheck}
-NODE_DISPLAY_NAME_MAPPINGS = {"H3OneNode": "ALL in ONE MiniMaxH3", "H3CacheBust": "H3 Cache Fingerprint (internal)", "H3MaskVideoPrepare": "H3 Mask Video Prepare (internal)", "H3IdentityAnchor": "H3 Identity Anchor (internal)", "H3AudioTrim": "H3 Audio Trim (internal)", "H3AudioJoinSmooth": "H3 Audio Join Smooth (internal)", "H3OneSAM3CropCheck": "H3 Crop + Confidence Report (internal)"}
+NODE_CLASS_MAPPINGS = {"H3OneNode": H3OneNode, "H3CacheBust": H3CacheBust, "H3MaskVideoPrepare": H3MaskVideoPrepare, "H3IdentityAnchor": H3IdentityAnchor, "H3AudioTrim": H3AudioTrim, "H3AudioJoinSmooth": H3AudioJoinSmooth, "H3OneSAM3CropCheck": H3OneSAM3CropCheck, "H3PaintedRegion": H3PaintedRegion}
+NODE_DISPLAY_NAME_MAPPINGS = {"H3OneNode": "ALL in ONE MiniMaxH3", "H3CacheBust": "H3 Cache Fingerprint (internal)", "H3MaskVideoPrepare": "H3 Mask Video Prepare (internal)", "H3IdentityAnchor": "H3 Identity Anchor (internal)", "H3AudioTrim": "H3 Audio Trim (internal)", "H3AudioJoinSmooth": "H3 Audio Join Smooth (internal)", "H3OneSAM3CropCheck": "H3 Crop + Confidence Report (internal)", "H3PaintedRegion": "H3 Painted Region (internal)"}

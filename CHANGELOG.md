@@ -2,6 +2,13 @@
 
 Newest first.
 
+## 0.11.0 (2026-08-21)
+
+ - In Mask mode, painting a whole head now replaces that whole region, not just the face SAM 3 detects. So long hair, hats and accessories from the replacement reference appear, and they stay attached to the head as it moves instead of flashing in and out.
+ - Face tracking is unchanged: SAM 3 still detects and follows the face, and glasses are still picked up. Text-only mask mode behaves exactly as before.
+ - The tracking preview no longer resets to the painted mask when you add or remove replacement references while it is rendering.
+ - In Mask mode you can now choose where the clip starts: scrub the source video and set a start point, and the mask you paint lands on that exact first frame. Only the section after that point is replaced; the source file is unchanged.
+
 ## 0.10.0 (2026-08-21)
 
  - Mask mode has a Preview tracking button that runs only the SAM 3 tracking part and shows what gets tracked as colored masks over the video, in seconds and before any H3 generation. The same overlay appears live during a real run, so you can Stop early if it caught the wrong thing.
