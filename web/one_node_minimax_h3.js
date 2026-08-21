@@ -1236,7 +1236,16 @@ function openVideoMaskEditor({videoName,maskName,startTime,onSave,sam3Ckpt}){
       await new Promise((res,rej)=>{img.onload=res;img.onerror=()=>rej(new Error("mask load failed"));img.src=api.apiURL(`/view?filename=${encodeURIComponent(name)}&type=input&subfolder=&t=${Date.now()}`);});
       if(closed) return;
       pushUndo();
-      maskCtx.drawImage(img,0,0,maskCanvas.width,maskCanvas.height);
+      const tmp=document.createElement("canvas");tmp.width=maskCanvas.width;tmp.height=maskCanvas.height;
+      const tc=tmp.getContext("2d",{willReadFrequently:true});
+      tc.drawImage(img,0,0,tmp.width,tmp.height);
+      const stencil=tc.getImageData(0,0,tmp.width,tmp.height);
+      for(let i=0;i<stencil.data.length;i+=4){
+        const v=Math.max(stencil.data[i],stencil.data[i+1],stencil.data[i+2]);
+        stencil.data[i]=255;stencil.data[i+1]=255;stencil.data[i+2]=255;stencil.data[i+3]=v;
+      }
+      tc.putImageData(stencil,0,0);
+      maskCtx.drawImage(tmp,0,0);
       renderMask();
     };
     const renderMask=()=>{

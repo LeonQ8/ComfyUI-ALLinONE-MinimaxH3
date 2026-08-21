@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { aspect, sizeOf, sameSize, mapMaskPoint, orientRes, fitResolutionToAspect, planMaskCrop, maskTrackingPlan, resolveFitPrimary, imgProfileShort, imgAspectName, viewQuery, thumbQuery, isImageItem, inputFileExists, h3SamCheckpoints, clampImageMP, planImageCanvas, planImageCanvasForRatio, planUpscaleTarget, IMG_MAX_MP, IMG_MIN_MP, IMG_ASPECT_RATIOS, resolveQualityFlags, matchQualityPreset, QUALITY_PRESET_FLAGS, planExtend, queuePromptPayload, settleQueuedOutput, maskSpeechSyncPrompt, cropFrameIndex, cropBoxAt, cropReportText } from "../web/h3_helpers.mjs";
+import { aspect, sizeOf, sameSize, mapMaskPoint, orientRes, fitResolutionToAspect, planMaskCrop, maskTrackingPlan, resolveFitPrimary, imgProfileShort, imgAspectName, viewQuery, thumbQuery, isImageItem, inputFileExists, h3SamCheckpoints, clampImageMP, planImageCanvas, planImageCanvasForRatio, planUpscaleTarget, IMG_MAX_MP, IMG_MIN_MP, IMG_ASPECT_RATIOS, resolveQualityFlags, matchQualityPreset, QUALITY_PRESET_FLAGS, planExtend, queuePromptPayload, settleQueuedOutput, maskSpeechSyncPrompt, cropFrameIndex, cropBoxAt, cropReportText, lumaToAlpha } from "../web/h3_helpers.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, "..");
@@ -977,13 +977,30 @@ test("bundle wires the Smart click-to-segment tool in the mask editor", () => {
   assert.ok(bundle.includes('contextmenu') && bundle.includes('e.preventDefault()'), "the right-click exclude must not open the browser menu");
   assert.ok(bundle.includes("smartBusy"), "Smart must guard against overlapping in-flight segments");
   assert.ok(bundle.includes("applySmartMask"), "the returned mask must be merged into the canvas");
-  assert.ok(bundle.includes("maskCtx.drawImage(img,0,0,maskCanvas.width,maskCanvas.height)"), "the returned mask must be OR-drawn over the existing paint");
+  assert.ok(bundle.includes("maskCtx.drawImage(tmp,0,0)"), "the returned mask must be OR-drawn over the existing paint");
+  assert.ok(bundle.includes("stencil.data[i+3]=v"), "the opaque black+white PNG must become a white mask on a transparent background before merging");
   assert.ok(bundle.includes("smartEsc"), "Escape must exit Smart mode");
   assert.ok(bundle.includes("exitSmart()"), "the editor must leave Smart mode when another tool is chosen");
   assert.ok(bundle.includes("ckpt_name:sam3Ckpt"), "Smart must send the configured SAM 3 checkpoint passed into the editor");
   assert.ok(bundle.includes("sam3Ckpt:S.models.sam3"), "the mask editor must receive the configured SAM 3 checkpoint from the Mask card");
   assert.ok(bundle.includes("refine_iterations:2"), "Smart must request decoder refinement for crisp edges");
   assert.ok(bundle.includes("Smart segment failed"), "a failed segment must surface an in-box error");
+});
+
+test("lumaToAlpha turns an opaque black+white mask into a white mask with alpha", () => {
+  const data = new Uint8ClampedArray([
+    255, 255, 255, 255,
+    0, 0, 0, 255,
+    128, 128, 128, 255,
+    0, 255, 0, 128,
+  ]);
+  lumaToAlpha(data);
+  assert.deepEqual(Array.from(data), [
+    255, 255, 255, 255,
+    255, 255, 255, 0,
+    255, 255, 255, 128,
+    255, 255, 255, 255,
+  ]);
 });
 
 test("bundle clears a painted mask when the trim start changes", () => {

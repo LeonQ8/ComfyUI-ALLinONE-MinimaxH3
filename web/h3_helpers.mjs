@@ -26,6 +26,17 @@ export function sameSize(a, b) {
   return a.width === b.width && a.height === b.height;
 }
 
+export function lumaToAlpha(data) {
+  for (let i = 0; i < data.length; i += 4) {
+    const v = Math.max(data[i], data[i + 1], data[i + 2]);
+    data[i] = 255;
+    data[i + 1] = 255;
+    data[i + 2] = 255;
+    data[i + 3] = v;
+  }
+  return data;
+}
+
 export function orientRes(res, orientation) {
   if (!res || orientation !== "portrait" || res.width <= res.height) return res;
   const flipped = {
