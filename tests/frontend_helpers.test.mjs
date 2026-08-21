@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { aspect, sizeOf, sameSize, mapMaskPoint, orientRes, fitResolutionToAspect, planMaskCrop, maskTrackingPlan, resolveFitPrimary, imgProfileShort, imgAspectName, viewQuery, thumbQuery, isImageItem, inputFileExists, h3SamCheckpoints, clampImageMP, planImageCanvas, planImageCanvasForRatio, planUpscaleTarget, IMG_MAX_MP, IMG_MIN_MP, IMG_ASPECT_RATIOS, resolveQualityFlags, matchQualityPreset, QUALITY_PRESET_FLAGS, planExtend, queuePromptPayload, settleQueuedOutput, maskSpeechSyncPrompt, cropFrameIndex, cropBoxAt, cropReportText, lumaToAlpha } from "../web/h3_helpers.mjs";
+import { aspect, sizeOf, sameSize, mapMaskPoint, orientRes, fitResolutionToAspect, planMaskCrop, maskTrackingPlan, resolveFitPrimary, imgProfileShort, imgAspectName, viewQuery, thumbQuery, isImageItem, inputFileExists, h3SamCheckpoints, clampImageMP, planImageCanvas, planImageCanvasForRatio, planUpscaleTarget, IMG_MAX_MP, IMG_MIN_MP, IMG_ASPECT_RATIOS, resolveQualityFlags, matchQualityPreset, QUALITY_PRESET_FLAGS, planExtend, queuePromptPayload, settleQueuedOutput, maskSpeechSyncPrompt, cropFrameIndex, cropBoxAt, cropReportText, lumaToAlpha, maskDetectionHint, maskRunErrorHint } from "../web/h3_helpers.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, "..");
@@ -987,6 +987,18 @@ test("bundle wires the Smart click-to-segment tool in the mask editor", () => {
   assert.ok(bundle.includes("Smart segment failed"), "a failed segment must surface an in-box error");
 });
 
+test("bundle guards an impossible Detection level before a mask run", () => {
+  const bundle = readFileSync(bundlePath, "utf8");
+  assert.ok(bundle.includes("Number(S.maskThreshold)>=0.9"), "the run and preview must refuse a near-100% Detection");
+  assert.ok(bundle.includes("maskDetectionHint(S.maskTarget,S.maskThreshold)"), "the refusal must explain the Detection bar");
+});
+
+test("bundle translates an empty tracked mask on a real run", () => {
+  const bundle = readFileSync(bundlePath, "utf8");
+  assert.ok(bundle.includes("maskRunErrorHint"), "a real-run empty-mask failure must be translated to guidance");
+  assert.ok(bundle.includes('msg.includes("nothing to crop")'), "the raw crop error must be recognized");
+});
+
 test("lumaToAlpha turns an opaque black+white mask into a white mask with alpha", () => {
   const data = new Uint8ClampedArray([
     255, 255, 255, 255,
@@ -1001,6 +1013,33 @@ test("lumaToAlpha turns an opaque black+white mask into a white mask with alpha"
     255, 255, 255, 128,
     255, 255, 255, 255,
   ]);
+});
+
+test("maskDetectionHint explains an impossible Detection level", () => {
+  const msg = maskDetectionHint("person", 1.0);
+  assert.ok(msg.includes("person"), "the hint must name the Mask target");
+  assert.ok(msg.includes("100%"), "the hint must name the Detection level");
+  assert.ok(msg.includes("near-impossible"), "a 100% Detection must be flagged as unusable");
+  const normal = maskDetectionHint("person", 0.5);
+  assert.ok(normal.includes("person"));
+  assert.ok(normal.includes("clearer Mask target"), "a normal threshold points at the target instead");
+});
+
+test("maskDetectionHint guides an empty target to paint a mask", () => {
+  const msg = maskDetectionHint("", 0.5);
+  assert.ok(msg.includes("Mask target"));
+  assert.ok(msg.includes("paint a first-frame mask"));
+});
+
+test("maskRunErrorHint translates an empty-crop failure and passes others through", () => {
+  const state = { maskTarget: "person", maskThreshold: 1.0 };
+  const msg = maskRunErrorHint("all masks are empty, nothing to crop", state);
+  assert.ok(msg.includes("person"));
+  assert.ok(msg.includes("100%"));
+  const passthrough = maskRunErrorHint("some unrelated error", state);
+  assert.equal(passthrough, "some unrelated error");
+  const noState = maskRunErrorHint("all masks are empty, nothing to crop", null);
+  assert.equal(noState, "all masks are empty, nothing to crop");
 });
 
 test("bundle clears a painted mask when the trim start changes", () => {

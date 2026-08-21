@@ -568,6 +568,23 @@ function fmtErr(v){
   }catch(e){ return String(v); }
 }
 
+function maskDetectionHint(text, threshold){
+  const target=String(text||"").trim();
+  const th=Math.max(0,Math.min(1,Number(threshold)||0.5));
+  if(target){
+    const pct=Math.round(th*100);
+    if(th>=0.9) return `SAM 3 found no '${target}' at Detection ${pct}%. That is a near-impossible bar; lower the Detection slider toward 50% and try again.`;
+    return `SAM 3 found no '${target}' at Detection ${pct}%. Try a clearer Mask target (face, jacket, car) or lower the Detection slider, then try again.`;
+  }
+  return "SAM 3 found nothing to track. Enter a Mask target or paint a first-frame mask, then try again.";
+}
+
+function maskRunErrorHint(message,state){
+  const msg=String(message||"");
+  if((msg.includes("all masks are empty")||msg.includes("nothing to crop"))&&state) return maskDetectionHint(state.maskTarget,state.maskThreshold);
+  return msg;
+}
+
 function fmtDur(ms){
   const s=Math.round(Math.max(0,ms)/1000);
   const m=Math.floor(s/60), sec=s%60;
@@ -1516,7 +1533,7 @@ const _armFinishWatch=()=>{
         const messages=Array.isArray(currentStatus.messages)?currentStatus.messages:[];
         const failure=messages.find(message=>Array.isArray(message)&&["execution_error","execution_interrupted"].includes(message[0]));
         const failed=currentStatus.status_str!=="success"||!!failure;
-        if(failed){const detail=failure&&failure[1]||{};_activeShowError?.(fmtErr(detail.exception_message||detail.error||"Execution failed."));}
+        if(failed){const detail=failure&&failure[1]||{};_activeShowError?.(maskRunErrorHint(fmtErr(detail.exception_message||detail.error||"Execution failed."),_activeNode._h3_S));}
         await _finishRun(id,failed);
       }
       if(!pending.length) _finishRun(null,false);
@@ -3803,6 +3820,7 @@ function persist(){
         if(!S.maskVideo){if(_h3ShowError)_h3ShowError("Add a source video before previewing tracking.");return;}
         const hasText=!!String(S.maskTarget||"").trim();
         if(!S.maskSeed&&!hasText){if(_h3ShowError)_h3ShowError("Paint a first-frame mask or enter a Mask target before previewing tracking.");return;}
+        if(hasText&&Number(S.maskThreshold)>=0.9){if(_h3ShowError)_h3ShowError(maskDetectionHint(S.maskTarget,S.maskThreshold));return;}
         if(!String(S.models.sam3||"").trim()){if(_h3ShowError)_h3ShowError("Pick the SAM 3.1 checkpoint under Settings before previewing tracking.");return;}
         const ownMaskBusy=(S.generating&&S.mode==="mask")||[..._queuedJobs.values()].some(q=>q.node===self&&q.mode==="mask");
         if(ownMaskBusy){
@@ -5951,6 +5969,7 @@ function persist(){
         } else if(mode==="mask"){
           if(!S.maskVideo) throw new Error("Mask mode needs a source video. Drop one into the Source video slot.");
           if(!S.maskSeed&&!String(S.maskTarget||"").trim()) throw new Error("Paint a first-frame mask or enter a Mask target for SAM 3 to track.");
+          if(String(S.maskTarget||"").trim()&&Number(S.maskThreshold)>=0.9) throw new Error(maskDetectionHint(S.maskTarget,S.maskThreshold));
           if(!S.refImages.length) throw new Error("Mask mode needs at least one replacement reference image.");
           await _checkMaskRuntime();
           await _checkInputFiles("video",[S.maskVideo],"source video");
@@ -6593,7 +6612,7 @@ function persist(){
     if(!_activeNode) return;
     if(d?.prompt_id&&_batchIds.length&&!_batchIds.includes(d.prompt_id)) return;
     if(_activeNode._h3_S&&_activeNode._h3_S.generating!==true) return;
-    const msg=fmtErr(d?.exception_message||d?.error||d||"Execution failed.");
+    const msg=maskRunErrorHint(fmtErr(d?.exception_message||d?.error||d||"Execution failed."),_activeNode._h3_S);
     _activeShowError?.(msg);
     _finishRun(d?.prompt_id||_activePromptId,true);
   });

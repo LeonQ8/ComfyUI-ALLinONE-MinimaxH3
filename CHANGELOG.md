@@ -10,6 +10,7 @@ Newest first.
  - On wide shots the Smart tool used to paint the whole scene in one click. It now picks just the character you click, and the red overlay marks only that region instead of the full frame.
  - The Smart tool cleans the small stray dots SAM 3 can leave on dark or patterned clothing, so a click gives one clean object mask.
  - Preview tracking explains itself when SAM 3 finds nothing to track: it names the Mask target and the Detection level and suggests lowering Detection or using a clearer target, instead of a raw crop error.
+ - A Mask run now refuses a Detection level of 90% or higher with an explanation, because SAM 3 almost never detects anything there, and shows the same guidance if tracking still comes back empty.
 
 ## 0.11.0 (2026-08-21)
 
