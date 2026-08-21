@@ -809,6 +809,115 @@ class TestMaskVideoPrepare(_NodesTestBase):
         self.assertEqual(source_audio["waveform"].shape[-1], 40425)
 
 
+class TestMaskPreviewWorkflow(_NodesTestBase):
+    TRACKING = {"16", "17", "18", "19", "20", "21", "22", "23", "24", "34"}
+
+    @classmethod
+    def setUpClass(cls):
+        cls.mask_template = json.loads(
+            (REPO_ROOT / "workflows" / "mask.json").read_text(encoding="utf-8-sig")
+        )
+
+    def _build(self, **overrides):
+        params = {
+            "file": "clip.mp4",
+            "duration": 5,
+            "ckpt_name": "sam3.1_multiplex_fp16.safetensors",
+            "text": "face",
+            "detection_threshold": 0.6,
+            "max_objects": 1,
+            "object_indices": "0",
+            "initial_mask": "",
+        }
+        params.update(overrides)
+        return self.nodes._mask_preview_workflow(self.mask_template, params)
+
+    def test_keeps_only_tracking_nodes_plus_preview(self):
+        wf = self._build()
+        ids = set(wf.keys())
+        self.assertEqual(ids, self.TRACKING | {"100"})
+        class_types = {n["class_type"] for n in wf.values()}
+        self.assertNotIn("MiniMaxH3ReferenceToVideo", class_types, "preview must not load H3")
+        self.assertNotIn("SamplerCustomAdvanced", class_types)
+        self.assertNotIn("MVEx_SubjectUncrop", class_types)
+
+    def test_wires_track_preview_to_track_data_and_images(self):
+        wf = self._build()
+        preview = wf["100"]
+        self.assertEqual(preview["class_type"], "SAM3_TrackPreview")
+        self.assertEqual(preview["inputs"]["track_data"], ["21", 0])
+        self.assertEqual(preview["inputs"]["images"], ["18", 0])
+        self.assertEqual(preview["inputs"]["fps"], 24.0)
+
+    def test_fills_the_same_fields_as_the_js_build(self):
+        wf = self._build(duration=3, text="person", detection_threshold=0.8)
+        self.assertEqual(wf["16"]["inputs"]["file"], "clip.mp4")
+        self.assertEqual(wf["34"]["inputs"]["duration"], 3)
+        self.assertEqual(wf["18"]["inputs"]["max_seconds"], 3)
+        self.assertEqual(wf["18"]["inputs"]["target_fps"], 24)
+        self.assertEqual(wf["19"]["inputs"]["ckpt_name"], "sam3.1_multiplex_fp16.safetensors")
+        self.assertEqual(wf["20"]["inputs"]["text"], "person")
+        self.assertEqual(wf["21"]["inputs"]["detection_threshold"], 0.8)
+        self.assertEqual(wf["21"]["inputs"]["max_objects"], 1)
+        self.assertEqual(wf["22"]["inputs"]["object_indices"], "0")
+        self.assertIn("conditioning", wf["21"]["inputs"])
+
+    def test_text_target_keeps_conditioning_and_ignores_paint(self):
+        wf = self._build(text="face", initial_mask="mask.png")
+        self.assertIn("conditioning", wf["21"]["inputs"])
+        self.assertNotIn("initial_mask", wf["21"]["inputs"])
+        self.assertNotIn("200", wf)
+        self.assertNotIn("201", wf)
+
+    def test_paint_seeds_the_tracker_when_no_text(self):
+        wf = self._build(text="", initial_mask="mask.png")
+        self.assertNotIn("conditioning", wf["21"]["inputs"])
+        self.assertEqual(wf["21"]["inputs"]["initial_mask"], ["201", 0])
+        self.assertEqual(wf["200"]["class_type"], "LoadImage")
+        self.assertEqual(wf["200"]["inputs"]["image"], "mask.png")
+        self.assertEqual(wf["201"]["class_type"], "ImageToMask")
+        self.assertEqual(wf["201"]["inputs"]["image"], ["200", 0])
+        self.assertEqual(wf["201"]["inputs"]["channel"], "red")
+
+    def test_no_paint_means_no_initial_mask_wiring(self):
+        wf = self._build(text="", initial_mask="")
+        self.assertNotIn("initial_mask", wf["21"]["inputs"])
+        self.assertNotIn("200", wf)
+        self.assertNotIn("201", wf)
+
+    def test_raises_when_tracking_nodes_are_missing(self):
+        template = dict(self.mask_template)
+        del template["21"]
+        with self.assertRaisesRegex(ValueError, "21"):
+            self.nodes._mask_preview_workflow(template, {"file": "clip.mp4"})
+
+    def test_extracts_the_temp_overlay_file(self):
+        entry = {
+            "status": {"completed": True},
+            "outputs": {
+                "100": {"images": [{"filename": "sam3_track_preview_abc123.mp4", "subfolder": "", "type": "temp"}], "animated": [True]},
+            },
+        }
+        item = self.nodes._extract_preview_item(entry)
+        self.assertEqual(item, {"filename": "sam3_track_preview_abc123.mp4", "subfolder": "", "type": "temp"})
+
+    def test_extract_ignores_unrelated_files(self):
+        entry = {
+            "status": {"completed": True},
+            "outputs": {
+                "15": {"images": [{"filename": "h3_mask_00001_.mp4", "subfolder": "one-node-minimax-h3", "type": "output"}]},
+            },
+        }
+        self.assertIsNone(self.nodes._extract_preview_item(entry))
+
+    def test_preview_queue_number_is_negative_and_front(self):
+        self.assertLess(self.nodes._mask_preview_queue_number(0), 0)
+        self.assertLess(self.nodes._mask_preview_queue_number(5), 0)
+        self.assertLess(self.nodes._mask_preview_queue_number(-3), 0)
+        self.assertEqual(self.nodes._mask_preview_queue_number(0), -1.0)
+        self.assertEqual(self.nodes._mask_preview_queue_number(5), -6.0)
+
+
 class TestAudioJoinSmooth(_NodesTestBase):
     def _node(self):
         return self.nodes.H3AudioJoinSmooth()

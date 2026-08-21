@@ -1043,33 +1043,48 @@ function openVideoMaskEditor({videoName,maskName,onSave}){
     const title=mk("div",{fontSize:"13px",fontWeight:"800",color:C.text});tx(title,"Paint first-frame mask");
     const help=mk("div",{fontSize:"10px",color:C.muted,lineHeight:"1.5"});tx(help,"Paint the whole region to replace with room to spare. For a face, cover the head, hair and neck; a tight outline around the features gets clipped by the paste. SAM 3 tracks it through the clip.");
     head.append(title,help);
-    const stage=mk("div",{position:"relative",alignSelf:"center",flexShrink:"0",background:"#000",border:`1px solid ${C.border}`,borderRadius:"8px",overflow:"hidden",touchAction:"none"});
+    const scrollBox=mk("div",{overflow:"auto",maxWidth:"min(920px,94vw)",maxHeight:"70vh",display:"flex",background:"#000",border:`1px solid ${C.border}`,borderRadius:"8px",padding:"4px",boxSizing:"border-box",touchAction:"pan-x pan-y"});
+    const stage=mk("div",{position:"relative",margin:"auto",flexShrink:"0",background:"#000",overflow:"hidden",touchAction:"none"});
     const video=mk("video",{position:"absolute",inset:"0",width:"100%",height:"100%",objectFit:"contain",display:"block"},{muted:true,preload:"auto",playsInline:true});
     const canvas=mk("canvas",{position:"absolute",inset:"0",width:"100%",height:"100%",cursor:"crosshair",touchAction:"none"});
     const maskCanvas=document.createElement("canvas");
     const ctx=canvas.getContext("2d");
     const maskCtx=maskCanvas.getContext("2d",{willReadFrequently:true});
     stage.append(video,canvas);
+    scrollBox.appendChild(stage);
     const tools=mk("div",{display:"flex",alignItems:"center",gap:"8px",flexWrap:"wrap"});
     const toolBtn=(label)=>{const b=mk("button",{height:"30px",padding:"0 12px",borderRadius:"7px",border:`1px solid ${C.border}`,background:C.bg2,color:C.text,fontSize:"10px",fontWeight:"700",cursor:"pointer",outline:"none"},{type:"button"});tx(b,label);return b;};
-    const drawBtn=toolBtn("Paint"),eraseBtn=toolBtn("Erase"),clearBtn=toolBtn("Clear");
+    const zoomOutBtn=toolBtn("−"),zoomInBtn=toolBtn("+"),zoomFitBtn=toolBtn("Fit");
+    const zoomLabel=mk("span",{fontSize:"9px",color:C.muted,minWidth:"38px",textAlign:"center"});tx(zoomLabel,"100%");
+    const drawBtn=toolBtn("Paint"),eraseBtn=toolBtn("Erase"),circleBtn=toolBtn("Circle"),squareBtn=toolBtn("Square"),clearBtn=toolBtn("Clear");
     const sizeLabel=mk("label",{display:"flex",alignItems:"center",gap:"6px",fontSize:"10px",color:C.muted});
     const sizeText=mk("span",{});tx(sizeText,"Brush 48 px");
     const sizeInput=mk("input",{width:"150px",accentColor:C.lime},{type:"range",min:"4",max:"512",step:"2",value:"48"});
     sizeLabel.append(sizeText,sizeInput);
     const maskStats=mk("div",{fontSize:"9px",color:C.muted,marginLeft:"auto"});tx(maskStats,"");
+    maskStats.title="What the numbers mean: painted pixels, their share of the whole frame, and the bounding box the region fits in. A small 1-5% face mask changes only that part of the shot and renders fast; a large mask touches more of the frame and takes longer.";
     const status=mk("div",{fontSize:"9px",color:C.muted,marginLeft:"auto"});tx(status,maskName?"Existing mask loaded":"No saved mask");
     const cancelBtn=toolBtn("Cancel"),saveBtn=toolBtn("Save mask");
     saveBtn.style.borderColor=C.lime;saveBtn.style.color=C.lime;
-    tools.append(drawBtn,eraseBtn,clearBtn,sizeLabel,maskStats,status,cancelBtn,saveBtn);
-    panel.append(head,stage,tools);overlay.appendChild(panel);document.body.appendChild(overlay);
+    tools.append(zoomOutBtn,zoomInBtn,zoomFitBtn,zoomLabel,drawBtn,eraseBtn,circleBtn,squareBtn,clearBtn,sizeLabel,maskStats,status,cancelBtn,saveBtn);
+    panel.append(head,scrollBox,tools);overlay.appendChild(panel);document.body.appendChild(overlay);
 
     let mode="draw",drawing=false,last=null,activePointer=null,ready=false,closed=false,saving=false;
+    let zoom=1;
+    const applyZoom=()=>{
+      zoom=Math.min(8,Math.max(1,zoom));
+      stage.style.zoom=String(zoom);
+      tx(zoomLabel,zoom===1?"100%":Math.round(zoom*100)+"%");
+    };
     const renderMode=()=>{
       drawBtn.style.borderColor=mode==="draw"?C.lime:C.border;
       drawBtn.style.color=mode==="draw"?C.lime:C.text;
       eraseBtn.style.borderColor=mode==="erase"?C.err:C.border;
       eraseBtn.style.color=mode==="erase"?C.err:C.text;
+      circleBtn.style.borderColor=mode==="circle"?C.lime:C.border;
+      circleBtn.style.color=mode==="circle"?C.lime:C.text;
+      squareBtn.style.borderColor=mode==="square"?C.lime:C.border;
+      squareBtn.style.color=mode==="square"?C.lime:C.text;
     };
     const renderMask=()=>{
       if(!ready) return;
@@ -1146,18 +1161,84 @@ function openVideoMaskEditor({videoName,maskName,onSave}){
       maskCtx.globalCompositeOperation=mode==="erase"?"destination-out":"source-over";
       maskCtx.fillStyle="#fff";maskCtx.beginPath();maskCtx.arc(p.x,p.y,radius,0,Math.PI*2);maskCtx.fill();maskCtx.restore();
     };
+    let shapeStart=null,shapeCurr=null,savedMask=null;
+    const paintShape=()=>{
+      if(!shapeStart||!shapeCurr) return;
+      maskCtx.save();
+      maskCtx.globalCompositeOperation=mode==="erase"?"destination-out":"source-over";
+      maskCtx.fillStyle="#fff";
+      if(mode==="circle"){
+        const r=Math.max(1,Math.hypot(shapeCurr.x-shapeStart.x,shapeCurr.y-shapeStart.y));
+        maskCtx.beginPath();maskCtx.arc(shapeStart.x,shapeStart.y,r,0,Math.PI*2);maskCtx.fill();
+      } else {
+        maskCtx.fillRect(Math.min(shapeStart.x,shapeCurr.x),Math.min(shapeStart.y,shapeCurr.y),Math.abs(shapeCurr.x-shapeStart.x),Math.abs(shapeCurr.y-shapeStart.y));
+      }
+      maskCtx.restore();
+    };
+    let panning=false,panPointer=null,panStartX=0,panStartY=0,panScrollLeft=0,panScrollTop=0;
+    const endPan=()=>{panning=false;panPointer=null;canvas.style.cursor="crosshair";};
     canvas.onpointerdown=(e)=>{
-      if(!ready||activePointer!==null) return;e.preventDefault();activePointer=e.pointerId;canvas.setPointerCapture(e.pointerId);drawing=true;last=point(e);if(last){paintDot(last);renderMask();}
+      if(e.button===1){
+        panning=true;panPointer=e.pointerId;canvas.setPointerCapture(e.pointerId);
+        panStartX=e.clientX;panStartY=e.clientY;
+        panScrollLeft=scrollBox.scrollLeft;panScrollTop=scrollBox.scrollTop;
+        canvas.style.cursor="grabbing";
+        e.preventDefault();
+        return;
+      }
+      if(!ready||activePointer!==null) return;e.preventDefault();activePointer=e.pointerId;canvas.setPointerCapture(e.pointerId);drawing=true;
+      const p=point(e);if(!p)return;
+      if(mode==="circle"||mode==="square"){
+        shapeStart=p;shapeCurr=p;
+        savedMask=maskCtx.getImageData(0,0,maskCanvas.width,maskCanvas.height);
+        paintShape();renderMask();
+      } else {
+        last=p;if(last){paintDot(last);renderMask();}
+      }
     };
     canvas.onpointermove=(e)=>{
-      if(!drawing||e.pointerId!==activePointer||!last) return;e.preventDefault();const p=point(e);if(!p)return;
+      if(panning&&e.pointerId===panPointer){
+        e.preventDefault();
+        scrollBox.scrollLeft=panScrollLeft-(e.clientX-panStartX);
+        scrollBox.scrollTop=panScrollTop-(e.clientY-panStartY);
+        return;
+      }
+      if(!drawing||e.pointerId!==activePointer) return;e.preventDefault();
+      const p=point(e);if(!p)return;
+      if(savedMask&&shapeStart&&(mode==="circle"||mode==="square")){
+        shapeCurr=p;
+        maskCtx.putImageData(savedMask,0,0);
+        paintShape();renderMask();
+        return;
+      }
+      if(!last) return;
       maskCtx.save();maskCtx.globalCompositeOperation=mode==="erase"?"destination-out":"source-over";
       maskCtx.strokeStyle="#fff";maskCtx.lineWidth=Number(sizeInput.value);maskCtx.lineCap="round";maskCtx.lineJoin="round";
       maskCtx.beginPath();maskCtx.moveTo(last.x,last.y);maskCtx.lineTo(p.x,p.y);maskCtx.stroke();maskCtx.restore();last=p;renderMask();
     };
-    const stop=(e)=>{if(e.pointerId!==activePointer)return;drawing=false;last=null;activePointer=null;};
+    const stop=(e)=>{
+      if(e.pointerId===panPointer){endPan();return;}
+      if(e.pointerId!==activePointer)return;drawing=false;last=null;shapeStart=null;shapeCurr=null;savedMask=null;activePointer=null;
+    };
     canvas.onpointerup=stop;canvas.onpointercancel=stop;
     drawBtn.onclick=()=>{mode="draw";renderMode();};eraseBtn.onclick=()=>{mode="erase";renderMode();};
+    circleBtn.onclick=()=>{mode="circle";renderMode();};squareBtn.onclick=()=>{mode="square";renderMode();};
+    zoomOutBtn.onclick=()=>{zoom=zoom/1.25;applyZoom();};
+    zoomInBtn.onclick=()=>{zoom=zoom*1.25;applyZoom();};
+    zoomFitBtn.onclick=()=>{zoom=1;applyZoom();};
+    scrollBox.addEventListener("wheel",(e)=>{
+      e.preventDefault();
+      const rect=scrollBox.getBoundingClientRect();
+      const px=e.clientX-rect.left,py=e.clientY-rect.top;
+      const old=zoom;
+      const next=Math.min(8,Math.max(1,old*Math.exp(-e.deltaY*0.0015)));
+      if(next===old) return;
+      zoom=next;
+      applyZoom();
+      const scale=zoom/old;
+      scrollBox.scrollLeft=(scrollBox.scrollLeft+px)*scale-px;
+      scrollBox.scrollTop=(scrollBox.scrollTop+py)*scale-py;
+    },{passive:false});
     clearBtn.onclick=()=>{if(!ready)return;maskCtx.clearRect(0,0,maskCanvas.width,maskCanvas.height);renderMask();tx(status,"Mask cleared");};
     sizeInput.oninput=()=>tx(sizeText,`Brush ${sizeInput.value} px`);
     cancelBtn.onclick=()=>{if(!saving)close(null);};
@@ -3275,9 +3356,11 @@ function persist(){
       const maskActions=mk("div",{display:"flex",flexDirection:"column",gap:"6px",minWidth:"170px",paddingTop:"2px"});
       const maskPaintBtn=mk("button",{}, {type:"button",className:"h3-actbtn"});
       tx(maskPaintBtn,"Paint first-frame mask");
+      const maskPreviewBtn=mk("button",{}, {type:"button",className:"h3-actbtn",title:"Run only the SAM 3 tracking on the current source video and show the overlay before you commit to a full generation. Best used while ComfyUI is idle; during a run the tracking overlay already appears live."});
+      tx(maskPreviewBtn,"Preview tracking");
       const maskClearBtn=mk("button",{height:"28px",borderRadius:"7px",border:`1px solid ${C.border}`,background:C.bg2,color:C.muted,fontSize:"9px",fontWeight:"700",cursor:"pointer",outline:"none"},{type:"button"});
       tx(maskClearBtn,"Remove painted mask");
-      maskActions.append(maskPaintBtn,maskClearBtn);maskTop.append(maskSrcCard,maskActions);
+      maskActions.append(maskPaintBtn,maskPreviewBtn,maskClearBtn);maskTop.append(maskSrcCard,maskActions);
       maskArea.appendChild(maskTop);
 
       const maskPreviewRow=mk("div",{display:"flex",alignItems:"center",gap:"10px",background:C.bg1,border:`1px solid ${C.border}`,borderRadius:"8px",padding:"8px",boxSizing:"border-box",minHeight:"92px",cursor:"pointer"});
@@ -3287,12 +3370,14 @@ function persist(){
       maskPreviewCol.append(maskPreviewBox,maskPaintState);
       const maskPreviewNote=mk("div",{flex:"1",minWidth:"0",fontSize:"9px",color:C.muted,lineHeight:"1.5"});
       maskPreviewRow.append(maskPreviewCol,maskPreviewNote);
-      maskPreviewRow.onclick=()=>maskPaintBtn.onclick();
+      maskPreviewRow.onclick=()=>{ if(_trackingPreviewUrl) _openTrackingLightbox(); else maskPaintBtn.onclick(); };
       maskArea.appendChild(maskPreviewRow);
 
       let _maskPrevToken=0;
+      let _trackingPreviewUrl=null;
       const _renderMaskPreview=async()=>{
         const token=++_maskPrevToken;
+        _trackingPreviewUrl=null;
         maskPreviewBox.innerHTML="";
         if(!S.maskVideo){
           tx(maskPreviewNote,"Add a source video first. Once it is loaded, click here to paint the region to replace.");
@@ -3366,6 +3451,123 @@ function persist(){
         const cap=mk("div",{position:"absolute",left:"0",right:"0",bottom:"0",background:"rgba(0,0,0,.55)",color:"#fff",fontSize:"8px",padding:"2px 6px",textAlign:"center",pointerEvents:"none"});tx(cap,"masked region");
         maskPreviewBox.appendChild(cap);
       };
+
+      const _openTrackingLightbox=()=>{
+        if(!_trackingPreviewUrl) return;
+        const overlay=mk("div",{position:"fixed",inset:"0",zIndex:"1000001",background:"rgba(0,0,0,.92)",display:"flex",alignItems:"center",justifyContent:"center",flexDirection:"column",gap:"12px",padding:"24px",boxSizing:"border-box",cursor:"zoom-out"});
+        const player=mk("video",{maxWidth:"94vw",maxHeight:"86vh",background:"#000",border:`1px solid ${C.borderH}`,borderRadius:"8px",objectFit:"contain",boxShadow:"0 24px 80px rgba(0,0,0,.9)"},{muted:true,autoplay:true,loop:true,playsInline:true,controls:true,preload:"auto"});
+        player.src=_trackingPreviewUrl;
+        const closeBtn=mk("button",{height:"32px",padding:"0 16px",borderRadius:"7px",border:`1px solid ${C.border}`,background:C.bg2,color:C.text,fontSize:"11px",fontWeight:"700",cursor:"pointer",outline:"none"},{type:"button"});
+        tx(closeBtn,"Close");
+        const cap=mk("div",{fontSize:"10px",color:C.muted});tx(cap,"SAM3 tracking preview - the numbered masks show what gets tracked");
+        overlay.append(player,closeBtn,cap);
+        const onKey=(e)=>{if(e.key==="Escape")close();};
+        const close=()=>{player.pause();player.removeAttribute("src");overlay.remove();document.removeEventListener("keydown",onKey);};
+        document.addEventListener("keydown",onKey);
+        overlay.onclick=(e)=>{if(e.target===overlay)close();};
+        closeBtn.onclick=close;
+        document.body.appendChild(overlay);
+      };
+      const _showTrackingPreview=(item,live)=>{
+        _maskPrevToken++;
+        maskPreviewBox.innerHTML="";
+        _trackingPreviewUrl=api.apiURL(`/view?filename=${encodeURIComponent(item.filename)}&type=${encodeURIComponent(item.type||"temp")}&subfolder=${encodeURIComponent(item.subfolder||"")}&t=${Date.now()}`);
+        const v=mk("video",{width:"100%",height:"100%",objectFit:"contain",display:"block",background:"#000"},{muted:true,autoplay:true,loop:true,playsInline:true,preload:"auto"});
+        v.src=_trackingPreviewUrl;
+        const fail=()=>{
+          if(v.parentNode!==maskPreviewBox) return;
+          maskPreviewBox.innerHTML="";
+          const ph=mk("div",{fontSize:"9px",color:C.err,padding:"4px",textAlign:"center",lineHeight:"1.4"});tx(ph,"Could not load the tracking preview");
+          maskPreviewBox.appendChild(ph);
+          tx(maskPreviewNote,"The preview file could not be played. Try running Preview tracking again; if it persists, check the ComfyUI console.");
+        };
+        v.onerror=fail;
+        maskPreviewBox.appendChild(v);
+        const cap=mk("div",{position:"absolute",left:"0",right:"0",bottom:"0",background:"rgba(0,0,0,.55)",color:"#fff",fontSize:"8px",padding:"2px 6px",textAlign:"center",pointerEvents:"none"});
+        tx(cap,"SAM3 tracking preview");
+        maskPreviewBox.appendChild(cap);
+        tx(maskPreviewNote,live
+          ? "SAM 3 is tracking this while the video generates. Click the preview to enlarge. If it caught the wrong thing, hit Stop to avoid wasting the run, then fix the Mask target or Detection."
+          : "This is what SAM 3 tracks. Numbered colored masks mean the object was detected; click the preview to enlarge. If the wrong thing is tracked, change the Mask target or Detection and run Preview tracking again.");
+      };
+      self._h3_maskTrackingOverlay=(item)=>_showTrackingPreview(item,true);
+      let _maskPreviewBusy=false;
+      const _previewTracking=async()=>{
+        if(_maskPreviewBusy) return;
+        if(!S.maskVideo){if(_h3ShowError)_h3ShowError("Add a source video before previewing tracking.");return;}
+        const hasText=!!String(S.maskTarget||"").trim();
+        if(!S.maskSeed&&!hasText){if(_h3ShowError)_h3ShowError("Paint a first-frame mask or enter a Mask target before previewing tracking.");return;}
+        if(!String(S.models.sam3||"").trim()){if(_h3ShowError)_h3ShowError("Pick the SAM 3.1 checkpoint under Settings before previewing tracking.");return;}
+        const ownMaskBusy=(S.generating&&S.mode==="mask")||[..._queuedJobs.values()].some(q=>q.node===self&&q.mode==="mask");
+        if(ownMaskBusy){
+          _maskPrevToken++;
+          _trackingPreviewUrl=null;
+          maskPreviewBox.innerHTML="";
+          const ph=mk("div",{fontSize:"9px",color:C.lime,padding:"4px",textAlign:"center",lineHeight:"1.5"});
+          tx(ph,"Live tracking\nis already showing");
+          maskPreviewBox.appendChild(ph);
+          tx(maskPreviewNote,"This mask run already shows the SAM 3 tracking overlay live as it goes, so a separate preview is not needed - watch the preview box. If you changed the Mask target or Detection after the run started, click Preview tracking again once it finishes to check the new settings.");
+          return;
+        }
+        const tracking=maskTrackingPlan(S.maskSeed,S.maskTarget);
+        _maskPreviewBusy=true;
+        maskPreviewBtn.disabled=true;
+        _maskPrevToken++;
+        _trackingPreviewUrl=null;
+        maskPreviewBox.innerHTML="";
+        const spin=mk("div",{fontSize:"9px",color:C.muted,padding:"4px",textAlign:"center",lineHeight:"1.5"});
+        const spinMain=mk("div",{});tx(spinMain,"Tracking...");
+        const spinSub=mk("div",{fontSize:"8px",color:C.muted,marginTop:"2px"});tx(spinSub,"SAM 3 only, no H3 generation");
+        spin.append(spinMain,spinSub);
+        maskPreviewBox.appendChild(spin);
+        tx(maskPreviewNote,"Preview tracking is running. On the first run the SAM 3 checkpoint has to load, which can take about a minute.");
+        const noteToken=_maskPrevToken;
+        fetch("/queue").then(r=>r.json()).then(q=>{
+          if(_maskPrevToken!==noteToken) return;
+          const running=(q&&Array.isArray(q.queue_running)&&q.queue_running.length)||0;
+          tx(maskPreviewNote, running>0
+            ? "ComfyUI is busy with another job, so the preview runs right after it finishes. The preview is cheap and jumps ahead of anything else waiting in the queue."
+            : "Preview tracking is running and jumps ahead of queued jobs, so only a running generation can delay it. On the first run the SAM 3 checkpoint has to load, which can take about a minute.");
+        }).catch(()=>{});
+        const controller=new AbortController();
+        const waitTimer=setTimeout(()=>controller.abort(),300000);
+        let clock=null;
+        try{
+          const started=Date.now();
+          clock=setInterval(()=>{tx(spinSub,`SAM 3 only, no H3 generation - ${Math.round((Date.now()-started)/1000)}s`);},1000);
+          const r=await fetch("/h3one/mask_preview",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({
+            file:S.maskVideo,
+            duration:Math.min(15,Math.max(.2,Number(S.duration)||5)),
+            ckpt_name:S.models.sam3,
+            text:S.maskTarget||"",
+            detection_threshold:Math.max(0,Math.min(1,Number(S.maskThreshold)||0)),
+            max_objects:tracking.maxObjects,
+            object_indices:tracking.objectIndices,
+            initial_mask:S.maskSeed||"",
+          }),signal:controller.signal});
+          clearInterval(clock);
+          let d=null;
+          try{d=await r.json();}catch(e){d=null;}
+          if(!r.ok||!d||!d.ok) throw new Error((d&&d.error)||("preview failed (HTTP "+r.status+")"));
+          if(d.filename) _showTrackingPreview(d,false);
+          else throw new Error("SAM 3 finished but wrote no preview file.");
+        }catch(e){
+          if(clock) clearInterval(clock);
+          const timedOut=e&&(e.name==="AbortError"||e.name==="TimeoutError");
+          maskPreviewBox.innerHTML="";
+          const ph=mk("div",{fontSize:"9px",color:C.err,padding:"4px",textAlign:"center",lineHeight:"1.4"});
+          tx(ph,timedOut?"Timed out waiting for the tracking preview. If a generation is running, it may have queued behind it; try again when the queue is idle.":"Tracking preview failed");
+          maskPreviewBox.appendChild(ph);
+          if(_h3ShowError)_h3ShowError("Tracking preview failed: "+fmtErr(e));
+          tx(maskPreviewNote,"Tracking preview failed. Adjust the Mask target or Detection and try again, or check the ComfyUI console.");
+        }finally{
+          if(clock) clearInterval(clock);
+          clearInterval(waitTimer);
+          _maskPreviewBusy=false;
+          maskPreviewBtn.disabled=false;
+        }
+      };
+      maskPreviewBtn.onclick=()=>_previewTracking();
 
       const maskTargetWrap=mk("div",{display:"flex",flexDirection:"column",gap:"3px"});
       const maskTargetCap=mk("div",{display:"flex",alignItems:"center",gap:"4px"});
@@ -5326,6 +5528,7 @@ function persist(){
           const maskAudio=S.maskRegenerateAudio?["13",0]:["18",2];
           if(wf["14"]){wf["14"].inputs.fps=["18",3];wf["14"].inputs.audio=maskAudio;}
           else if(wf["15"]&&wf["15"].class_type==="VHS_VideoCombine"){wf["15"].inputs.frame_rate=["18",3];wf["15"].inputs.audio=maskAudio;}
+          wf["500"]={class_type:"SAM3_TrackPreview",inputs:{track_data:["21",0],images:["18",0],opacity:0.5,fps:24},_meta:{title:"Tracking Overlay"}};
         }
         return wf;
       };
@@ -5847,15 +6050,24 @@ function persist(){
   api.addEventListener("executed",(evt)=>{
     const d=evt.detail;
     const pid=d?.prompt_id;
+    const out=d?.output||null;
+    const overlay=d&&d.node==="500"&&out?(out.videos||out.images||out.gifs||null):null;
+    if(Array.isArray(overlay)&&overlay.length){
+      const it=overlay[overlay.length-1];
+      const item={filename:it.filename,subfolder:it.subfolder||"",type:it.type||"temp",kind:"video"};
+      const qj=pid?_queuedJobs.get(pid):null;
+      if(qj&&qj.node&&qj.node._h3_maskTrackingOverlay) qj.node._h3_maskTrackingOverlay(item);
+      else if(_activeNode&&_batchIds.includes(pid)&&_activeNode._h3_maskTrackingOverlay) _activeNode._h3_maskTrackingOverlay(item);
+      return;
+    }
     const qentry=pid?_queuedJobs.get(pid):null;
     if(qentry){
-      const item=_mediaItemFromOutput(d?.output);
+      const item=_mediaItemFromOutput(out);
       if(item&&!qentry.shown&&qentry.node&&qentry.node._h3_showQueued){qentry.shown=true;qentry.node._h3_showQueued(item);}
       return;
     }
     if(!_activeNode) return;
     if(!d||!_batchIds.includes(pid)) return;
-    const out=d.output;
     if(!out) return;
     const vids=out.videos||out.gifs||null;
     if(vids&&Array.isArray(vids)&&vids.length&&_activeShowOutput){

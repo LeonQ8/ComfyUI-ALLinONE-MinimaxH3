@@ -9,6 +9,7 @@ import hashlib
 import threading
 import tempfile
 import zipfile
+from copy import deepcopy
 from pathlib import Path
 
 import folder_paths
@@ -949,6 +950,159 @@ async def set_output(request):
         return web.json_response({"ok": True})
     except Exception as e:
         return web.json_response({"ok": False, "error": str(e)}, status=500)
+
+
+# ---------------------------------------------------------------------------
+# SAM3 tracking preview (mask mode)
+# ---------------------------------------------------------------------------
+# Slices workflows/mask.json down to the tracking chain (the nodes that decide
+# what SAM3 sees and tracks) plus the core SAM3_TrackPreview overlay, then
+# fills the exact same fields the JS build fills for a real run. The result is
+# queued as a standalone job that never loads H3 and never touches the inpaint
+# or paste chain. Kept as pure helpers so the backend tests can assert the
+# graph without a ComfyUI install.
+_MASK_PREVIEW_TRACKING_NODES = ("16", "17", "18", "19", "20", "21", "22", "23", "24", "34")
+
+
+def _mask_preview_workflow(template, p):
+    """Build the tracking-only preview graph from the mask template."""
+    wf = {}
+    missing = []
+    for node_id in _MASK_PREVIEW_TRACKING_NODES:
+        if node_id not in template:
+            missing.append(node_id)
+            continue
+        wf[node_id] = deepcopy(template[node_id])
+    if missing:
+        raise ValueError("mask template missing tracking nodes: " + ", ".join(sorted(missing)))
+    try:
+        seconds = max(0.2, min(15.0, float(p.get("duration", 5.0) or 5.0)))
+    except (TypeError, ValueError):
+        seconds = 5.0
+    text = str(p.get("text", "") or "").strip()
+    initial = str(p.get("initial_mask", "") or "").strip()
+    seed_paint = bool(initial) and not bool(text)
+    wf["16"]["inputs"]["file"] = str(p.get("file", "") or "")
+    wf["34"]["inputs"]["duration"] = seconds
+    wf["18"]["inputs"]["max_seconds"] = seconds
+    wf["18"]["inputs"]["target_fps"] = 24
+    wf["19"]["inputs"]["ckpt_name"] = str(p.get("ckpt_name", "") or "")
+    wf["20"]["inputs"]["text"] = text
+    try:
+        threshold = max(0.0, min(1.0, float(p.get("detection_threshold", 0.5) or 0.5)))
+    except (TypeError, ValueError):
+        threshold = 0.5
+    wf["21"]["inputs"]["detection_threshold"] = threshold
+    try:
+        max_objects = max(0, int(p.get("max_objects", 1) or 1))
+    except (TypeError, ValueError):
+        max_objects = 1
+    wf["21"]["inputs"]["max_objects"] = max_objects
+    wf["22"]["inputs"]["object_indices"] = str(p.get("object_indices", "0") or "0")
+    if not text:
+        wf["21"]["inputs"].pop("conditioning", None)
+    if seed_paint:
+        wf["200"] = {"class_type": "LoadImage", "inputs": {"image": initial}, "_meta": {"title": "Painted First-Frame Mask"}}
+        wf["201"] = {"class_type": "ImageToMask", "inputs": {"image": ["200", 0], "channel": "red"}, "_meta": {"title": "Painted Mask To SAM"}}
+        wf["21"]["inputs"]["initial_mask"] = ["201", 0]
+    wf["100"] = {
+        "class_type": "SAM3_TrackPreview",
+        "inputs": {"track_data": ["21", 0], "images": ["18", 0], "opacity": 0.5, "fps": 24.0},
+        "_meta": {"title": "Tracking Overlay"},
+    }
+    return wf
+
+
+def _load_mask_template():
+    path = os.path.join(NODE_DIR, "workflows", "mask.json")
+    with open(path, "r", encoding="utf-8-sig") as f:
+        return json.load(f)
+
+
+def _extract_preview_item(entry):
+    """Pull the temp overlay file the SAM3_TrackPreview node wrote."""
+    outputs = entry.get("outputs") or {}
+    for key in ("images", "videos", "gifs"):
+        items = outputs.get("100", {}).get(key)
+        if not isinstance(items, list):
+            continue
+        for item in items:
+            if isinstance(item, dict) and item.get("filename"):
+                name = str(item["filename"])
+                if name.startswith("sam3_track_preview_") and name.lower().endswith(".mp4"):
+                    return {
+                        "filename": name,
+                        "subfolder": str(item.get("subfolder", "") or ""),
+                        "type": str(item.get("type", "temp") or "temp"),
+                    }
+    return None
+
+
+_MASK_PREVIEW_TIMEOUT = 600.0
+
+
+def _mask_preview_queue_number(current):
+    """Negative queue number so the preview runs ahead of pending jobs."""
+    return -abs(float(current)) - 1.0
+
+
+async def _run_mask_preview(wf, client_id):
+    """Queue the preview graph at the front and wait for its temp overlay video."""
+    import asyncio
+    import execution
+    server = PromptServer.instance
+    prompt_id = str(uuid.uuid4())
+    extra_data = {"client_id": str(client_id or ""), "enable_previews": False}
+    valid = await execution.validate_prompt(prompt_id, wf, None)
+    if not valid[0]:
+        detail = valid[1] if isinstance(valid[1], str) else json.dumps(valid[1] or "validation failed")
+        return web.json_response({"ok": False, "error": "invalid preview workflow: " + detail}, status=400)
+    outputs_to_execute = valid[2]
+    number = float(getattr(server, "number", 0.0))
+    setattr(server, "number", number + 1)
+    server.prompt_queue.put((_mask_preview_queue_number(number), prompt_id, wf, extra_data, outputs_to_execute, {}))
+    deadline = time.time() + _MASK_PREVIEW_TIMEOUT
+    while True:
+        entry = server.prompt_queue.get_history(prompt_id=prompt_id).get(prompt_id)
+        if entry is not None:
+            status = entry.get("status") or {}
+            if status.get("completed"):
+                item = _extract_preview_item(entry)
+                if item:
+                    return web.json_response({"ok": True, "prompt_id": prompt_id, "kind": "video", **item})
+                return web.json_response(
+                    {"ok": False, "error": "SAM 3 finished but wrote no preview file", "prompt_id": prompt_id},
+                    status=500,
+                )
+            messages = status.get("messages") or []
+            for message in messages:
+                if message and message[0] == "execution_error" and isinstance(message[1], dict):
+                    detail = message[1].get("exception_message") or message[1].get("error") or "execution failed"
+                    return web.json_response({"ok": False, "error": str(detail), "prompt_id": prompt_id}, status=500)
+        if time.time() >= deadline:
+            return web.json_response({"ok": False, "error": "tracking preview timed out", "prompt_id": prompt_id}, status=504)
+        await asyncio.sleep(0.5)
+
+
+@PromptServer.instance.routes.post("/h3one/mask_preview")
+async def mask_preview(request):
+    try:
+        data = await request.json()
+    except Exception:
+        return web.json_response({"ok": False, "error": "invalid JSON"}, status=400)
+    if not isinstance(data, dict):
+        return web.json_response({"ok": False, "error": "invalid payload"}, status=400)
+    if not str(data.get("file", "") or "").strip():
+        return web.json_response({"ok": False, "error": "a source video file is required"}, status=400)
+    try:
+        template = _load_mask_template()
+    except Exception as e:
+        return web.json_response({"ok": False, "error": "cannot load mask template: %s" % e}, status=500)
+    try:
+        wf = _mask_preview_workflow(template, data)
+    except Exception as e:
+        return web.json_response({"ok": False, "error": str(e)}, status=400)
+    return await _run_mask_preview(wf, data.get("client_id", ""))
 
 
 def _empty_image_tensor():

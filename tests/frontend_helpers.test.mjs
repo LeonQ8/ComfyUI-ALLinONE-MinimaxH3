@@ -707,6 +707,16 @@ test("bundle wires the Mask mode, brush editor, and runtime preflight", () => {
   assert.ok(bundle.includes("Paint first-frame mask"), "the Mask card must expose the editor action");
   assert.ok(bundle.includes("updateMaskStats"), "the editor must show the painted region size live");
   assert.ok(bundle.includes("Mask: empty"), "the size readout must cover the empty state");
+  assert.ok(bundle.includes("zoomInBtn"), "the editor must offer zoom controls");
+  assert.ok(bundle.includes("stage.style.zoom"), "the editor must zoom the painting stage");
+  assert.ok(bundle.includes("scrollBox"), "the editor must wrap the stage in a scrollable viewport for zoomed panning");
+  assert.ok(bundle.includes("Math.exp(-e.deltaY"), "the mouse wheel must zoom the stage");
+  assert.ok(bundle.includes("e.button===1"), "the middle mouse button must not paint");
+  assert.ok(bundle.includes("scrollBox.scrollLeft=panScrollLeft"), "the middle mouse button must drag-pan the zoomed stage");
+  assert.ok(bundle.includes("panning"), "the editor must track the pan state");
+  assert.ok(bundle.includes("Circle") && bundle.includes("Square"), "the editor must offer filled circle and square shape tools");
+  assert.ok(bundle.includes("paintShape"), "shape tools must stamp filled circle/rectangle regions");
+  assert.ok(bundle.includes("What the numbers mean"), "the mask stats readout must explain what the numbers mean");
   assert.ok(bundle.includes("_checkMaskRuntime"), "Mask must preflight its external node pack");
   assert.ok(bundle.includes("h3SamCheckpoints(_M.checkpoints)"), "Mask must reject non-SAM checkpoints");
   assert.ok(bundle.includes("MVEx_MaskToLatentSpace"), "Mask must require H3-aligned latent masking");
@@ -748,6 +758,43 @@ test("bundle makes uploads stale-safe and part of the workflow build barrier", (
   assert.ok(bundle.includes("_uploadMedia"), "video and audio uploads must use the shared pending barrier");
   assert.ok(bundle.includes("_fileMatches"), "drop and paste must enforce supported extensions");
   assert.ok(bundle.includes("e.pointerId!==activePointer"), "the mask brush must isolate one active pointer");
+});
+
+test("bundle wires the SAM3 tracking preview button and route call", () => {
+  const bundle = readFileSync(bundlePath, "utf8");
+  assert.ok(bundle.includes("Preview tracking"), "the Mask card must expose the tracking preview action");
+  assert.ok(bundle.includes("maskPreviewBtn"), "the bundle must create the preview button");
+  assert.ok(bundle.includes("_previewTracking"), "the bundle must define the preview handler");
+  assert.ok(bundle.includes("_showTrackingPreview"), "the bundle must render the returned overlay video");
+  assert.ok(bundle.includes('fetch("/h3one/mask_preview"'), "the preview must POST to the tracking-only route");
+  assert.ok(bundle.includes("maskTrackingPlan(S.maskSeed,S.maskTarget)"), "the preview must reuse the same tracking plan as the real run");
+  assert.ok(bundle.includes("initial_mask:S.maskSeed||\"\""), "the painted mask must be sent to the preview route");
+  assert.ok(bundle.includes("_maskPrevToken++"), "a tracking preview must invalidate any stale painted-mask render");
+  assert.ok(bundle.includes("SAM3 tracking preview"), "the preview must label the overlay video");
+  assert.ok(bundle.includes("no H3 generation"), "the preview note must make clear that no H3 run happens");
+  assert.ok(bundle.includes("d.filename"), "the preview must only render when a preview file came back");
+  assert.ok(bundle.includes("_openTrackingLightbox"), "the preview must enlarge into a lightbox instead of opening the paint editor");
+  assert.ok(bundle.includes("if(_trackingPreviewUrl) _openTrackingLightbox(); else maskPaintBtn.onclick()"), "the mask preview row must only open paint when no tracking preview is showing");
+  assert.ok(bundle.includes("_trackingPreviewUrl=null"), "a painted-mask render must clear the tracking preview state");
+  assert.ok(bundle.includes("controller.abort()"), "the preview fetch must time out instead of hanging forever");
+  assert.ok(bundle.includes("Timed out waiting for the tracking preview"), "a timeout must surface a clear in-box message");
+  assert.ok(bundle.includes("Could not load the tracking preview"), "a broken preview file must surface an in-box error");
+  assert.ok(bundle.includes("jumps ahead of queued jobs"), "the preview note must explain that the preview runs ahead of the queue");
+  assert.ok(bundle.includes('fetch("/queue")'), "the preview must check the queue so it can explain a waiting generation");
+  assert.ok(bundle.includes('title:"Run only the SAM 3 tracking'), "the preview button must carry a usage tooltip");
+  assert.ok(bundle.includes("Live tracking"), "the button must say the live overlay is already showing when this node is running a mask job");
+  assert.ok(bundle.includes("already shows the SAM 3 tracking overlay live"), "a running mask job must not queue a redundant standalone preview");
+  assert.ok(bundle.includes("ComfyUI is busy with another job"), "an external busy queue must be worded as another job, not this generation");
+});
+
+test("bundle rides the tracking overlay along with the real mask generation", () => {
+  const bundle = readFileSync(bundlePath, "utf8");
+  assert.ok(bundle.includes('wf["500"]={class_type:"SAM3_TrackPreview"'), "the real mask workflow must carry the SAM3 overlay node");
+  assert.ok(bundle.includes('track_data:["21",0]'), "the in-run overlay must reuse the run's own track_data");
+  assert.ok(bundle.includes('d.node==="500"'), "the executed handler must recognize the overlay node");
+  assert.ok(bundle.includes("_h3_maskTrackingOverlay"), "the node must expose an overlay sink for the executed event");
+  assert.ok(bundle.includes("hit Stop to avoid wasting the run"), "the live overlay note must invite Stop when tracking is wrong");
+  assert.ok(bundle.includes("_showTrackingPreview(d,false)"), "the standalone button must render the non-live note");
 });
 
 test("mapMaskPoint: maps display coordinates to source pixels", () => {
