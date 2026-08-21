@@ -716,6 +716,10 @@ test("bundle wires the Mask mode, brush editor, and runtime preflight", () => {
   assert.ok(bundle.includes("panning"), "the editor must track the pan state");
   assert.ok(bundle.includes("Circle") && bundle.includes("Square"), "the editor must offer filled circle and square shape tools");
   assert.ok(bundle.includes("paintShape"), "shape tools must stamp filled circle/rectangle regions");
+  assert.ok(bundle.includes("undoStack"), "the editor must keep an undo history");
+  assert.ok(bundle.includes("redoStack"), "the editor must keep a redo history");
+  assert.ok(bundle.includes("undoBtn.onclick=undo") && bundle.includes("redoBtn.onclick=redo"), "the editor must wire Undo and Redo buttons");
+  assert.ok(bundle.includes("commitStroke"), "a finished stroke must commit to the undo history");
   assert.ok(bundle.includes("What the numbers mean"), "the mask stats readout must explain what the numbers mean");
   assert.ok(bundle.includes("_checkMaskRuntime"), "Mask must preflight its external node pack");
   assert.ok(bundle.includes("h3SamCheckpoints(_M.checkpoints)"), "Mask must reject non-SAM checkpoints");
@@ -785,6 +789,8 @@ test("bundle wires the SAM3 tracking preview button and route call", () => {
   assert.ok(bundle.includes("Live tracking"), "the button must say the live overlay is already showing when this node is running a mask job");
   assert.ok(bundle.includes("already shows the SAM 3 tracking overlay live"), "a running mask job must not queue a redundant standalone preview");
   assert.ok(bundle.includes("ComfyUI is busy with another job"), "an external busy queue must be worded as another job, not this generation");
+  assert.ok(bundle.includes("Showing the last SAM 3 tracking preview"), "clicking preview again must re-show the last preview instead of dead-ending");
+  assert.ok(bundle.includes("_trackingPreviewItem"), "the node must remember the last tracking preview to re-show it");
 });
 
 test("bundle rides the tracking overlay along with the real mask generation", () => {

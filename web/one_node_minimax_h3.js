@@ -1056,7 +1056,7 @@ function openVideoMaskEditor({videoName,maskName,onSave}){
     const toolBtn=(label)=>{const b=mk("button",{height:"30px",padding:"0 12px",borderRadius:"7px",border:`1px solid ${C.border}`,background:C.bg2,color:C.text,fontSize:"10px",fontWeight:"700",cursor:"pointer",outline:"none"},{type:"button"});tx(b,label);return b;};
     const zoomOutBtn=toolBtn("−"),zoomInBtn=toolBtn("+"),zoomFitBtn=toolBtn("Fit");
     const zoomLabel=mk("span",{fontSize:"9px",color:C.muted,minWidth:"38px",textAlign:"center"});tx(zoomLabel,"100%");
-    const drawBtn=toolBtn("Paint"),eraseBtn=toolBtn("Erase"),circleBtn=toolBtn("Circle"),squareBtn=toolBtn("Square"),clearBtn=toolBtn("Clear");
+    const drawBtn=toolBtn("Paint"),eraseBtn=toolBtn("Erase"),circleBtn=toolBtn("Circle"),squareBtn=toolBtn("Square"),undoBtn=toolBtn("Undo"),redoBtn=toolBtn("Redo"),clearBtn=toolBtn("Clear");
     const sizeLabel=mk("label",{display:"flex",alignItems:"center",gap:"6px",fontSize:"10px",color:C.muted});
     const sizeText=mk("span",{});tx(sizeText,"Brush 48 px");
     const sizeInput=mk("input",{width:"150px",accentColor:C.lime},{type:"range",min:"4",max:"512",step:"2",value:"48"});
@@ -1066,11 +1066,17 @@ function openVideoMaskEditor({videoName,maskName,onSave}){
     const status=mk("div",{fontSize:"9px",color:C.muted,marginLeft:"auto"});tx(status,maskName?"Existing mask loaded":"No saved mask");
     const cancelBtn=toolBtn("Cancel"),saveBtn=toolBtn("Save mask");
     saveBtn.style.borderColor=C.lime;saveBtn.style.color=C.lime;
-    tools.append(zoomOutBtn,zoomInBtn,zoomFitBtn,zoomLabel,drawBtn,eraseBtn,circleBtn,squareBtn,clearBtn,sizeLabel,maskStats,status,cancelBtn,saveBtn);
+    tools.append(zoomOutBtn,zoomInBtn,zoomFitBtn,zoomLabel,drawBtn,eraseBtn,circleBtn,squareBtn,undoBtn,redoBtn,clearBtn,sizeLabel,maskStats,status,cancelBtn,saveBtn);
     panel.append(head,scrollBox,tools);overlay.appendChild(panel);document.body.appendChild(overlay);
 
     let mode="draw",drawing=false,last=null,activePointer=null,ready=false,closed=false,saving=false;
     let zoom=1;
+    let undoStack=[],redoStack=[],beforeState=null;
+    const snap=()=>maskCtx.getImageData(0,0,maskCanvas.width,maskCanvas.height);
+    const updateUndo=()=>{undoBtn.disabled=!undoStack.length;redoBtn.disabled=!redoStack.length;};
+    const pushUndo=()=>{undoStack.push(snap());if(undoStack.length>20)undoStack.shift();redoStack.length=0;updateUndo();};
+    const undo=()=>{if(!undoStack.length)return;redoStack.push(snap());maskCtx.putImageData(undoStack.pop(),0,0);renderMask();updateUndo();};
+    const redo=()=>{if(!redoStack.length)return;undoStack.push(snap());maskCtx.putImageData(redoStack.pop(),0,0);renderMask();updateUndo();};
     const applyZoom=()=>{
       zoom=Math.min(8,Math.max(1,zoom));
       stage.style.zoom=String(zoom);
@@ -1122,6 +1128,7 @@ function openVideoMaskEditor({videoName,maskName,onSave}){
     };
     const loadMask=()=>{
       ready=false;
+      undoStack.length=0;redoStack.length=0;updateUndo();
       if(!maskName){ready=true;renderMask();return;}
       const img=new Image();
       img.onload=()=>{
@@ -1186,7 +1193,7 @@ function openVideoMaskEditor({videoName,maskName,onSave}){
         e.preventDefault();
         return;
       }
-      if(!ready||activePointer!==null) return;e.preventDefault();activePointer=e.pointerId;canvas.setPointerCapture(e.pointerId);drawing=true;
+      if(!ready||activePointer!==null) return;e.preventDefault();activePointer=e.pointerId;canvas.setPointerCapture(e.pointerId);drawing=true;beforeState=snap();
       const p=point(e);if(!p)return;
       if(mode==="circle"||mode==="square"){
         shapeStart=p;shapeCurr=p;
@@ -1216,11 +1223,16 @@ function openVideoMaskEditor({videoName,maskName,onSave}){
       maskCtx.strokeStyle="#fff";maskCtx.lineWidth=Number(sizeInput.value);maskCtx.lineCap="round";maskCtx.lineJoin="round";
       maskCtx.beginPath();maskCtx.moveTo(last.x,last.y);maskCtx.lineTo(p.x,p.y);maskCtx.stroke();maskCtx.restore();last=p;renderMask();
     };
-    const stop=(e)=>{
+    const commitStroke=(e)=>{
       if(e.pointerId===panPointer){endPan();return;}
-      if(e.pointerId!==activePointer)return;drawing=false;last=null;shapeStart=null;shapeCurr=null;savedMask=null;activePointer=null;
+      if(e.pointerId!==activePointer)return;
+      if(beforeState){undoStack.push(beforeState);if(undoStack.length>20)undoStack.shift();redoStack.length=0;}
+      beforeState=null;
+      drawing=false;last=null;shapeStart=null;shapeCurr=null;savedMask=null;activePointer=null;
+      updateUndo();
     };
-    canvas.onpointerup=stop;canvas.onpointercancel=stop;
+    const cancelStroke=(e)=>{if(e.pointerId===panPointer){endPan();return;}if(e.pointerId!==activePointer)return;beforeState=null;drawing=false;last=null;shapeStart=null;shapeCurr=null;savedMask=null;activePointer=null;};
+    canvas.onpointerup=commitStroke;canvas.onpointercancel=cancelStroke;
     drawBtn.onclick=()=>{mode="draw";renderMode();};eraseBtn.onclick=()=>{mode="erase";renderMode();};
     circleBtn.onclick=()=>{mode="circle";renderMode();};squareBtn.onclick=()=>{mode="square";renderMode();};
     zoomOutBtn.onclick=()=>{zoom=zoom/1.25;applyZoom();};
@@ -1239,7 +1251,8 @@ function openVideoMaskEditor({videoName,maskName,onSave}){
       scrollBox.scrollLeft=(scrollBox.scrollLeft+px)*scale-px;
       scrollBox.scrollTop=(scrollBox.scrollTop+py)*scale-py;
     },{passive:false});
-    clearBtn.onclick=()=>{if(!ready)return;maskCtx.clearRect(0,0,maskCanvas.width,maskCanvas.height);renderMask();tx(status,"Mask cleared");};
+    clearBtn.onclick=()=>{if(!ready)return;pushUndo();maskCtx.clearRect(0,0,maskCanvas.width,maskCanvas.height);renderMask();tx(status,"Mask cleared");};
+    undoBtn.onclick=undo;redoBtn.onclick=redo;
     sizeInput.oninput=()=>tx(sizeText,`Brush ${sizeInput.value} px`);
     cancelBtn.onclick=()=>{if(!saving)close(null);};
     overlay.addEventListener("pointerdown",e=>e.stopPropagation());
@@ -3375,6 +3388,7 @@ function persist(){
 
       let _maskPrevToken=0;
       let _trackingPreviewUrl=null;
+      let _trackingPreviewItem=null;
       const _renderMaskPreview=async()=>{
         const token=++_maskPrevToken;
         _trackingPreviewUrl=null;
@@ -3470,6 +3484,7 @@ function persist(){
       };
       const _showTrackingPreview=(item,live)=>{
         _maskPrevToken++;
+        _trackingPreviewItem=item;
         maskPreviewBox.innerHTML="";
         _trackingPreviewUrl=api.apiURL(`/view?filename=${encodeURIComponent(item.filename)}&type=${encodeURIComponent(item.type||"temp")}&subfolder=${encodeURIComponent(item.subfolder||"")}&t=${Date.now()}`);
         const v=mk("video",{width:"100%",height:"100%",objectFit:"contain",display:"block",background:"#000"},{muted:true,autoplay:true,loop:true,playsInline:true,preload:"auto"});
@@ -3500,6 +3515,11 @@ function persist(){
         if(!String(S.models.sam3||"").trim()){if(_h3ShowError)_h3ShowError("Pick the SAM 3.1 checkpoint under Settings before previewing tracking.");return;}
         const ownMaskBusy=(S.generating&&S.mode==="mask")||[..._queuedJobs.values()].some(q=>q.node===self&&q.mode==="mask");
         if(ownMaskBusy){
+          if(_trackingPreviewItem){
+            _showTrackingPreview(_trackingPreviewItem,false);
+            tx(maskPreviewNote,"Showing the last SAM 3 tracking preview, which is what this run is tracking. If you changed the Mask target, the painted mask or the Detection since it was made, click Preview tracking again after the run finishes to check the new settings.");
+            return;
+          }
           _maskPrevToken++;
           _trackingPreviewUrl=null;
           maskPreviewBox.innerHTML="";
