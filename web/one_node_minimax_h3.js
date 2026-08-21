@@ -1138,7 +1138,7 @@ const _uploadMedia=async(file)=>{
   }finally{_uploadsPending--;}
 };
 
-function openVideoMaskEditor({videoName,maskName,startTime,onSave}){
+function openVideoMaskEditor({videoName,maskName,startTime,onSave,sam3Ckpt}){
   return new Promise((resolve)=>{
     const overlay=mk("div",{position:"fixed",inset:"0",zIndex:"1000001",background:"rgba(0,0,0,.88)",display:"flex",alignItems:"center",justifyContent:"center",padding:"24px",boxSizing:"border-box"});
     const panel=mk("div",{width:"min(980px,94vw)",maxHeight:"94vh",overflowY:"auto",background:C.bg1,border:`1px solid ${C.borderH}`,borderRadius:"12px",boxShadow:"0 24px 80px rgba(0,0,0,.9)",padding:"14px",display:"flex",flexDirection:"column",gap:"10px",boxSizing:"border-box"});
@@ -1209,14 +1209,13 @@ function openVideoMaskEditor({videoName,maskName,startTime,onSave}){
       if(smartBusy||!ready) return;
       const hasAny=posPts.length>0||negPts.length>0;
       if(!hasAny) return;
-      if(!String(S.models.sam3||"").trim()){tx(status,"Pick the SAM 3 checkpoint under Settings first");status.style.color=C.err;return;}
+      if(!String(sam3Ckpt||"").trim()){tx(status,"Pick the SAM 3 checkpoint under Settings first");status.style.color=C.err;return;}
       smartBusy=true;canvas.style.cursor="progress";
-      const stamp=Date.now();
       tx(status,`Segmenting ${posPts.length} in / ${negPts.length} out...`);
       status.style.color=C.muted;
       try{
         const r=await fetch("/h3one/smart_mask",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({
-          source:videoName,ckpt_name:S.models.sam3,start:Number(startTime)||0,
+          source:videoName,ckpt_name:sam3Ckpt,start:Number(startTime)||0,
           positive:posPts.map(p=>({x:p.x,y:p.y})),negative:negPts.map(p=>({x:p.x,y:p.y})),
           refine_iterations:2,
         })});
@@ -3957,7 +3956,7 @@ function persist(){
       maskArea._render=_renderMask;
       maskPaintBtn.onclick=async()=>{
         if(!S.maskVideo){if(_h3ShowError)_h3ShowError("Add a source video before painting a mask.");return;}
-        await openVideoMaskEditor({videoName:S.maskVideo,maskName:S.maskSeed,startTime:S.maskStartTime||0,onSave:async name=>{S.maskSeed=name;persist();_renderMask();}});
+        await openVideoMaskEditor({videoName:S.maskVideo,maskName:S.maskSeed,startTime:S.maskStartTime||0,sam3Ckpt:S.models.sam3,onSave:async name=>{S.maskSeed=name;persist();_renderMask();}});
       };
       maskClearBtn.onclick=()=>{S.maskSeed=null;persist();_renderMask();};
       const openTrimEditor=()=>{

@@ -956,8 +956,8 @@ test("bundle passes the trim start to the mask editor so the paint lands on the 
     "the paint editor must open at the trim start so the mask aligns to the sliced first frame",
   );
   assert.ok(
-    bundle.includes("openVideoMaskEditor({videoName,maskName,startTime,onSave})"),
-    "the editor must accept a startTime option",
+    bundle.includes("openVideoMaskEditor({videoName,maskName,startTime,onSave,sam3Ckpt})"),
+    "the editor must accept a startTime option and the SAM 3 checkpoint",
   );
   assert.ok(
     bundle.includes('video.currentTime=Math.min((Number(startTime)||0)'),
@@ -980,7 +980,8 @@ test("bundle wires the Smart click-to-segment tool in the mask editor", () => {
   assert.ok(bundle.includes("maskCtx.drawImage(img,0,0,maskCanvas.width,maskCanvas.height)"), "the returned mask must be OR-drawn over the existing paint");
   assert.ok(bundle.includes("smartEsc"), "Escape must exit Smart mode");
   assert.ok(bundle.includes("exitSmart()"), "the editor must leave Smart mode when another tool is chosen");
-  assert.ok(bundle.includes("ckpt_name:S.models.sam3"), "Smart must send the configured SAM 3 checkpoint");
+  assert.ok(bundle.includes("ckpt_name:sam3Ckpt"), "Smart must send the configured SAM 3 checkpoint passed into the editor");
+  assert.ok(bundle.includes("sam3Ckpt:S.models.sam3"), "the mask editor must receive the configured SAM 3 checkpoint from the Mask card");
   assert.ok(bundle.includes("refine_iterations:2"), "Smart must request decoder refinement for crisp edges");
 });
 
