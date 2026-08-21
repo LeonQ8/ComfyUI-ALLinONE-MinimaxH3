@@ -4,7 +4,10 @@ Newest first.
 
 ## Unreleased
 
-Mask mode can paint or describe a region in a source video, track it with SAM 3, replace it with H3 reference inpainting, and keep the rest of the video unchanged. A Mask target now defines what SAM tracks, so typing "face" tracks the face instead of the whole painted area, and the replacement region hugs the tracked object. The H3 crop also follows the object's own shape like the droz reference template instead of a fixed widescreen canvas, so the replacement gets more pixels and cleaner edges.
+- New feature mode add "Masking".
+- Paint a region or type a Mask target; SAM 3 tracks it through the clip and H3 reference inpainting replaces only that part, leaving the rest of the video unchanged.
+- Needs the SAM 3.1 checkpoint from [Comfy-Org/sam3.1](https://huggingface.co/Comfy-Org/sam3.1) and the [MaskVidExperiments](https://github.com/drozbay/MaskVidExperiments) node pack, the download pages say where each file goes.
+- Masking is in beta. If anything goes wrong, open an issue.
 
 ## 0.8.0 (2026-08-19)
 
