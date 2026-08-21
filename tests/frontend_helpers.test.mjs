@@ -908,6 +908,20 @@ test("bundle rides the tracking overlay along with the real mask generation", ()
   assert.ok(bundle.includes("_showTrackingPreview(d,false)"), "the standalone button must render the non-live note");
 });
 
+test("bundle unions the painted whole-head region with the SAM3 track for replacement", () => {
+  const bundle = readFileSync(bundlePath, "utf8");
+  assert.ok(bundle.includes("H3MaskUnion"), "the mask branch must union the painted region with the SAM3 track");
+  assert.ok(
+    bundle.includes('masks_a:[toMask,0],masks_b:["23",0]'),
+    "the union must combine the painted mask with the tracked mask",
+  );
+  assert.ok(bundle.includes('wf["24"].inputs.masks=[unionMask,0]'), "the subject crop must cover the union so the crop includes hair/hat");
+  assert.ok(
+    bundle.includes('masks:maskUnionId?[maskUnionId,0]:["23",0]'),
+    "the crop report must inspect the union when it exists, else the plain track",
+  );
+});
+
 test("bundle keeps the tracking preview when a replacement reference image changes", () => {
   const bundle = readFileSync(bundlePath, "utf8");
   assert.ok(

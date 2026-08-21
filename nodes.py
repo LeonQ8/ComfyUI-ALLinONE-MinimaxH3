@@ -1175,10 +1175,17 @@ def _mask_preview_workflow(template, p):
     wf["22"]["inputs"]["object_indices"] = str(p.get("object_indices", "0") or "0")
     if not text:
         wf["21"]["inputs"].pop("conditioning", None)
+    crop_check_masks = ["23", 0]
     if seed_paint:
         wf["200"] = {"class_type": "LoadImage", "inputs": {"image": initial}, "_meta": {"title": "Painted First-Frame Mask"}}
         wf["201"] = {"class_type": "ImageToMask", "inputs": {"image": ["200", 0], "channel": "red"}, "_meta": {"title": "Painted Mask To SAM"}}
         wf["21"]["inputs"]["initial_mask"] = ["201", 0]
+        # The painted whole-head region must count as replacement area too, not
+        # just a SAM seed. Union it with the tracked mask so the crop box and
+        # latent region cover the painted hair/accessories as well as the face.
+        wf["202"] = {"class_type": "H3MaskUnion", "inputs": {"masks_a": ["201", 0], "masks_b": ["23", 0]}, "_meta": {"title": "Painted + Tracked Region"}}
+        wf["24"]["inputs"]["masks"] = ["202", 0]
+        crop_check_masks = ["202", 0]
     # The crop box the preview shows must be the one the real run would use, so
     # mirror the JS build's Subject Crop dials. upscale is disabled here: it
     # resizes the crop for H3 but never moves the box, and the preview does not
@@ -1200,7 +1207,7 @@ def _mask_preview_workflow(template, p):
         "inputs": {
             "bboxes": ["24", 2],
             "track_data": ["21", 0],
-            "masks": ["23", 0],
+            "masks": crop_check_masks,
             "confidence_threshold": 0.4,
         },
         "_meta": {"title": "Crop + Confidence Report"},
@@ -1846,6 +1853,41 @@ class H3AudioJoinSmooth:
         return (out,)
 
 
+class H3MaskUnion:
+    """Unions two mask batches so the tracked region and a user-painted region
+    both count as the replacement area. The painted mask is one frame, so it is
+    broadcast across every frame of the track before the OR. Both inputs are
+    binarized at 0.5 so the union is a clean region for the latent mask and the
+    subject crop."""
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "masks_a": ("MASK",),
+                "masks_b": ("MASK",),
+            }
+        }
+
+    RETURN_TYPES = ("MASK",)
+    RETURN_NAMES = ("masks",)
+    FUNCTION = "union"
+    CATEGORY = "One Node"
+
+    def union(self, masks_a, masks_b):
+        import torch
+        a = masks_a
+        b = masks_b
+        if a is None or b is None:
+            raise ValueError("H3MaskUnion needs both masks connected")
+        if a.shape[0] == 1 and b.shape[0] > 1:
+            a = a.repeat(b.shape[0], 1, 1)
+        elif b.shape[0] == 1 and a.shape[0] > 1:
+            b = b.repeat(a.shape[0], 1, 1)
+        out = (a > 0.5) | (b > 0.5)
+        return (out.to(dtype=masks_a.dtype, device=masks_a.device).float(),)
+
+
 class H3OneSAM3CropCheck:
     """Hands the frontend a JSON report of the crop MVEx Subject Crop plans
     around the tracked subject plus SAM3's own per-object confidence, so the
@@ -1883,5 +1925,5 @@ class H3OneSAM3CropCheck:
         return {"result": (payload,), "ui": {"text": [payload]}}
 
 
-NODE_CLASS_MAPPINGS = {"H3OneNode": H3OneNode, "H3CacheBust": H3CacheBust, "H3MaskVideoPrepare": H3MaskVideoPrepare, "H3IdentityAnchor": H3IdentityAnchor, "H3AudioTrim": H3AudioTrim, "H3AudioJoinSmooth": H3AudioJoinSmooth, "H3OneSAM3CropCheck": H3OneSAM3CropCheck}
-NODE_DISPLAY_NAME_MAPPINGS = {"H3OneNode": "ALL in ONE MiniMaxH3", "H3CacheBust": "H3 Cache Fingerprint (internal)", "H3MaskVideoPrepare": "H3 Mask Video Prepare (internal)", "H3IdentityAnchor": "H3 Identity Anchor (internal)", "H3AudioTrim": "H3 Audio Trim (internal)", "H3AudioJoinSmooth": "H3 Audio Join Smooth (internal)", "H3OneSAM3CropCheck": "H3 Crop + Confidence Report (internal)"}
+NODE_CLASS_MAPPINGS = {"H3OneNode": H3OneNode, "H3CacheBust": H3CacheBust, "H3MaskVideoPrepare": H3MaskVideoPrepare, "H3IdentityAnchor": H3IdentityAnchor, "H3AudioTrim": H3AudioTrim, "H3AudioJoinSmooth": H3AudioJoinSmooth, "H3OneSAM3CropCheck": H3OneSAM3CropCheck, "H3MaskUnion": H3MaskUnion}
+NODE_DISPLAY_NAME_MAPPINGS = {"H3OneNode": "ALL in ONE MiniMaxH3", "H3CacheBust": "H3 Cache Fingerprint (internal)", "H3MaskVideoPrepare": "H3 Mask Video Prepare (internal)", "H3IdentityAnchor": "H3 Identity Anchor (internal)", "H3AudioTrim": "H3 Audio Trim (internal)", "H3AudioJoinSmooth": "H3 Audio Join Smooth (internal)", "H3OneSAM3CropCheck": "H3 Crop + Confidence Report (internal)", "H3MaskUnion": "H3 Mask Union (internal)"}

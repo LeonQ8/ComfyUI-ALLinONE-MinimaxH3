@@ -1044,6 +1044,20 @@ class TestMaskPreviewWorkflow(_NodesTestBase):
         self.assertEqual(wf["201"]["inputs"]["image"], ["200", 0])
         self.assertEqual(wf["201"]["inputs"]["channel"], "red")
 
+    def test_paint_unions_with_the_track_as_the_replacement_region(self):
+        wf = self._build(text="", initial_mask="mask.png")
+        self.assertEqual(wf["202"]["class_type"], "H3MaskUnion")
+        self.assertEqual(wf["202"]["inputs"]["masks_a"], ["201", 0])
+        self.assertEqual(wf["202"]["inputs"]["masks_b"], ["23", 0])
+        self.assertEqual(wf["24"]["inputs"]["masks"], ["202", 0])
+        self.assertEqual(wf["101"]["inputs"]["masks"], ["202", 0])
+
+    def test_text_target_does_not_add_the_union_node(self):
+        wf = self._build(text="face", initial_mask="mask.png")
+        self.assertNotIn("202", wf)
+        self.assertEqual(wf["24"]["inputs"]["masks"], ["23", 0])
+        self.assertEqual(wf["101"]["inputs"]["masks"], ["23", 0])
+
     def test_no_paint_means_no_initial_mask_wiring(self):
         wf = self._build(text="", initial_mask="")
         self.assertNotIn("initial_mask", wf["21"]["inputs"])
@@ -1215,6 +1229,51 @@ class TestCropReport(_NodesTestBase):
         data = json.loads(result["result"][0])
         self.assertEqual(data["scores"], [])
         self.assertFalse(data["low_confidence"])
+
+
+@unittest.skipUnless(_HAS_TORCH, "torch not available")
+class TestMaskUnion(_NodesTestBase):
+    def _node(self):
+        return self.nodes.H3MaskUnion()
+
+    def test_or_of_two_masks(self):
+        a = torch.zeros((3, 8, 8))
+        a[:, 1:4, 1:4] = 1.0
+        b = torch.zeros((3, 8, 8))
+        b[:, 5:7, 5:7] = 1.0
+        out = self._node().union(a, b)[0]
+        self.assertEqual(out.shape, (3, 8, 8))
+        self.assertEqual(out[:, 1:4, 1:4].min().item(), 1.0)
+        self.assertEqual(out[:, 5:7, 5:7].min().item(), 1.0)
+        self.assertEqual(out[:, 0, 0].item(), 0.0)
+
+    def test_overlapping_region_is_still_one(self):
+        a = torch.ones((1, 8, 8))
+        b = torch.ones((1, 8, 8))
+        out = self._node().union(a, b)[0]
+        self.assertEqual(out.max().item(), 1.0)
+        self.assertEqual(out.sum().item(), 8 * 8)
+
+    def test_single_frame_paint_broadcasts_to_the_track(self):
+        paint = torch.zeros((1, 8, 8))
+        paint[0, 0:3, 0:3] = 1.0
+        track = torch.zeros((5, 8, 8))
+        track[2, 6:8, 6:8] = 1.0
+        out = self._node().union(paint, track)[0]
+        self.assertEqual(out.shape, (5, 8, 8))
+        for f in range(5):
+            self.assertEqual(out[f, 0:3, 0:3].max().item(), 1.0, "painted region must broadcast to every frame")
+        self.assertEqual(out[2, 6:8, 6:8].max().item(), 1.0)
+
+    def test_track_single_frame_and_paint_multi_frame(self):
+        track = torch.zeros((1, 8, 8))
+        track[0, 4:6, 4:6] = 1.0
+        paint = torch.zeros((3, 8, 8))
+        paint[1, 0:2, 0:2] = 1.0
+        out = self._node().union(track, paint)[0]
+        self.assertEqual(out.shape, (3, 8, 8))
+        for f in range(3):
+            self.assertEqual(out[f, 4:6, 4:6].max().item(), 1.0)
 
 
 class TestAudioJoinSmooth(_NodesTestBase):

@@ -5779,11 +5779,15 @@ function persist(){
           const tracking=maskTrackingPlan(S.maskSeed,maskTarget);
           wf["21"].inputs.max_objects=tracking.maxObjects;
           wf["22"].inputs.object_indices=tracking.objectIndices;
+          let maskUnionId=null;
           if(S.maskSeed&&tracking.seedPaint){
-            const loadMask=newId(),toMask=newId();
+            const loadMask=newId(),toMask=newId(),unionMask=newId();
             wf[loadMask]={class_type:"LoadImage",inputs:{image:S.maskSeed},_meta:{title:"Painted First-Frame Mask"}};
             wf[toMask]={class_type:"ImageToMask",inputs:{image:[loadMask,0],channel:"red"},_meta:{title:"Painted Mask To SAM"}};
             wf["21"].inputs.initial_mask=[toMask,0];
+            wf[unionMask]={class_type:"H3MaskUnion",inputs:{masks_a:[toMask,0],masks_b:["23",0]},_meta:{title:"Painted + Tracked Region"}};
+            wf["24"].inputs.masks=[unionMask,0];
+            maskUnionId=unionMask;
           }
           S.refImages.forEach((name,idx)=>{
             const id=newId();
@@ -5804,7 +5808,7 @@ function persist(){
           if(wf["14"]){wf["14"].inputs.fps=["18",3];wf["14"].inputs.audio=maskAudio;}
           else if(wf["15"]&&wf["15"].class_type==="VHS_VideoCombine"){wf["15"].inputs.frame_rate=["18",3];wf["15"].inputs.audio=maskAudio;}
           wf["500"]={class_type:"SAM3_TrackPreview",inputs:{track_data:["21",0],images:["18",0],opacity:0.5,fps:24},_meta:{title:"Tracking Overlay"}};
-          wf["501"]={class_type:"H3OneSAM3CropCheck",inputs:{bboxes:["24",2],track_data:["21",0],masks:["23",0],confidence_threshold:0.4},_meta:{title:"Crop + Confidence Report"}};
+          wf["501"]={class_type:"H3OneSAM3CropCheck",inputs:{bboxes:["24",2],track_data:["21",0],masks:maskUnionId?[maskUnionId,0]:["23",0],confidence_threshold:0.4},_meta:{title:"Crop + Confidence Report"}};
         }
         return wf;
       };
