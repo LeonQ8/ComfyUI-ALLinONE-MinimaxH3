@@ -898,6 +898,21 @@ test("bundle wires the SAM3 tracking preview button and route call", () => {
   assert.ok(bundle.includes("_trackingPreviewItem"), "the node must remember the last tracking preview to re-show it");
 });
 
+test("bundle shows live SAM3 tracking progress in the preview box", () => {
+  const bundle = readFileSync(bundlePath, "utf8");
+  assert.ok(bundle.includes("crypto.randomUUID"), "the preview must mint a fresh token per run");
+  assert.ok(
+    bundle.includes("/h3one/mask_preview_progress?token="),
+    "the preview must poll the progress route with its token",
+  );
+  assert.ok(bundle.includes("about ${eta}s left"), "the preview box must show frames done and seconds left");
+  assert.ok(bundle.includes("token,"), "the preview POST must carry the token so progress stays scoped to this run");
+  assert.ok(
+    bundle.includes("_activeNode._h3_S.generating!==true"),
+    "standalone preview progress must not flip the main preview chip to Sampling",
+  );
+});
+
 test("bundle rides the tracking overlay along with the real mask generation", () => {
   const bundle = readFileSync(bundlePath, "utf8");
   assert.ok(bundle.includes('wf["500"]={class_type:"SAM3_TrackPreview"'), "the real mask workflow must carry the SAM3 overlay node");

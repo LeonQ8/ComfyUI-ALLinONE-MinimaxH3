@@ -1316,6 +1316,47 @@ class TestPaintedRegion(_NodesTestBase):
         self.assertGreater(out[0].sum().item(), 1.0, "grow must widen the painted region")
 
 
+class TestMaskPreviewProgress(_NodesTestBase):
+    def test_snapshot_unknown_token_is_empty(self):
+        snap = self.nodes._preview_progress_snapshot("nope")
+        self.assertFalse(snap["found"])
+        self.assertEqual(snap["value"], 0)
+        self.assertEqual(snap["max"], 0)
+
+    def test_snapshot_missing_token_is_empty(self):
+        self.assertFalse(self.nodes._preview_progress_snapshot("")["found"])
+
+    def test_snapshot_reads_registered_entry(self):
+        self.nodes._MASK_PREVIEW_PROGRESS["abc"] = {"pid": "p1", "value": 45, "max": 124, "done": False}
+        snap = self.nodes._preview_progress_snapshot("abc")
+        self.assertTrue(snap["found"])
+        self.assertEqual(snap["value"], 45)
+        self.assertEqual(snap["max"], 124)
+        self.assertFalse(snap["done"])
+
+    def test_snapshot_surfaces_done(self):
+        self.nodes._MASK_PREVIEW_PROGRESS["abc"] = {"pid": "p1", "value": 124, "max": 124, "done": True}
+        self.assertTrue(self.nodes._preview_progress_snapshot("abc")["done"])
+
+    def test_progress_route_returns_snapshot(self):
+        self.nodes._MASK_PREVIEW_PROGRESS["tok"] = {"pid": "p1", "value": 10, "max": 100, "done": False}
+        resp = _run(self.nodes.mask_preview_progress(_FakeRequest({}, query={"token": "tok"})))
+        self.assertEqual(resp.kwargs["data"]["value"], 10)
+        self.assertEqual(resp.kwargs["data"]["max"], 100)
+
+    def test_progress_route_unknown_token(self):
+        resp = _run(self.nodes.mask_preview_progress(_FakeRequest({}, query={"token": "ghost"})))
+        self.assertFalse(resp.kwargs["data"]["found"])
+
+    def test_sync_unknown_token_is_noop(self):
+        self.nodes._sync_preview_progress("ghost", "p1")
+
+    def test_sync_ignores_other_prompt(self):
+        self.nodes._MASK_PREVIEW_PROGRESS["abc"] = {"pid": "p1", "value": 0, "max": 0, "done": False}
+        self.nodes._sync_preview_progress("abc", "p2")
+        self.assertEqual(self.nodes._MASK_PREVIEW_PROGRESS["abc"]["value"], 0)
+
+
 class TestAudioJoinSmooth(_NodesTestBase):
     def _node(self):
         return self.nodes.H3AudioJoinSmooth()

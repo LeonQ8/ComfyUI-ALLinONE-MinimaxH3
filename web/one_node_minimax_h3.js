@@ -3772,10 +3772,27 @@ function persist(){
         }).catch(()=>{});
         const controller=new AbortController();
         const waitTimer=setTimeout(()=>controller.abort(),300000);
+        const token=typeof crypto!=="undefined"&&crypto.randomUUID?crypto.randomUUID():String(Math.random()).slice(2)+Date.now();
         let clock=null;
         try{
           const started=Date.now();
-          clock=setInterval(()=>{tx(spinSub,`SAM 3 only, no H3 generation - ${Math.round((Date.now()-started)/1000)}s`);},1000);
+          const refresh=async()=>{
+            if(_maskPrevToken!==noteToken) return;
+            let p=null;
+            try{p=await fetch(`/h3one/mask_preview_progress?token=${encodeURIComponent(token)}`).then(r=>r.json());}catch(e){p=null;}
+            if(_maskPrevToken!==noteToken) return;
+            const elapsed=Math.round((Date.now()-started)/1000);
+            const max=Number(p&&p.max)||0;
+            const value=Number(p&&p.value)||0;
+            if(max>0){
+              const rate=value/Math.max(.1,(Date.now()-started)/1000);
+              const eta=rate>0?Math.max(0,Math.round((max-value)/rate)):0;
+              tx(spinSub,`Tracking ${Math.min(value,max)}/${max} frames - about ${eta}s left`);
+            }else{
+              tx(spinSub,`SAM 3 only, no H3 generation - ${elapsed}s`);
+            }
+          };
+          clock=setInterval(refresh,400);
           const r=await fetch("/h3one/mask_preview",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({
             file:S.maskVideo,
             duration:Math.min(15,Math.max(.2,Number(S.duration)||5)),
@@ -3788,8 +3805,10 @@ function persist(){
             initial_mask:S.maskSeed||"",
             crop_scale:Math.max(1,Math.min(4,Number(S.maskCropScale)||1.5)),
             megapixels:_effectiveMaskCropMP(),
+            token,
           }),signal:controller.signal});
           clearInterval(clock);
+          clock=null;
           let d=null;
           try{d=await r.json();}catch(e){d=null;}
           if(!r.ok||!d||!d.ok) throw new Error((d&&d.error)||("preview failed (HTTP "+r.status+")"));
@@ -6408,6 +6427,7 @@ function persist(){
   api.addEventListener("progress",(evt)=>{
     if(!_activeNode) return;
     if(_activeNode._h3_lpOn) return;
+    if(_activeNode._h3_S&&_activeNode._h3_S.generating!==true) return;
     const {value,max}=evt.detail||{};
     if(max>0&&_activeSetStage) _activeSetStage("Sampling...",8+Math.round(value/max*86));
   });

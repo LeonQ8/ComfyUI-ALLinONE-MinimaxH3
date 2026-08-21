@@ -1392,18 +1392,59 @@ def _crop_report(bboxes, scores, masks=None, width=0, height=0, confidence_thres
 _MASK_PREVIEW_TIMEOUT = 600.0
 
 
+_MASK_PREVIEW_PROGRESS = {}
+
+
+def _preview_progress_snapshot(token):
+    if not token:
+        return {"found": False, "value": 0, "max": 0, "done": False}
+    entry = _MASK_PREVIEW_PROGRESS.get(token)
+    if not entry:
+        return {"found": False, "value": 0, "max": 0, "done": False}
+    return {
+        "found": True,
+        "value": float(entry.get("value", 0)),
+        "max": float(entry.get("max", 0)),
+        "done": bool(entry.get("done")),
+    }
+
+
+def _sync_preview_progress(token, prompt_id):
+    if not token:
+        return
+    entry = _MASK_PREVIEW_PROGRESS.get(token)
+    if not entry or entry.get("pid") != prompt_id:
+        return
+    try:
+        from comfy_execution.progress import get_progress_state
+        state = get_progress_state()
+        if state.prompt_id != prompt_id:
+            return
+        node = state.nodes.get("21")
+        if node:
+            entry["value"] = float(node.get("value", 0))
+            entry["max"] = float(node.get("max", 0)) or 0
+    except Exception:
+        pass
+
+
 def _mask_preview_queue_number(current):
     """Negative queue number so the preview runs ahead of pending jobs."""
     return -abs(float(current)) - 1.0
 
 
-async def _run_mask_preview(wf, client_id):
+async def _run_mask_preview(wf, client_id, token=""):
     """Queue the preview graph at the front and wait for its temp overlay video."""
     import asyncio
     import execution
     server = PromptServer.instance
     prompt_id = str(uuid.uuid4())
     extra_data = {"client_id": str(client_id or ""), "enable_previews": False}
+    if token:
+        _MASK_PREVIEW_PROGRESS[token] = {"pid": prompt_id, "value": 0, "max": 0, "done": False}
+        if len(_MASK_PREVIEW_PROGRESS) > 100:
+            for stale in list(_MASK_PREVIEW_PROGRESS)[:-100]:
+                _MASK_PREVIEW_PROGRESS.pop(stale, None)
     valid = await execution.validate_prompt(prompt_id, wf, None)
     if not valid[0]:
         detail = valid[1] if isinstance(valid[1], str) else json.dumps(valid[1] or "validation failed")
@@ -1414,10 +1455,13 @@ async def _run_mask_preview(wf, client_id):
     server.prompt_queue.put((_mask_preview_queue_number(number), prompt_id, wf, extra_data, outputs_to_execute, {}))
     deadline = time.time() + _MASK_PREVIEW_TIMEOUT
     while True:
+        _sync_preview_progress(token, prompt_id)
         entry = server.prompt_queue.get_history(prompt_id=prompt_id).get(prompt_id)
         if entry is not None:
             status = entry.get("status") or {}
             if status.get("completed"):
+                if token:
+                    _MASK_PREVIEW_PROGRESS[token]["done"] = True
                 item = _extract_preview_item(entry)
                 if item:
                     response = {"ok": True, "prompt_id": prompt_id, "kind": "video", **item}
@@ -1433,8 +1477,12 @@ async def _run_mask_preview(wf, client_id):
             for message in messages:
                 if message and message[0] == "execution_error" and isinstance(message[1], dict):
                     detail = message[1].get("exception_message") or message[1].get("error") or "execution failed"
+                    if token:
+                        _MASK_PREVIEW_PROGRESS[token]["done"] = True
                     return web.json_response({"ok": False, "error": str(detail), "prompt_id": prompt_id}, status=500)
         if time.time() >= deadline:
+            if token:
+                _MASK_PREVIEW_PROGRESS[token]["done"] = True
             return web.json_response({"ok": False, "error": "tracking preview timed out", "prompt_id": prompt_id}, status=504)
         await asyncio.sleep(0.5)
 
@@ -1457,7 +1505,12 @@ async def mask_preview(request):
         wf = _mask_preview_workflow(template, data)
     except Exception as e:
         return web.json_response({"ok": False, "error": str(e)}, status=400)
-    return await _run_mask_preview(wf, data.get("client_id", ""))
+    return await _run_mask_preview(wf, data.get("client_id", ""), str(data.get("token", "") or ""))
+
+
+@PromptServer.instance.routes.get("/h3one/mask_preview_progress")
+async def mask_preview_progress(request):
+    return web.json_response(_preview_progress_snapshot(str(request.query.get("token", "") or "")))
 
 
 def _empty_image_tensor():

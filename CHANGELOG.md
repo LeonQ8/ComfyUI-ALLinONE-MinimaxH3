@@ -2,6 +2,10 @@
 
 Newest first.
 
+## 0.12.0 (2026-08-21)
+
+ - Preview tracking now shows live progress right in the preview box: how many frames SAM 3 has tracked and roughly how many seconds are left, instead of just a spinner. Each preview is its own run, so clicking again or changing the clip duration always starts fresh.
+
 ## 0.11.0 (2026-08-21)
 
  - In Mask mode, painting a whole head now replaces that whole region, not just the face SAM 3 detects. So long hair, hats and accessories from the replacement reference appear, and they stay attached to the head as it moves instead of flashing in and out.
