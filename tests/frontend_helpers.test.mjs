@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { aspect, sizeOf, sameSize, mapMaskPoint, orientRes, fitResolutionToAspect, planMaskCrop, maskTrackingPlan, resolveFitPrimary, imgProfileShort, imgAspectName, viewQuery, inputFileExists, h3SamCheckpoints, clampImageMP, planImageCanvas, IMG_MAX_MP, IMG_MIN_MP, IMG_ASPECT_RATIOS, resolveQualityFlags, matchQualityPreset, QUALITY_PRESET_FLAGS, planExtend, queuePromptPayload, settleQueuedOutput, maskSpeechSyncPrompt } from "../web/h3_helpers.mjs";
+import { aspect, sizeOf, sameSize, mapMaskPoint, orientRes, fitResolutionToAspect, planMaskCrop, maskTrackingPlan, resolveFitPrimary, imgProfileShort, imgAspectName, viewQuery, inputFileExists, h3SamCheckpoints, clampImageMP, planImageCanvas, IMG_MAX_MP, IMG_MIN_MP, IMG_ASPECT_RATIOS, resolveQualityFlags, matchQualityPreset, QUALITY_PRESET_FLAGS, planExtend, queuePromptPayload, settleQueuedOutput, maskSpeechSyncPrompt, cropFrameIndex, cropBoxAt, cropReportText } from "../web/h3_helpers.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, "..");
@@ -54,6 +54,9 @@ test("helpers file is non-trivial and exports the core helpers", () => {
   assert.ok(src.includes("export function planImageCanvas"), "helpers must export planImageCanvas");
   assert.ok(src.includes("export function planExtend"), "helpers must export planExtend");
   assert.ok(src.includes("export function queuePromptPayload"), "helpers must export queuePromptPayload");
+  assert.ok(src.includes("export function cropFrameIndex"), "helpers must export cropFrameIndex");
+  assert.ok(src.includes("export function cropBoxAt"), "helpers must export cropBoxAt");
+  assert.ok(src.includes("export function cropReportText"), "helpers must export cropReportText");
 });
 
 test("aspect: landscape and portrait", () => {
@@ -725,7 +728,19 @@ test("bundle wires the Mask mode, brush editor, and runtime preflight", () => {
   assert.ok(bundle.includes("h3SamCheckpoints(_M.checkpoints)"), "Mask must reject non-SAM checkpoints");
   assert.ok(bundle.includes("MVEx_MaskToLatentSpace"), "Mask must require H3-aligned latent masking");
   assert.ok(bundle.includes("MVEx_LatentMaskToMask"), "Mask must paste the grown latent region back, not a tight outline");
-  assert.ok(bundle.includes("maskRegenerateAudio"), "Mask must expose source-audio preservation control");
+  assert.ok(bundle.includes("maskAudioMode"), "Mask must expose the three-way audio mode control");
+  assert.ok(
+    bundle.includes("Preserve (no lip-sync)"),
+    "Mask must offer keep-audio-without-lip-sync for music and non-speaking clips",
+  );
+  assert.ok(
+    bundle.includes('S.maskAudioMode==="preserve") final=maskSpeechSyncPrompt(final)'),
+    "the lip-sync directive must be applied to the final wrapped prompt, only in preserve-with-lip-sync mode",
+  );
+  assert.ok(
+    bundle.includes('S.maskAudioMode==="regenerate") final=final.replace(/Keep the source soundtrack'),
+    "regenerate must rewrite the soundscape line on the final prompt",
+  );
   assert.ok(
     bundle.includes("modeArea.append(i2vArea,refArea,kfArea,adArea,exArea,chainArea,maskArea,imgArea)"),
     "the Mask card must be mounted in the mode area",
@@ -748,7 +763,7 @@ test("bundle wires the Mask mode, brush editor, and runtime preflight", () => {
   assert.ok(bundle.includes("ref_audios.ref_audio_0"), "Mask must feed the preserved source speech to H3");
   assert.ok(bundle.includes("maskSpeechSyncPrompt"), "Mask must ask H3 for lip sync with the preserved speech");
   assert.ok(
-    bundle.includes('if(S.maskRegenerateAudio) delete wf["6"].inputs["ref_audios.ref_audio_0"]'),
+    bundle.includes('if(S.maskAudioMode==="regenerate") delete wf["6"].inputs["ref_audios.ref_audio_0"]'),
     "regenerated audio must not copy the source speech reference",
   );
 });
@@ -801,6 +816,144 @@ test("bundle rides the tracking overlay along with the real mask generation", ()
   assert.ok(bundle.includes("_h3_maskTrackingOverlay"), "the node must expose an overlay sink for the executed event");
   assert.ok(bundle.includes("hit Stop to avoid wasting the run"), "the live overlay note must invite Stop when tracking is wrong");
   assert.ok(bundle.includes("_showTrackingPreview(d,false)"), "the standalone button must render the non-live note");
+});
+
+test("cropFrameIndex: maps playback time to the tracked frame, clamped", () => {
+  assert.equal(cropFrameIndex(0, 24, 120), 0);
+  assert.equal(cropFrameIndex(0.5, 24, 120), 12);
+  assert.equal(cropFrameIndex(1.0, 24, 120), 24);
+  assert.equal(cropFrameIndex(5.5, 24, 120), 119);
+  assert.equal(cropFrameIndex(999, 24, 10), 9);
+  assert.equal(cropFrameIndex(-1, 24, 10), 0);
+  assert.equal(cropFrameIndex(0.5, 0, 120), 12);
+  assert.equal(cropFrameIndex(0.5, 24, 0), 0);
+});
+
+test("cropBoxAt: returns the box tuple or null for malformed input", () => {
+  const boxes = [[0, 0, 100, 100], [10, 10, 90, 90]];
+  assert.deepEqual(cropBoxAt(boxes, 0), [0, 0, 100, 100]);
+  assert.deepEqual(cropBoxAt(boxes, 1.9), [10, 10, 90, 90]);
+  assert.deepEqual(cropBoxAt(boxes, 99), [10, 10, 90, 90]);
+  assert.equal(cropBoxAt([], 0), null);
+  assert.equal(cropBoxAt(null, 0), null);
+  assert.equal(cropBoxAt([[0, 0, 100]], 0), null);
+  assert.equal(cropBoxAt([["a", "b", "c", "d"]], 0), null);
+});
+
+test("cropReportText: a clean report reads OK with the min confidence", () => {
+  const r = cropReportText({
+    frames: 2, boxes: [[0, 0, 100, 100], [0, 0, 100, 100]],
+    min_score: 0.93, confidence_threshold: 0.4, low_confidence: false,
+    crop_clip: { frames: 0, max_cut: 0 }, stability: { max_step: 2, jitter: 0.004 }, subject_area: { min: 9400 }, subject_share: 0.35,
+  });
+  assert.equal(r.verdict, "ok");
+  assert.match(r.label, /Crop looks good/);
+  assert.match(r.detail, /min confidence 93%/);
+  assert.match(r.detail, /steady \(worst jump 2px, ~0% of crop\)/);
+  assert.match(r.detail, /min 9400 px subject/);
+});
+
+test("cropReportText: a seeded painted-mask track reports no detection score", () => {
+  const r = cropReportText({ frames: 1, boxes: [[0, 0, 100, 100]], scores: [1, 1], min_score: 1, low_confidence: false, crop_clip: { frames: 0 }, stability: {} });
+  assert.equal(r.verdict, "ok");
+  assert.match(r.detail, /seeded track/);
+});
+
+test("cropReportText: flags low confidence and a clipping crop", () => {
+  const r = cropReportText({
+    frames: 4, boxes: [[0, 0, 100, 100], [0, 0, 100, 100], [0, 0, 100, 100], [0, 0, 100, 100]],
+    min_score: 0.31, confidence_threshold: 0.4, low_confidence: true,
+    crop_clip: { frames: 4, max_cut: 0.22 }, stability: { jitter: 0.1, max_step: 30 },
+  });
+  assert.equal(r.verdict, "flagged");
+  assert.match(r.label, /weak \(31% confidence\)/);
+  assert.match(r.label, /cuts off part of the subject/);
+  assert.match(r.label, /jumps around \(30px between frames\)/);
+  assert.match(r.detail, /low confidence 31%/);
+  assert.match(r.detail, /crop cuts the subject/);
+  assert.match(r.detail, /crop jumps 30px \(~10% of crop\)/);
+});
+
+test("cropReportText: a slightly clipping crop is a mild flag", () => {
+  const r = cropReportText({ frames: 1, boxes: [[0, 0, 100, 100]], crop_clip: { frames: 1, max_cut: 0.03 }, stability: {} });
+  assert.equal(r.verdict, "flagged");
+  assert.match(r.label, /clips the subject slightly/);
+});
+test("cropReportText: a flagged crop comes with an actionable tip", () => {
+  const r = cropReportText({
+    frames: 1, boxes: [[0, 0, 100, 100]],
+    min_score: 0.31, confidence_threshold: 0.4, low_confidence: true,
+    crop_clip: { frames: 0, max_cut: 0 }, stability: {},
+  });
+  assert.equal(r.verdict, "flagged");
+  assert.ok(r.tip, "flagged readouts must suggest a next step");
+  assert.match(r.tip, /Detection/);
+  assert.match(r.tip, /Preview tracking again/);
+});
+
+test("cropReportText: a jittery crop suggests crop padding, not detection", () => {
+  const r = cropReportText({ frames: 2, boxes: [[0, 0, 100, 100], [0, 0, 100, 100]], stability: { jitter: 0.12, max_step: 33 }, crop_clip: { frames: 0 } });
+  assert.equal(r.verdict, "flagged");
+  assert.match(r.tip, /Crop padding/);
+});
+
+test("cropReportText: a clipping crop suggests holding the subject", () => {
+  const r = cropReportText({ frames: 5, boxes: [[0, 0, 100, 100], [0, 0, 100, 100], [0, 0, 100, 100], [0, 0, 100, 100], [0, 0, 100, 100]], crop_clip: { frames: 5, max_cut: 0.22 }, stability: {} });
+  assert.equal(r.verdict, "flagged");
+  assert.match(r.tip, /Crop padding/);
+  assert.match(r.tip, /whole subject/);
+});
+
+test("cropReportText: a report with no boxes is neutral, not a good crop", () => {
+  const r = cropReportText({ frames: 0, boxes: [], min_score: 1 });
+  assert.equal(r.verdict, "none");
+  assert.equal(r.tip, null);
+  assert.match(r.label, /No crop was measured/);
+  const r2 = cropReportText({ frames: 5 });
+  assert.equal(r2.verdict, "none");
+});
+
+test("cropReportText: a clean crop has no tip", () => {
+  const r = cropReportText({ frames: 1, boxes: [[0, 0, 100, 100]], min_score: 0.93, crop_clip: { frames: 0 }, stability: { max_step: 2 } });
+  assert.equal(r.verdict, "ok");
+  assert.equal(r.tip, null);
+});
+
+test("cropReportText: frame-edge contact is informational, not a flag", () => {
+  const r = cropReportText({
+    frames: 1, boxes: [[0, 0, 100, 100]],
+    min_score: 0.95, low_confidence: false, crop_clip: { frames: 0 },
+    stability: { max_step: 1 }, edge_touch: 22, subject_edge: 22,
+  });
+  assert.equal(r.verdict, "ok");
+  assert.equal(r.tip, null);
+  assert.match(r.label, /Crop looks good/);
+  assert.match(r.detail, /frame edge/);
+  assert.match(r.detail, /subject touches/);
+});
+
+test("bundle draws the crop box and confidence onto the tracking preview", () => {
+  const bundle = readFileSync(bundlePath, "utf8");
+  assert.ok(bundle.includes("cropReportText"), "the bundle must mirror the crop readout helper");
+  assert.ok(bundle.includes("cropFrameIndex"), "the bundle must mirror the frame mapper");
+  assert.ok(bundle.includes("cropBoxAt"), "the bundle must mirror the box lookup");
+  assert.ok(bundle.includes("_drawCropOverlay"), "the bundle must draw the crop rectangle over the overlay video");
+  assert.ok(bundle.includes("_trackingRafStart"), "the bundle must drive the overlay redraw while playing");
+  assert.ok(bundle.includes("_h3_cropCheck"), "the node must hold the latest crop report");
+  assert.ok(bundle.includes("_h3_cropCheckChanged"), "the node must accept a late-arriving crop report");
+  assert.ok(bundle.includes('wf["501"]={class_type:"H3OneSAM3CropCheck"'), "the real mask workflow must add the crop report node");
+  assert.ok(bundle.includes('d.node==="501"'), "the executed handler must route the crop report");
+  assert.ok(bundle.includes('crop_scale:Math.max(1,Math.min(4,Number(S.maskCropScale)||1.5))'), "the preview POST must send the crop scale");
+  assert.ok(bundle.includes("megapixels:_effectiveMaskCropMP()"), "the preview POST must send the crop megapixel budget");
+  assert.ok(bundle.includes("SAM3 tracking + crop box"), "the lightbox must label the crop overlay");
+  assert.ok(bundle.includes("Crop flagged:"), "the readout must surface flagged crops");
+  assert.ok(bundle.includes("Crop OK:"), "the readout must confirm clean crops");
+  assert.ok(bundle.includes("Crop looks good"), "the card note must use the plain green wording");
+  assert.ok(bundle.includes("maskCropNote"), "the card must render the verdict in its own colored line");
+  assert.ok(bundle.includes('"\\n→ "+rtext.tip'), "the readout must suggest a next step for flagged crops");
+  assert.ok(bundle.includes("steady (worst jump"), "the lightbox detail must express jitter relative to the crop size");
+  assert.ok(bundle.includes("px subject"), "the lightbox detail must label the subject pixel minimum");
+  assert.ok(bundle.includes("canvas.isConnected"), "the redraw loop must stop when the preview is torn down");
 });
 
 test("mapMaskPoint: maps display coordinates to source pixels", () => {

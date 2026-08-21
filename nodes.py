@@ -1,6 +1,7 @@
 import os
 import json
 import glob
+import math
 import time
 import uuid
 import shutil
@@ -1005,10 +1006,31 @@ def _mask_preview_workflow(template, p):
         wf["200"] = {"class_type": "LoadImage", "inputs": {"image": initial}, "_meta": {"title": "Painted First-Frame Mask"}}
         wf["201"] = {"class_type": "ImageToMask", "inputs": {"image": ["200", 0], "channel": "red"}, "_meta": {"title": "Painted Mask To SAM"}}
         wf["21"]["inputs"]["initial_mask"] = ["201", 0]
+    # The crop box the preview shows must be the one the real run would use, so
+    # mirror the JS build's Subject Crop dials. upscale is disabled here: it
+    # resizes the crop for H3 but never moves the box, and the preview does not
+    # need the resized pixels.
+    try:
+        crop_scale = max(1.0, min(4.0, float(p.get("crop_scale", 1.5) or 1.5)))
+    except (TypeError, ValueError):
+        crop_scale = 1.5
+    wf["24"]["inputs"]["mode.crop_scale"] = crop_scale
+    wf["24"]["inputs"]["mode.aspect_ratio"] = 0
+    wf["24"]["inputs"]["upscale_megapixels"] = 0.0
     wf["100"] = {
         "class_type": "SAM3_TrackPreview",
         "inputs": {"track_data": ["21", 0], "images": ["18", 0], "opacity": 0.5, "fps": 24.0},
         "_meta": {"title": "Tracking Overlay"},
+    }
+    wf["101"] = {
+        "class_type": "H3OneSAM3CropCheck",
+        "inputs": {
+            "bboxes": ["24", 2],
+            "track_data": ["21", 0],
+            "masks": ["23", 0],
+            "confidence_threshold": 0.4,
+        },
+        "_meta": {"title": "Crop + Confidence Report"},
     }
     return wf
 
@@ -1036,6 +1058,149 @@ def _extract_preview_item(entry):
                         "type": str(item.get("type", "temp") or "temp"),
                     }
     return None
+
+
+def _extract_crop_check(entry):
+    """Pull the JSON report the H3OneSAM3CropCheck node wrote."""
+    outputs = entry.get("outputs") or {}
+    text = outputs.get("101", {}).get("text")
+    if not isinstance(text, list) or not text:
+        return None
+    try:
+        data = json.loads(text[-1])
+    except Exception:
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _crop_report(bboxes, scores, masks=None, width=0, height=0, confidence_threshold=0.4):
+    """Turn the crop boxes + SAM3 confidence into the JSON the frontend overlays.
+
+    bboxes: BOUNDING_BOX payload from MVEx Subject Crop - a per-frame list of
+            box lists, each box a dict {x, y, width, height} in source pixels.
+    scores: SAM3 per-object detection confidence (0..1). SAM3 emits one value
+            per tracked object, not per frame; 1.0 for painted-mask tracks.
+    masks:  optional [N, H, W] source-res mask batch (torch tensor or numpy);
+            enables the subject-clipping and pixel-area readouts. The crop box
+            itself needs no mask, so it stays meaningful when masks are missing.
+    """
+    out_boxes = []
+    for frame_boxes in bboxes or []:
+        if not isinstance(frame_boxes, list) or not frame_boxes:
+            continue
+        first = frame_boxes[0]
+        if not isinstance(first, dict):
+            continue
+        try:
+            out_boxes.append([
+                int(round(float(first.get("x", 0)))),
+                int(round(float(first.get("y", 0)))),
+                int(round(float(first.get("width", 0)))),
+                int(round(float(first.get("height", 0)))),
+            ])
+        except (TypeError, ValueError):
+            continue
+    n = len(out_boxes)
+    score_list = []
+    for s in scores or []:
+        try:
+            score_list.append(max(0.0, min(1.0, float(s))))
+        except (TypeError, ValueError):
+            continue
+    threshold = max(0.0, min(1.0, float(confidence_threshold)))
+    min_score = min(score_list) if score_list else None
+    low_confidence = bool(score_list) and min_score < threshold
+
+    img_w, img_h = int(width), int(height)
+    mask_arr = None
+    if masks is not None:
+        try:
+            if hasattr(masks, "detach"):
+                mask_arr = (masks.detach() > 0.5).cpu().numpy()
+            else:
+                import numpy as _np
+                mask_arr = _np.asarray(masks) > 0.5
+        except Exception:
+            mask_arr = None
+        if mask_arr is not None:
+            if mask_arr.ndim == 4:
+                mask_arr = mask_arr[:, 0]
+            if mask_arr.ndim != 3:
+                mask_arr = None
+    if mask_arr is not None and mask_arr.shape[0] > 0:
+        if img_h <= 0:
+            img_h = mask_arr.shape[1]
+        if img_w <= 0:
+            img_w = mask_arr.shape[2]
+
+    subject_min = None
+    subject_sum = 0
+    subject_count = 0
+    subject_edge = 0
+    clip_frames = 0
+    max_cut = 0.0
+    edge_touch = 0
+    for i, box in enumerate(out_boxes):
+        x, y, w, h = box
+        if img_w > 0 and img_h > 0:
+            if x <= 0 or y <= 0 or x + w >= img_w or y + h >= img_h:
+                edge_touch += 1
+        if mask_arr is None or i >= mask_arr.shape[0]:
+            continue
+        m = mask_arr[i]
+        total = int(m.sum())
+        subject_sum += total
+        subject_count += 1
+        if subject_min is None or total < subject_min:
+            subject_min = total
+        if total > 0:
+            if m[0].any() or m[-1].any() or m[:, 0].any() or m[:, -1].any():
+                subject_edge += 1
+            y1, y2 = max(0, y), min(m.shape[0], y + h)
+            x1, x2 = max(0, x), min(m.shape[1], x + w)
+            inside = int(m[y1:y2, x1:x2].sum())
+            cut = (total - inside) / total
+            if cut > 0.02:
+                clip_frames += 1
+            if cut > max_cut:
+                max_cut = cut
+
+    mean_step = 0.0
+    max_step = 0.0
+    if n > 1:
+        steps = []
+        prev = None
+        for x, y, w, h in out_boxes:
+            cx = x + w / 2.0
+            cy = y + h / 2.0
+            if prev is not None:
+                steps.append(math.hypot(cx - prev[0], cy - prev[1]))
+            prev = (cx, cy)
+        if steps:
+            mean_step = sum(steps) / len(steps)
+            max_step = max(steps)
+
+    min_dims = sorted(min(w, h) for _, _, w, h in out_boxes if min(w, h) > 0)
+    median_min_dim = min_dims[len(min_dims) // 2] if min_dims else 0
+    jitter = max_step / median_min_dim if median_min_dim > 0 else 0.0
+    areas = sorted(w * h for _, _, w, h in out_boxes if w > 0 and h > 0)
+    median_crop_area = areas[len(areas) // 2] if areas else 0
+    subject_share = subject_min / median_crop_area if (subject_min is not None and median_crop_area > 0) else None
+
+    return {
+        "frames": n,
+        "boxes": out_boxes,
+        "scores": score_list,
+        "min_score": min_score,
+        "confidence_threshold": threshold,
+        "low_confidence": low_confidence,
+        "subject_area": {"min": subject_min, "mean": round(subject_sum / subject_count, 1)} if subject_count else None,
+        "subject_share": round(subject_share, 3) if subject_share is not None else None,
+        "crop_clip": {"frames": clip_frames, "max_cut": round(max_cut, 3)},
+        "edge_touch": edge_touch,
+        "subject_edge": subject_edge,
+        "stability": {"mean_step": round(mean_step, 1), "max_step": round(max_step, 1), "jitter": round(jitter, 3)},
+    }
 
 
 _MASK_PREVIEW_TIMEOUT = 600.0
@@ -1069,7 +1234,11 @@ async def _run_mask_preview(wf, client_id):
             if status.get("completed"):
                 item = _extract_preview_item(entry)
                 if item:
-                    return web.json_response({"ok": True, "prompt_id": prompt_id, "kind": "video", **item})
+                    response = {"ok": True, "prompt_id": prompt_id, "kind": "video", **item}
+                    crop = _extract_crop_check(entry)
+                    if crop is not None:
+                        response["crop"] = crop
+                    return web.json_response(response)
                 return web.json_response(
                     {"ok": False, "error": "SAM 3 finished but wrote no preview file", "prompt_id": prompt_id},
                     status=500,
@@ -1504,5 +1673,42 @@ class H3AudioJoinSmooth:
         return (out,)
 
 
-NODE_CLASS_MAPPINGS = {"H3OneNode": H3OneNode, "H3CacheBust": H3CacheBust, "H3MaskVideoPrepare": H3MaskVideoPrepare, "H3IdentityAnchor": H3IdentityAnchor, "H3AudioTrim": H3AudioTrim, "H3AudioJoinSmooth": H3AudioJoinSmooth}
-NODE_DISPLAY_NAME_MAPPINGS = {"H3OneNode": "ALL in ONE MiniMaxH3", "H3CacheBust": "H3 Cache Fingerprint (internal)", "H3MaskVideoPrepare": "H3 Mask Video Prepare (internal)", "H3IdentityAnchor": "H3 Identity Anchor (internal)", "H3AudioTrim": "H3 Audio Trim (internal)", "H3AudioJoinSmooth": "H3 Audio Join Smooth (internal)"}
+class H3OneSAM3CropCheck:
+    """Hands the frontend a JSON report of the crop MVEx Subject Crop plans
+    around the tracked subject plus SAM3's own per-object confidence, so the
+    tracking preview can draw the crop box and flag shaky tracks before an H3
+    run. Purely additive: it only reads the mask pipeline and writes a UI
+    string, so wiring it into a real generation graph cannot change the output."""
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "bboxes": ("BOUNDING_BOX",),
+                "track_data": ("SAM3_TRACK_DATA",),
+            },
+            "optional": {
+                "masks": ("MASK",),
+                "confidence_threshold": ("FLOAT", {"default": 0.4, "min": 0.0, "max": 1.0, "step": 0.01}),
+            },
+        }
+
+    RETURN_TYPES = ("STRING",)
+    RETURN_NAMES = ("report",)
+    FUNCTION = "inspect"
+    CATEGORY = "One Node"
+    OUTPUT_NODE = True
+
+    def inspect(self, bboxes, track_data, masks=None, confidence_threshold=0.4):
+        scores = []
+        if isinstance(track_data, dict):
+            raw = track_data.get("scores") or []
+            if isinstance(raw, list):
+                scores = raw
+        report = _crop_report(bboxes, scores, masks=masks, confidence_threshold=confidence_threshold)
+        payload = json.dumps(report)
+        return {"result": (payload,), "ui": {"text": [payload]}}
+
+
+NODE_CLASS_MAPPINGS = {"H3OneNode": H3OneNode, "H3CacheBust": H3CacheBust, "H3MaskVideoPrepare": H3MaskVideoPrepare, "H3IdentityAnchor": H3IdentityAnchor, "H3AudioTrim": H3AudioTrim, "H3AudioJoinSmooth": H3AudioJoinSmooth, "H3OneSAM3CropCheck": H3OneSAM3CropCheck}
+NODE_DISPLAY_NAME_MAPPINGS = {"H3OneNode": "ALL in ONE MiniMaxH3", "H3CacheBust": "H3 Cache Fingerprint (internal)", "H3MaskVideoPrepare": "H3 Mask Video Prepare (internal)", "H3IdentityAnchor": "H3 Identity Anchor (internal)", "H3AudioTrim": "H3 Audio Trim (internal)", "H3AudioJoinSmooth": "H3 Audio Join Smooth (internal)", "H3OneSAM3CropCheck": "H3 Crop + Confidence Report (internal)"}

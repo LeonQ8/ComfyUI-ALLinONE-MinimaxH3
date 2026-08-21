@@ -6,6 +6,10 @@ Newest first.
 
 Mask mode can paint or describe a region in a source video, track it with SAM 3, replace it with H3 reference inpainting, and keep the rest of the video unchanged. A Mask target now defines what SAM tracks, so typing "face" tracks the face instead of the whole painted area, and the replacement region hugs the tracked object. The H3 crop also follows the object's own shape like the droz reference template instead of a fixed widescreen canvas, so the replacement gets more pixels and cleaner edges.
 
+ - Mask mode has a Preview tracking button that runs only the SAM 3 tracking part and shows what gets tracked as colored masks over the video, in seconds and before any H3 generation. The same overlay appears live during a real run, so you can Stop early if it caught the wrong thing.
+ - The tracking preview also draws the crop rectangle H3 will generate and reads the tracking confidence in plain words. It turns green when the track and crop are good, and shows a warning with a concrete fix when the track is weak, the crop cuts the subject, or the crop box jumps around.
+ - Mask mode audio is now a three-way choice: preserve the source soundtrack with lip-sync for talking heads, preserve it without lip-sync so a dancer does not appear to sing, or let H3 compose a new soundtrack.
+
 ## 0.8.0 (2026-08-19)
 
  - New + Queue button under Generate.

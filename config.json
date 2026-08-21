@@ -119,7 +119,7 @@
       "presets": [
         {
           "name": "Replace tracked subject",
-          "prompt": "subject_definitions:\n<Subject 1> is the replacement shown in <Picture 1>.\n\nsummary:\n[video editing] Replace the tracked subject with <Subject 1> while preserving the source video outside the mask.\n\nretention_analysis:\n<Subject 1>: fully_preserved - identity, clothing and details follow <Picture 1>.\n\ndetailed_description:\n[Shot 1] The original camera, action, lighting and background remain unchanged. <Subject 1> follows the tracked subject's position, scale and motion naturally and speaks the same words, mouth moving in sync with the original speech.\n\noverall_soundscape:\nKeep the source soundtrack unchanged.\n\nnon_diegetic_music:\nN/A"
+          "prompt": "subject_definitions:\n<Subject 1> is the replacement shown in <Picture 1>.\n\nsummary:\n[video editing] Replace the tracked subject with <Subject 1> while preserving the source video outside the mask.\n\nretention_analysis:\n<Subject 1>: fully_preserved - identity, clothing and details follow <Picture 1>.\n\ndetailed_description:\n[Shot 1] The original camera, action, lighting and background remain unchanged. <Subject 1> follows the tracked subject's position, scale and motion naturally.\n\noverall_soundscape:\nKeep the source soundtrack unchanged.\n\nnon_diegetic_music:\nN/A"
         }
       ]
     },

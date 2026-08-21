@@ -26,6 +26,13 @@ except Exception:  # pragma: no cover - CI hosts may not ship torch
     torch = None
     _HAS_TORCH = False
 
+try:
+    import numpy as np
+    _HAS_NUMPY = True
+except Exception:  # pragma: no cover - CI hosts may not ship numpy
+    np = None
+    _HAS_NUMPY = False
+
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 NODES_PATH = REPO_ROOT / "nodes.py"
@@ -203,6 +210,15 @@ class TestConfig(_NodesTestBase):
         mask = cfg.get("prompt_templates", {}).get("mask")
         self.assertIsInstance(mask, dict)
         self.assertTrue(mask.get("presets"))
+
+    def test_mask_preset_stays_audio_neutral(self):
+        cfg = self.nodes._load_builtin_config()
+        presets = cfg.get("prompt_templates", {}).get("mask", {}).get("presets", [])
+        self.assertTrue(presets, "mask presets should exist")
+        for preset in presets:
+            prompt = preset.get("prompt", "")
+            self.assertNotIn("speaks", prompt, "presets must not bake in lip-sync; the Audio mode owns it")
+            self.assertNotIn("mouth", prompt, "presets must not bake in lip-sync; the Audio mode owns it")
 
     def test_user_overrides_builtin(self):
         user = self.user_dir()
@@ -835,7 +851,7 @@ class TestMaskPreviewWorkflow(_NodesTestBase):
     def test_keeps_only_tracking_nodes_plus_preview(self):
         wf = self._build()
         ids = set(wf.keys())
-        self.assertEqual(ids, self.TRACKING | {"100"})
+        self.assertEqual(ids, self.TRACKING | {"100", "101"})
         class_types = {n["class_type"] for n in wf.values()}
         self.assertNotIn("MiniMaxH3ReferenceToVideo", class_types, "preview must not load H3")
         self.assertNotIn("SamplerCustomAdvanced", class_types)
@@ -848,6 +864,42 @@ class TestMaskPreviewWorkflow(_NodesTestBase):
         self.assertEqual(preview["inputs"]["track_data"], ["21", 0])
         self.assertEqual(preview["inputs"]["images"], ["18", 0])
         self.assertEqual(preview["inputs"]["fps"], 24.0)
+
+    def test_wires_crop_check_to_bboxes_track_and_mask(self):
+        wf = self._build()
+        report = wf["101"]
+        self.assertEqual(report["class_type"], "H3OneSAM3CropCheck")
+        self.assertEqual(report["inputs"]["bboxes"], ["24", 2])
+        self.assertEqual(report["inputs"]["track_data"], ["21", 0])
+        self.assertEqual(report["inputs"]["masks"], ["23", 0])
+        self.assertEqual(report["inputs"]["confidence_threshold"], 0.4)
+
+    def test_crop_check_mirrors_the_real_runs_subject_crop_dials(self):
+        wf = self._build(crop_scale=2.3, megapixels=0.5)
+        self.assertEqual(wf["24"]["inputs"]["mode.crop_scale"], 2.3)
+        self.assertEqual(wf["24"]["inputs"]["mode.aspect_ratio"], 0)
+        self.assertEqual(wf["24"]["inputs"]["upscale_megapixels"], 0.0)
+
+    def test_crop_check_clamps_bad_crop_scale(self):
+        wf = self._build(crop_scale="oops", megapixels="nope")
+        self.assertEqual(wf["24"]["inputs"]["mode.crop_scale"], 1.5)
+        self.assertEqual(wf["24"]["inputs"]["upscale_megapixels"], 0.0)
+
+    def test_extracts_the_crop_check_report(self):
+        entry = {
+            "status": {"completed": True},
+            "outputs": {
+                "100": {"videos": [{"filename": "sam3_track_preview_abc123.mp4", "subfolder": "", "type": "temp"}]},
+                "101": {"text": [json.dumps({"frames": 3, "boxes": [[0, 0, 100, 100]]})]},
+            },
+        }
+        crop = self.nodes._extract_crop_check(entry)
+        self.assertEqual(crop["frames"], 3)
+        self.assertEqual(crop["boxes"], [[0, 0, 100, 100]])
+
+    def test_extract_crop_check_returns_none_when_absent(self):
+        self.assertIsNone(self.nodes._extract_crop_check({"outputs": {"100": {"videos": []}}}))
+        self.assertIsNone(self.nodes._extract_crop_check({"outputs": {"101": {"text": ["not json"]}}}))
 
     def test_fills_the_same_fields_as_the_js_build(self):
         wf = self._build(duration=3, text="person", detection_threshold=0.8)
@@ -916,6 +968,140 @@ class TestMaskPreviewWorkflow(_NodesTestBase):
         self.assertLess(self.nodes._mask_preview_queue_number(-3), 0)
         self.assertEqual(self.nodes._mask_preview_queue_number(0), -1.0)
         self.assertEqual(self.nodes._mask_preview_queue_number(5), -6.0)
+
+
+class TestCropReport(_NodesTestBase):
+    def _boxes(self, *frame_boxes):
+        return [[b] for b in frame_boxes]
+
+    def _box(self, x, y, w, h):
+        return {"x": x, "y": y, "width": w, "height": h}
+
+    def test_scores_surface_min_confidence_and_low_flag(self):
+        report = self.nodes._crop_report(
+            self._boxes(self._box(0, 0, 100, 100), self._box(10, 0, 100, 100)),
+            [0.9, 0.31],
+            confidence_threshold=0.4,
+        )
+        self.assertEqual(report["min_score"], 0.31)
+        self.assertTrue(report["low_confidence"])
+        self.assertEqual(report["scores"], [0.9, 0.31])
+        self.assertEqual(report["frames"], 2)
+
+    def test_missing_scores_are_not_low_confidence(self):
+        report = self.nodes._crop_report(self._boxes(self._box(0, 0, 100, 100)), [])
+        self.assertIsNone(report["min_score"])
+        self.assertFalse(report["low_confidence"])
+
+    def test_clamps_out_of_range_scores(self):
+        report = self.nodes._crop_report(
+            self._boxes(self._box(0, 0, 100, 100)),
+            [1.9, -0.4, "x"],
+            confidence_threshold=0.4,
+        )
+        self.assertEqual(report["scores"], [1.0, 0.0])
+        self.assertTrue(report["low_confidence"])
+
+    def test_stability_measures_box_center_movement(self):
+        report = self.nodes._crop_report(
+            self._boxes(
+                self._box(0, 0, 100, 100),
+                self._box(0, 0, 100, 100),
+                self._box(30, 40, 100, 100),
+            ),
+            [],
+        )
+        self.assertEqual(report["stability"]["max_step"], 50.0)
+        self.assertEqual(report["stability"]["mean_step"], 25.0)
+        self.assertGreater(report["stability"]["jitter"], 0.0)
+
+    def test_empty_boxes_yield_a_safe_report(self):
+        report = self.nodes._crop_report([], [])
+        self.assertEqual(report["frames"], 0)
+        self.assertEqual(report["boxes"], [])
+        self.assertIsNone(report["min_score"])
+        self.assertFalse(report["low_confidence"])
+        self.assertEqual(report["stability"]["max_step"], 0.0)
+        self.assertEqual(report["crop_clip"]["frames"], 0)
+
+    def test_edge_touch_counts_boxes_pinned_at_the_frame_border(self):
+        report = self.nodes._crop_report(
+            self._boxes(self._box(10, 10, 100, 100), self._box(0, 0, 200, 200)),
+            [],
+            width=200,
+            height=200,
+        )
+        self.assertEqual(report["edge_touch"], 1)
+
+    @unittest.skipUnless(_HAS_NUMPY, "numpy not available")
+    def test_mask_clipping_counts_frames_where_the_crop_cuts_the_subject(self):
+        masks = np.zeros((2, 100, 100), dtype=bool)
+        masks[0, 10:80, 10:80] = True
+        masks[1, 10:80, 10:80] = True
+        boxes = self._boxes(
+            self._box(20, 20, 40, 40),
+            self._box(0, 0, 90, 90),
+        )
+        report = self.nodes._crop_report(boxes, [], masks=masks)
+        self.assertEqual(report["crop_clip"]["frames"], 1)
+        self.assertGreater(report["crop_clip"]["max_cut"], 0.0)
+        self.assertGreater(report["subject_area"]["min"], 0)
+
+    @unittest.skipUnless(_HAS_NUMPY, "numpy not available")
+    def test_mask_subject_inside_the_crop_is_not_clipped(self):
+        masks = np.zeros((1, 100, 100), dtype=bool)
+        masks[0, 30:60, 30:60] = True
+        report = self.nodes._crop_report(
+            self._boxes(self._box(20, 20, 60, 60)),
+            [],
+            masks=masks,
+        )
+        self.assertEqual(report["crop_clip"]["frames"], 0)
+        self.assertEqual(report["crop_clip"]["max_cut"], 0.0)
+
+    @unittest.skipUnless(_HAS_NUMPY, "numpy not available")
+    def test_subject_edge_counts_frames_touching_the_frame_border(self):
+        masks = np.zeros((2, 100, 100), dtype=bool)
+        masks[0, 30:60, 30:60] = True
+        masks[1, 0:10, 40:60] = True
+        report = self.nodes._crop_report(
+            self._boxes(self._box(0, 0, 100, 100), self._box(0, 0, 100, 100)),
+            [],
+            masks=masks,
+            width=100,
+            height=100,
+        )
+        self.assertEqual(report["subject_edge"], 1)
+
+    @unittest.skipUnless(_HAS_TORCH, "torch not available")
+    def test_torch_masks_are_handled(self):
+        masks = torch.zeros((1, 100, 100))
+        masks[0, 30:60, 30:60] = 1.0
+        report = self.nodes._crop_report(
+            self._boxes(self._box(20, 20, 60, 60)),
+            [],
+            masks=masks,
+        )
+        self.assertEqual(report["crop_clip"]["frames"], 0)
+        self.assertEqual(report["subject_area"]["min"], 900)
+
+    def test_node_inspect_returns_json_and_ui(self):
+        node = self.nodes.H3OneSAM3CropCheck()
+        boxes = [[{"x": 0, "y": 0, "width": 100, "height": 100}]]
+        result = node.inspect(boxes, {"scores": [0.9]}, masks=None, confidence_threshold=0.4)
+        payload = result["result"][0]
+        data = json.loads(payload)
+        self.assertEqual(data["frames"], 1)
+        self.assertEqual(data["boxes"], [[0, 0, 100, 100]])
+        self.assertEqual(data["min_score"], 0.9)
+        self.assertEqual(result["ui"]["text"], [payload])
+
+    def test_node_inspect_ignores_non_sam_track_data(self):
+        node = self.nodes.H3OneSAM3CropCheck()
+        result = node.inspect([[{"x": 0, "y": 0, "width": 100, "height": 100}]], None)
+        data = json.loads(result["result"][0])
+        self.assertEqual(data["scores"], [])
+        self.assertFalse(data["low_confidence"])
 
 
 class TestAudioJoinSmooth(_NodesTestBase):

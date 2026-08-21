@@ -376,3 +376,112 @@ export function mapMaskPoint(clientX, clientY, rect, width, height) {
   const y = Math.max(0, Math.min(h - 1, (Number(clientY) - Number(rect.top || 0)) * h / rh));
   return { x, y };
 }
+
+// Map a video playback time to the SAM3 overlay frame index. The overlay video
+// is written at `fps` with one frame per tracked input frame, and MVEx Subject
+// Crop emits one box per frame, so this index also indexes the crop report's
+// boxes array.
+export function cropFrameIndex(time, fps, frames) {
+  const n = Number(frames);
+  if (!Number.isFinite(n) || n <= 0) return 0;
+  const f = Number(fps) > 0 ? Number(fps) : 24;
+  const idx = Math.round(Number(time) * f);
+  return Math.max(0, Math.min(n - 1, idx));
+}
+
+// First crop box for the given frame, as a [x, y, width, height] tuple, or
+// null when the report has no boxes. Malformed entries are skipped so a stale
+// or partial report can never crash the overlay.
+export function cropBoxAt(boxes, index) {
+  if (!Array.isArray(boxes) || !boxes.length) return null;
+  const idx = Math.max(0, Math.min(boxes.length - 1, Math.floor(Number(index) || 0)));
+  const b = boxes[idx];
+  if (!Array.isArray(b) || b.length !== 4) return null;
+  for (const v of b) {
+    if (!Number.isFinite(Number(v))) return null;
+  }
+  return b.map(Number);
+}
+
+// Human readout for the crop + confidence report the backend returns. Pure so
+// the verdict and wording are unit-testable. Returns
+//   { verdict: "ok" | "flagged", label: string, detail: string, tip: string | null }
+// `label` is one short plain sentence for the card note (colored green or amber
+// by `verdict`), `detail` is the same verdict with the technical numbers for
+// the enlarged lightbox, and `tip` is a concrete next step shown only when
+// flagged. Truthful by construction: it reports SAM3's own per-object score
+// (1.0 for a painted-mask seed means "no detection score", not confidence).
+// Frame-edge contact is informational, not a verdict flag: a full-frame
+// subject legitimately pins the crop, so it is noted in the detail instead of
+// turning the readout amber.
+export function cropReportText(report) {
+  const r = report || {};
+  const frames = Number(r.frames) || 0;
+  const hasBoxes = Array.isArray(r.boxes) && r.boxes.length > 0;
+  if (frames < 1 || !hasBoxes) {
+    return { verdict: "none", label: "No crop was measured for this track.", detail: "No crop boxes were measured.", tip: null };
+  }
+  const pct = (v) => `${Math.round((Number(v) || 0) * 100)}%`;
+  const issues = [];
+  const issuesSimple = [];
+  const notes = [];
+  const scores = Array.isArray(r.scores) ? r.scores : [];
+  const allSeeded = scores.length > 0 && scores.every((s) => Number(s) >= 0.999);
+  if (r.low_confidence && Number.isFinite(Number(r.min_score))) {
+    issues.push(`low confidence ${pct(r.min_score)} (below ${pct(r.confidence_threshold)})`);
+    issuesSimple.push(`the track is weak (${pct(r.min_score)} confidence)`);
+  }
+  const clip = r.crop_clip || {};
+  if (Number(clip.frames) > 0) {
+    if (clip.max_cut >= 0.05) {
+      issues.push(`crop cuts the subject (up to ${pct(clip.max_cut)})`);
+      issuesSimple.push(`the box cuts off part of the subject (up to ${pct(clip.max_cut)})`);
+    } else {
+      issues.push("crop clips the subject slightly");
+      issuesSimple.push("the box clips the subject slightly");
+    }
+  }
+  const st = r.stability || {};
+  const jitterPct = Math.round((Number(st.jitter) || 0) * 100);
+  if (Number(st.jitter) > 0.06) {
+    issues.push(`crop jumps ${Math.round(st.max_step || 0)}px (~${jitterPct}% of crop) between frames`);
+    issuesSimple.push(`the box jumps around (${Math.round(st.max_step || 0)}px between frames)`);
+  }
+  const sa = r.subject_area || {};
+  const tiny = Number.isFinite(Number(r.subject_share)) && Number(r.subject_share) < 0.04 && Number(sa.min) > 0;
+  if (tiny) {
+    issues.push(`subject is very small (${Math.round(Number(sa.min))} px)`);
+    issuesSimple.push("the subject is very small in the frame");
+  }
+  if (Number(r.edge_touch) > 0) notes.push("crop is pinned at the frame edge");
+  if (Number(r.subject_edge) > 0) notes.push("subject touches the frame edge");
+
+  if (issues.length) {
+    let tip = null;
+    if (r.low_confidence && Number.isFinite(Number(r.min_score))) {
+      tip = "Raise the Detection slider or use a clearer Mask target, then Preview tracking again.";
+    } else if (Number(clip.frames) > 0) {
+      tip = "Increase Crop padding so the box holds the whole subject, then Preview tracking again.";
+    } else if (Number(st.jitter) > 0.06) {
+      tip = "Increase Crop padding (a bigger box moves less) or tighten Detection for a steadier mask.";
+    } else if (tiny) {
+      tip = "Increase Crop padding for more pixels, or use a higher-resolution source video.";
+    }
+    return {
+      verdict: "flagged",
+      label: `Crop flagged - ${issuesSimple.join("; ")}.`,
+      detail: `Crop flagged: ${issues.join("; ")}.`,
+      tip,
+    };
+  }
+
+  const conf = allSeeded
+    ? "seeded track (no detection score)"
+    : Number.isFinite(Number(r.min_score))
+      ? `min confidence ${pct(r.min_score)}`
+      : "no confidence data";
+  const subject = Number.isFinite(Number(sa.min)) ? `, min ${Math.round(Number(sa.min))} px subject` : "";
+  const note = notes.length ? ` (${notes.join(", ")})` : "";
+  const detail = `Crop OK: ${conf}, steady (worst jump ${Math.round(Number(st.max_step) || 0)}px, ~${jitterPct}% of crop), subject inside${subject}${note}.`;
+  return { verdict: "ok", label: "Crop looks good - the box holds the subject steadily and nothing is cut off.", detail, tip: null };
+}

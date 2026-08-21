@@ -222,6 +222,62 @@ function maskTrackingPlan(hasPaintedMask,textTarget){
   return {maxObjects:1,objectIndices:"0",seedPaint:!!hasPaintedMask&&!hasText};
 }
 
+function cropFrameIndex(time,fps,frames){
+  const n=Number(frames);
+  if(!Number.isFinite(n)||n<=0) return 0;
+  const f=Number(fps)>0?Number(fps):24;
+  return Math.max(0,Math.min(n-1,Math.round(Number(time)*f)));
+}
+
+function cropBoxAt(boxes,index){
+  if(!Array.isArray(boxes)||!boxes.length) return null;
+  const idx=Math.max(0,Math.min(boxes.length-1,Math.floor(Number(index)||0)));
+  const b=boxes[idx];
+  if(!Array.isArray(b)||b.length!==4) return null;
+  for(const v of b){ if(!Number.isFinite(Number(v))) return null; }
+  return b.map(Number);
+}
+
+function cropReportText(report){
+  const r=report||{};
+  const frames=Number(r.frames)||0;
+  const hasBoxes=Array.isArray(r.boxes)&&r.boxes.length>0;
+  if(frames<1||!hasBoxes) return {verdict:"none",label:"No crop was measured for this track.",detail:"No crop boxes were measured.",tip:null};
+  const pct=(v)=>`${Math.round((Number(v)||0)*100)}%`;
+  const issues=[];
+  const issuesSimple=[];
+  const notes=[];
+  const scores=Array.isArray(r.scores)?r.scores:[];
+  const allSeeded=scores.length>0&&scores.every(s=>Number(s)>=0.999);
+  if(r.low_confidence&&Number.isFinite(Number(r.min_score))){ issues.push(`low confidence ${pct(r.min_score)} (below ${pct(r.confidence_threshold)})`); issuesSimple.push(`the track is weak (${pct(r.min_score)} confidence)`); }
+  const clip=r.crop_clip||{};
+  if(Number(clip.frames)>0){
+    if(clip.max_cut>=0.05){ issues.push(`crop cuts the subject (up to ${pct(clip.max_cut)})`); issuesSimple.push(`the box cuts off part of the subject (up to ${pct(clip.max_cut)})`); }
+    else{ issues.push("crop clips the subject slightly"); issuesSimple.push("the box clips the subject slightly"); }
+  }
+  const st=r.stability||{};
+  const jitterPct=Math.round((Number(st.jitter)||0)*100);
+  if(Number(st.jitter)>0.06){ issues.push(`crop jumps ${Math.round(st.max_step||0)}px (~${jitterPct}% of crop) between frames`); issuesSimple.push(`the box jumps around (${Math.round(st.max_step||0)}px between frames)`); }
+  const sa=r.subject_area||{};
+  const tiny=Number.isFinite(Number(r.subject_share))&&Number(r.subject_share)<0.04&&Number(sa.min)>0;
+  if(tiny){ issues.push(`subject is very small (${Math.round(Number(sa.min))} px)`); issuesSimple.push("the subject is very small in the frame"); }
+  if(Number(r.edge_touch)>0) notes.push("crop is pinned at the frame edge");
+  if(Number(r.subject_edge)>0) notes.push("subject touches the frame edge");
+  if(issues.length){
+    let tip=null;
+    if(r.low_confidence&&Number.isFinite(Number(r.min_score))) tip="Raise the Detection slider or use a clearer Mask target, then Preview tracking again.";
+    else if(Number(clip.frames)>0) tip="Increase Crop padding so the box holds the whole subject, then Preview tracking again.";
+    else if(Number(st.jitter)>0.06) tip="Increase Crop padding (a bigger box moves less) or tighten Detection for a steadier mask.";
+    else if(tiny) tip="Increase Crop padding for more pixels, or use a higher-resolution source video.";
+    return {verdict:"flagged",label:`Crop flagged - ${issuesSimple.join("; ")}.`,detail:`Crop flagged: ${issues.join("; ")}.`,tip};
+  }
+  const conf=allSeeded?"seeded track (no detection score)":(Number.isFinite(Number(r.min_score))?`min confidence ${pct(r.min_score)}`:"no confidence data");
+  const subject=Number.isFinite(Number(sa.min))?`, min ${Math.round(Number(sa.min))} px subject`:"";
+  const note=notes.length?` (${notes.join(", ")})`:"";
+  const detail=`Crop OK: ${conf}, steady (worst jump ${Math.round(Number(st.max_step)||0)}px, ~${jitterPct}% of crop), subject inside${subject}${note}.`;
+  return {verdict:"ok",label:"Crop looks good - the box holds the subject steadily and nothing is cut off.",detail,tip:null};
+}
+
 // Inject a lip-sync directive into a Mask prompt that preserves the source
 // soundtrack. The masked face is regenerated from noise each frame, so the
 // model needs the preserved speech (<Audio 1>) to animate the mouth. Mirrored
@@ -1561,7 +1617,7 @@ app.registerExtension({
           maskTarget:      saved.maskTarget||"",
           maskThreshold:   Number.isFinite(Number(saved.maskThreshold))?Number(saved.maskThreshold):0.5,
           maskCropScale:   Number.isFinite(Number(saved.maskCropScale))?Number(saved.maskCropScale):1.5,
-          maskRegenerateAudio: saved.maskRegenerateAudio===true,
+          maskAudioMode: ["preserve","preserve_no_lipsync","regenerate"].includes(saved.maskAudioMode)?saved.maskAudioMode:(saved.maskRegenerateAudio===true?"regenerate":"preserve"),
           kf:              (Array.isArray(saved.kf)&&saved.kf.length)?saved.kf.map(k=>({img:k.img||null,pos:k.pos||0,width:(k&&Number(k.width))||null,height:(k&&Number(k.height))||null})):[{img:null,pos:1,width:null,height:null},{img:null,pos:62,width:null,height:null},{img:null,pos:124,width:null,height:null}],
           chainClips:      Array.isArray(saved.chainClips)&&saved.chainClips.length? saved.chainClips : [{prompt:"",duration:5},{prompt:"",duration:5}],
           models:          Object.assign({}, DEFAULT_MODELS, saved.models||{}),
@@ -1650,7 +1706,7 @@ function persist(){
           audioFile:S.audioFile,extendVideo:S.extendVideo,extendVideoSize:S.extendVideoSize,
           maskVideo:S.maskVideo,maskVideoSize:S.maskVideoSize,maskSeed:S.maskSeed,
           maskTarget:S.maskTarget,maskThreshold:S.maskThreshold,maskCropScale:S.maskCropScale,
-          maskRegenerateAudio:S.maskRegenerateAudio,
+          maskAudioMode:S.maskAudioMode,
           kf:(S.kf||[]).map(k=>({img:k.img||null,pos:k.pos||0,width:k.width||null,height:k.height||null})),
           models:S.models,speedLora:S.speedLora,audioOn:S.audioOn,fps:S.fps,
           soundEnabled:S.soundEnabled,sound:S.sound,accent:S.accent,mcLength:S.mcLength,
@@ -3381,33 +3437,48 @@ function persist(){
       const maskPreviewBox=mk("div",{width:"150px",height:"84px",flexShrink:"0",background:"#000",borderRadius:"6px",overflow:"hidden",display:"flex",alignItems:"center",justifyContent:"center",position:"relative"});
       const maskPaintState=mk("div",{fontSize:"8px",color:C.muted,lineHeight:"1.4",textAlign:"center",marginTop:"3px"});
       maskPreviewCol.append(maskPreviewBox,maskPaintState);
-      const maskPreviewNote=mk("div",{flex:"1",minWidth:"0",fontSize:"9px",color:C.muted,lineHeight:"1.5"});
-      maskPreviewRow.append(maskPreviewCol,maskPreviewNote);
+      const maskPreviewNote=mk("div",{fontSize:"9px",color:C.muted,lineHeight:"1.5"});
+      const maskCropNote=mk("div",{fontSize:"9px",fontWeight:"700",lineHeight:"1.5"});
+      const maskNoteCol=mk("div",{flex:"1",minWidth:"0",display:"flex",flexDirection:"column",gap:"4px"});
+      maskNoteCol.append(maskPreviewNote,maskCropNote);
+      maskPreviewRow.append(maskPreviewCol,maskNoteCol);
       maskPreviewRow.onclick=()=>{ if(_trackingPreviewUrl) _openTrackingLightbox(); else maskPaintBtn.onclick(); };
       maskArea.appendChild(maskPreviewRow);
 
       let _maskPrevToken=0;
       let _trackingPreviewUrl=null;
       let _trackingPreviewItem=null;
+      const _setMaskNote=(text)=>{maskPreviewNote.style.color=C.muted;tx(maskPreviewNote,text);};
+      const _setCropNote=(report)=>{
+        let rtext=null;
+        try{rtext=cropReportText(report||null);}catch(e){rtext=null;}
+        if(rtext){
+          maskCropNote.style.color=rtext.verdict==="flagged"?C.warn:(rtext.verdict==="ok"?C.lime:C.muted);
+          tx(maskCropNote,rtext.label+(rtext.tip?"\n→ "+rtext.tip:""));
+        }else{
+          maskCropNote.textContent="";
+        }
+      };
       const _renderMaskPreview=async()=>{
         const token=++_maskPrevToken;
         _trackingPreviewUrl=null;
+        _setCropNote(null);
         maskPreviewBox.innerHTML="";
         if(!S.maskVideo){
-          tx(maskPreviewNote,"Add a source video first. Once it is loaded, click here to paint the region to replace.");
+          _setMaskNote("Add a source video first. Once it is loaded, click here to paint the region to replace.");
           const ph=mk("div",{fontSize:"9px",color:C.muted,padding:"4px",textAlign:"center",lineHeight:"1.4"});tx(ph,"No source video");
           maskPreviewBox.appendChild(ph);
           return;
         }
         if(!S.maskSeed){
-          tx(maskPreviewNote,"No painted mask yet. Click here to paint the full region to replace, or enter a Mask target below and let SAM 3 detect it.");
+          _setMaskNote("No painted mask yet. Click here to paint the full region to replace, or enter a Mask target below and let SAM 3 detect it.");
           const ph=mk("div",{fontSize:"9px",color:C.muted,padding:"4px",textAlign:"center",lineHeight:"1.4"});tx(ph,"No mask\npainted");
           maskPreviewBox.appendChild(ph);
           return;
         }
         const spin=mk("div",{fontSize:"9px",color:C.muted,padding:"4px",textAlign:"center"});tx(spin,"Loading preview...");
         maskPreviewBox.appendChild(spin);
-        tx(maskPreviewNote,"Mask ready. Click the preview to adjust the painted region, then Generate.");
+        _setMaskNote("Mask ready. Click the preview to adjust the painted region, then Generate.");
         const BOX_W=150,BOX_H=84;
         const canvas=mk("canvas",{display:"block"});
         const ctx=canvas.getContext("2d");
@@ -3466,46 +3537,123 @@ function persist(){
         maskPreviewBox.appendChild(cap);
       };
 
+      let _trackingRafStop=null;
+      let _trackingBaseNote="";
+      let _trackingLivePid=null;
+      const _drawCropOverlay=(canvas,vid,fps)=>{
+        const rec=self._h3_cropCheck||null;
+        const report=rec&&rec.crop?rec.crop:null;
+        if(!report) return;
+        const vw=vid.videoWidth||0,vh=vid.videoHeight||0;
+        if(!(vw>0)||!(vh>0)) return;
+        const rect=vid.getBoundingClientRect();
+        const cw=Math.max(1,Math.round(rect.width||vw)),ch=Math.max(1,Math.round(rect.height||vh));
+        if(canvas.width!==cw)canvas.width=cw;
+        if(canvas.height!==ch)canvas.height=ch;
+        const ctx=canvas.getContext("2d");
+        ctx.clearRect(0,0,cw,ch);
+        const idx=cropFrameIndex(vid.currentTime||0,fps,report.frames);
+        const box=cropBoxAt(report.boxes,idx);
+        if(!box) return;
+        const sx=cw/vw,sy=ch/vh;
+        const x=Math.round(box[0]*sx),y=Math.round(box[1]*sy),w=Math.max(1,Math.round(box[2]*sx)),h=Math.max(1,Math.round(box[3]*sy));
+        const flagged=!!report.low_confidence||Number((report.crop_clip||{}).frames)>0||Number((report.stability||{}).jitter)>0.06;
+        ctx.strokeStyle=flagged?"#ffb400":"#58e06f";
+        ctx.lineWidth=Math.max(1,Math.round(Math.min(cw,ch)/220));
+        ctx.strokeRect(x+.5,y+.5,Math.max(1,w-1),Math.max(1,h-1));
+        const fontPx=Math.max(9,Math.round(Math.min(cw,ch)/55));
+        ctx.font=`${fontPx}px ui-monospace,monospace`;
+        const label=`#${idx}${Array.isArray(report.scores)&&report.scores.length?` · ${Math.round(Number(report.scores[0])*100)}%`:""}`;
+        const tw=Math.ceil(ctx.measureText(label).width)+10,chipH=fontPx+8;
+        const chipX=Math.max(0,x),chipY=Math.max(0,y-chipH);
+        ctx.fillStyle="rgba(0,0,0,.6)";
+        ctx.fillRect(chipX,chipY,tw,chipH);
+        ctx.fillStyle=flagged?"#ffb400":"#58e06f";
+        ctx.fillText(label,chipX+5,chipY+fontPx+2);
+      };
+      const _trackingRafStart=(canvas,vid,fps)=>{
+        let running=false;
+        const tick=()=>{ if(!running||!canvas.isConnected) return; _drawCropOverlay(canvas,vid,fps); if(vid.paused){running=false;return;} requestAnimationFrame(tick); };
+        vid.addEventListener("play",()=>{ if(!running){running=true;requestAnimationFrame(tick);} });
+        vid.addEventListener("seeked",()=>_drawCropOverlay(canvas,vid,fps));
+        vid.addEventListener("loadeddata",()=>_drawCropOverlay(canvas,vid,fps));
+        _drawCropOverlay(canvas,vid,fps);
+        if(!vid.paused){running=true;requestAnimationFrame(tick);}
+        return ()=>{running=false;};
+      };
+      const _setTrackingNote=(live,baseNote,report)=>{
+        _trackingBaseNote=baseNote;
+        _setMaskNote(baseNote);
+        const rec=self._h3_cropCheck||null;
+        _setCropNote(report||(rec&&rec.crop)||null);
+      };
+      self._h3_cropCheckChanged=(rec)=>{
+        if(!rec||!rec.crop||typeof rec.crop!=="object") return;
+        self._h3_cropCheck=rec;
+        if(_trackingPreviewUrl&&_trackingBaseNote&&(!_trackingLivePid||rec.pid===_trackingLivePid)) _setCropNote(rec.crop);
+      };
       const _openTrackingLightbox=()=>{
         if(!_trackingPreviewUrl) return;
         const overlay=mk("div",{position:"fixed",inset:"0",zIndex:"1000001",background:"rgba(0,0,0,.92)",display:"flex",alignItems:"center",justifyContent:"center",flexDirection:"column",gap:"12px",padding:"24px",boxSizing:"border-box",cursor:"zoom-out"});
-        const player=mk("video",{maxWidth:"94vw",maxHeight:"86vh",background:"#000",border:`1px solid ${C.borderH}`,borderRadius:"8px",objectFit:"contain",boxShadow:"0 24px 80px rgba(0,0,0,.9)"},{muted:true,autoplay:true,loop:true,playsInline:true,controls:true,preload:"auto"});
+        const stage=mk("div",{position:"relative",display:"flex",alignItems:"center",justifyContent:"center",maxWidth:"94vw",maxHeight:"86vh"});
+        const player=mk("video",{width:"100%",maxHeight:"82vh",background:"#000",border:`1px solid ${C.borderH}`,borderRadius:"8px",objectFit:"contain",boxShadow:"0 24px 80px rgba(0,0,0,.9)"},{muted:true,autoplay:true,loop:true,playsInline:true,controls:true,preload:"auto"});
+        const canvas=mk("canvas",{position:"absolute",inset:"0",width:"100%",height:"100%",pointerEvents:"none"});
         player.src=_trackingPreviewUrl;
+        stage.append(player,canvas);
+        const rafStop=_trackingRafStart(canvas,player,24);
         const closeBtn=mk("button",{height:"32px",padding:"0 16px",borderRadius:"7px",border:`1px solid ${C.border}`,background:C.bg2,color:C.text,fontSize:"11px",fontWeight:"700",cursor:"pointer",outline:"none"},{type:"button"});
         tx(closeBtn,"Close");
-        const cap=mk("div",{fontSize:"10px",color:C.muted});tx(cap,"SAM3 tracking preview - the numbered masks show what gets tracked");
-        overlay.append(player,closeBtn,cap);
+        let rtext=null;
+        const _rec=self._h3_cropCheck||null;
+        try{rtext=cropReportText(_rec&&_rec.crop?_rec.crop:null);}catch(e){rtext=null;}
+        const cap=mk("div",{fontSize:"10px",color:rtext&&rtext.verdict==="flagged"?C.warn:C.muted,textAlign:"center",lineHeight:"1.5"});
+        tx(cap,rtext?`SAM3 tracking + crop box. ${rtext.detail}${rtext.tip?"\n→ "+rtext.tip:""}`:"SAM3 tracking preview - the numbered masks show what gets tracked");
+        overlay.append(stage,closeBtn,cap);
         const onKey=(e)=>{if(e.key==="Escape")close();};
-        const close=()=>{player.pause();player.removeAttribute("src");overlay.remove();document.removeEventListener("keydown",onKey);};
+        const close=()=>{rafStop();player.pause();player.removeAttribute("src");overlay.remove();document.removeEventListener("keydown",onKey);};
         document.addEventListener("keydown",onKey);
         overlay.onclick=(e)=>{if(e.target===overlay)close();};
         closeBtn.onclick=close;
         document.body.appendChild(overlay);
       };
-      const _showTrackingPreview=(item,live)=>{
+      const _showTrackingPreview=(item,live,pid)=>{
+        if(_trackingRafStop){_trackingRafStop();_trackingRafStop=null;}
+        _trackingLivePid=pid||null;
         _maskPrevToken++;
         _trackingPreviewItem=item;
         maskPreviewBox.innerHTML="";
+        const report=(item&&item.crop)||null;
+        if(report) self._h3_cropCheck={pid:null,crop:report};
+        else if(live){
+          const cur=self._h3_cropCheck||null;
+          if(!cur||cur.pid!==pid) self._h3_cropCheck=null;
+        }
+        else self._h3_cropCheck=null;
         _trackingPreviewUrl=api.apiURL(`/view?filename=${encodeURIComponent(item.filename)}&type=${encodeURIComponent(item.type||"temp")}&subfolder=${encodeURIComponent(item.subfolder||"")}&t=${Date.now()}`);
+        const wrap=mk("div",{position:"relative",width:"100%",height:"100%",display:"flex",alignItems:"center",justifyContent:"center",overflow:"hidden"});
         const v=mk("video",{width:"100%",height:"100%",objectFit:"contain",display:"block",background:"#000"},{muted:true,autoplay:true,loop:true,playsInline:true,preload:"auto"});
+        const canvas=mk("canvas",{position:"absolute",inset:"0",width:"100%",height:"100%",pointerEvents:"none"});
         v.src=_trackingPreviewUrl;
         const fail=()=>{
-          if(v.parentNode!==maskPreviewBox) return;
+          if(v.parentNode!==wrap) return;
           maskPreviewBox.innerHTML="";
+          _setCropNote(null);
           const ph=mk("div",{fontSize:"9px",color:C.err,padding:"4px",textAlign:"center",lineHeight:"1.4"});tx(ph,"Could not load the tracking preview");
           maskPreviewBox.appendChild(ph);
-          tx(maskPreviewNote,"The preview file could not be played. Try running Preview tracking again; if it persists, check the ComfyUI console.");
+          _setMaskNote("The preview file could not be played. Try running Preview tracking again; if it persists, check the ComfyUI console.");
         };
         v.onerror=fail;
-        maskPreviewBox.appendChild(v);
+        wrap.append(v,canvas);
+        maskPreviewBox.appendChild(wrap);
         const cap=mk("div",{position:"absolute",left:"0",right:"0",bottom:"0",background:"rgba(0,0,0,.55)",color:"#fff",fontSize:"8px",padding:"2px 6px",textAlign:"center",pointerEvents:"none"});
         tx(cap,"SAM3 tracking preview");
         maskPreviewBox.appendChild(cap);
-        tx(maskPreviewNote,live
+        _trackingRafStop=_trackingRafStart(canvas,v,24);
+        _setTrackingNote(live,live
           ? "SAM 3 is tracking this while the video generates. Click the preview to enlarge. If it caught the wrong thing, hit Stop to avoid wasting the run, then fix the Mask target or Detection."
-          : "This is what SAM 3 tracks. Numbered colored masks mean the object was detected; click the preview to enlarge. If the wrong thing is tracked, change the Mask target or Detection and run Preview tracking again.");
+          : "This is what SAM 3 tracks. Numbered colored masks mean the object was detected; click the preview to enlarge. If the wrong thing is tracked, change the Mask target or Detection and run Preview tracking again.",report);
       };
-      self._h3_maskTrackingOverlay=(item)=>_showTrackingPreview(item,true);
+      self._h3_maskTrackingOverlay=(item,pid)=>_showTrackingPreview(item,true,pid);
       let _maskPreviewBusy=false;
       const _previewTracking=async()=>{
         if(_maskPreviewBusy) return;
@@ -3517,16 +3665,17 @@ function persist(){
         if(ownMaskBusy){
           if(_trackingPreviewItem){
             _showTrackingPreview(_trackingPreviewItem,false);
-            tx(maskPreviewNote,"Showing the last SAM 3 tracking preview, which is what this run is tracking. If you changed the Mask target, the painted mask or the Detection since it was made, click Preview tracking again after the run finishes to check the new settings.");
+            _setMaskNote("Showing the last SAM 3 tracking preview, which is what this run is tracking. If you changed the Mask target, the painted mask or the Detection since it was made, click Preview tracking again after the run finishes to check the new settings.");
             return;
           }
           _maskPrevToken++;
           _trackingPreviewUrl=null;
+          _setCropNote(null);
           maskPreviewBox.innerHTML="";
           const ph=mk("div",{fontSize:"9px",color:C.lime,padding:"4px",textAlign:"center",lineHeight:"1.5"});
           tx(ph,"Live tracking\nis already showing");
           maskPreviewBox.appendChild(ph);
-          tx(maskPreviewNote,"This mask run already shows the SAM 3 tracking overlay live as it goes, so a separate preview is not needed - watch the preview box. If you changed the Mask target or Detection after the run started, click Preview tracking again once it finishes to check the new settings.");
+          _setMaskNote("This mask run already shows the SAM 3 tracking overlay live as it goes, so a separate preview is not needed - watch the preview box. If you changed the Mask target or Detection after the run started, click Preview tracking again once it finishes to check the new settings.");
           return;
         }
         const tracking=maskTrackingPlan(S.maskSeed,S.maskTarget);
@@ -3534,18 +3683,19 @@ function persist(){
         maskPreviewBtn.disabled=true;
         _maskPrevToken++;
         _trackingPreviewUrl=null;
+        _setCropNote(null);
         maskPreviewBox.innerHTML="";
         const spin=mk("div",{fontSize:"9px",color:C.muted,padding:"4px",textAlign:"center",lineHeight:"1.5"});
         const spinMain=mk("div",{});tx(spinMain,"Tracking...");
         const spinSub=mk("div",{fontSize:"8px",color:C.muted,marginTop:"2px"});tx(spinSub,"SAM 3 only, no H3 generation");
         spin.append(spinMain,spinSub);
         maskPreviewBox.appendChild(spin);
-        tx(maskPreviewNote,"Preview tracking is running. On the first run the SAM 3 checkpoint has to load, which can take about a minute.");
+        _setMaskNote("Preview tracking is running. On the first run the SAM 3 checkpoint has to load, which can take about a minute.");
         const noteToken=_maskPrevToken;
         fetch("/queue").then(r=>r.json()).then(q=>{
           if(_maskPrevToken!==noteToken) return;
           const running=(q&&Array.isArray(q.queue_running)&&q.queue_running.length)||0;
-          tx(maskPreviewNote, running>0
+          _setMaskNote(running>0
             ? "ComfyUI is busy with another job, so the preview runs right after it finishes. The preview is cheap and jumps ahead of anything else waiting in the queue."
             : "Preview tracking is running and jumps ahead of queued jobs, so only a running generation can delay it. On the first run the SAM 3 checkpoint has to load, which can take about a minute.");
         }).catch(()=>{});
@@ -3564,6 +3714,8 @@ function persist(){
             max_objects:tracking.maxObjects,
             object_indices:tracking.objectIndices,
             initial_mask:S.maskSeed||"",
+            crop_scale:Math.max(1,Math.min(4,Number(S.maskCropScale)||1.5)),
+            megapixels:_effectiveMaskCropMP(),
           }),signal:controller.signal});
           clearInterval(clock);
           let d=null;
@@ -3575,11 +3727,12 @@ function persist(){
           if(clock) clearInterval(clock);
           const timedOut=e&&(e.name==="AbortError"||e.name==="TimeoutError");
           maskPreviewBox.innerHTML="";
+          _setCropNote(null);
           const ph=mk("div",{fontSize:"9px",color:C.err,padding:"4px",textAlign:"center",lineHeight:"1.4"});
           tx(ph,timedOut?"Timed out waiting for the tracking preview. If a generation is running, it may have queued behind it; try again when the queue is idle.":"Tracking preview failed");
           maskPreviewBox.appendChild(ph);
           if(_h3ShowError)_h3ShowError("Tracking preview failed: "+fmtErr(e));
-          tx(maskPreviewNote,"Tracking preview failed. Adjust the Mask target or Detection and try again, or check the ComfyUI console.");
+          _setMaskNote("Tracking preview failed. Adjust the Mask target or Detection and try again, or check the ComfyUI console.");
         }finally{
           if(clock) clearInterval(clock);
           clearInterval(waitTimer);
@@ -3606,14 +3759,14 @@ function persist(){
       };
       const maskThresholdNI=NI("",S.maskThreshold,0,1,0.01,v=>{S.maskThreshold=v;persist();},"100%");
       const maskCropNI=NI("",S.maskCropScale,1,4,0.05,v=>{S.maskCropScale=v;persist();},"100%");
-      const maskAudioBox=mk("div",{height:"28px",display:"flex",alignItems:"center",justifyContent:"space-between",padding:"0 8px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"7px",boxSizing:"border-box"});
-      const maskAudioText=mk("span",{fontSize:"9px",color:C.text});tx(maskAudioText,S.maskRegenerateAudio?"Regenerate":"Preserve");
-      const maskAudioToggle=MiniToggle(S.maskRegenerateAudio,v=>{S.maskRegenerateAudio=v;tx(maskAudioText,v?"Regenerate":"Preserve");persist();},"Regenerate audio inside the H3 latent instead of keeping the source soundtrack");
-      maskAudioBox.append(maskAudioText,maskAudioToggle.el);
+      const AUDIO_MODES=["Preserve + lip-sync","Preserve (no lip-sync)","Regenerate"];
+      const AUDIO_KEY={"Preserve + lip-sync":"preserve","Preserve (no lip-sync)":"preserve_no_lipsync","Regenerate":"regenerate"};
+      const AUDIO_LABEL={preserve:"Preserve + lip-sync",preserve_no_lipsync:"Preserve (no lip-sync)",regenerate:"Regenerate"};
+      const maskAudioDD=DD(AUDIO_MODES,AUDIO_LABEL[S.maskAudioMode]||"Preserve + lip-sync",v=>{S.maskAudioMode=AUDIO_KEY[v]||"preserve";persist();});
       maskOpts.append(
         maskField("Detection",maskThresholdNI,"SAM 3 text-detection threshold. Lower finds more candidates; higher is stricter."),
         maskField("Crop padding",maskCropNI,"Crop size relative to the tracked subject. 1 is tight; 1.5 leaves useful context."),
-        maskField("Audio",maskAudioBox,"Preserve keeps the source soundtrack and feeds it to H3 so the replacement's mouth moves in sync with the original speech. Regenerate asks H3 to create audio with the edited crop.")
+        maskField("Audio",maskAudioDD.el,"Preserve + lip-sync keeps the source soundtrack and drives the replacement's mouth from the source speech, for talking-head edits. Preserve (no lip-sync) keeps the soundtrack identical and adds no speech, for music or non-speaking clips. Regenerate asks H3 to compose a new soundtrack for the edited crop.")
       );
       maskArea.appendChild(maskOpts);
       const maskRefsBox=mk("div",{display:"flex",flexDirection:"column",gap:"6px"});maskArea.appendChild(maskRefsBox);
@@ -5059,16 +5212,13 @@ function persist(){
       const _finalPrompt=(userText,tplKey)=>{
         let text=(userText||"").trim();
         if(!text) return "";
-        const finish=(value)=>S.mode==="mask"&&S.maskRegenerateAudio
-          ?value.replace(/Keep the source soundtrack unchanged\./gi,"Regenerate the soundtrack to match the replacement action inside the edited clip; do not copy the source soundtrack.")
-          :value;
-        if(S.mode==="mask"&&!S.maskRegenerateAudio) text=maskSpeechSyncPrompt(text);
         if(S.mode==="extend"){
           const airlock="Hold the exact closing framing of the source video for about 2 seconds - same camera, same subject position, same lighting and same motion - then continue seamlessly with no visible cut: ";
           if(text.includes("integrated_multimodal_description")){
             text=text.replace(/\[Shot 1\]\s*/i, "[Shot 1] "+airlock);
           }
         }
+        let final;
         if(text.includes("integrated_multimodal_description")||text.includes("summary:")||text.includes("detailed_description:")){
           if(S.mode==="r2v"&&S.refAudios.length&&!text.includes("<Audio")){
             text=text.replace(/(retention_analysis:\s*)/i, "$1<Audio 1>: fully_copy - reused 1:1 as the target video's complete final audio track.\n");
@@ -5076,13 +5226,16 @@ function persist(){
               text=text.replace(/(overall_soundscape:\s*)/i, "$1The copied audio track <Audio 1> is the complete soundtrack. ");
             }
           }
-          return finish(text);
+          final=text;
+        } else {
+          const mode=tplKey||S.mode;
+          const tpl=_discTmpl[mode==="chain"?"chain":mode]||{};
+          const wrap=tpl.wrap;
+          final=wrap?wrap.split("{USER}").join(text):text;
         }
-        const mode=tplKey||S.mode;
-        const tpl=_discTmpl[mode==="chain"?"chain":mode]||{};
-        const wrap=tpl.wrap;
-        if(!wrap) return finish(text);
-        return finish(wrap.split("{USER}").join(text));
+        if(S.mode==="mask"&&S.maskAudioMode==="preserve") final=maskSpeechSyncPrompt(final);
+        if(S.mode==="mask"&&S.maskAudioMode==="regenerate") final=final.replace(/Keep the source soundtrack unchanged\./gi,"Regenerate the soundtrack to match the replacement action inside the edited clip; do not copy the source soundtrack.");
+        return final;
       };
 
       // -- Cache fingerprint + bust node -------------------------------------
@@ -5542,13 +5695,14 @@ function persist(){
           wf["6"].inputs.width=["25",0];
           wf["6"].inputs.height=["25",1];
           wf["6"].inputs.length=["18",4];
-          wf["30"].inputs.value=S.maskRegenerateAudio?1:0;
+          wf["30"].inputs.value=S.maskAudioMode==="regenerate"?1:0;
           wf["33"].inputs.feather=32;
-          if(S.maskRegenerateAudio) delete wf["6"].inputs["ref_audios.ref_audio_0"];
-          const maskAudio=S.maskRegenerateAudio?["13",0]:["18",2];
+          if(S.maskAudioMode==="regenerate") delete wf["6"].inputs["ref_audios.ref_audio_0"];
+          const maskAudio=S.maskAudioMode==="regenerate"?["13",0]:["18",2];
           if(wf["14"]){wf["14"].inputs.fps=["18",3];wf["14"].inputs.audio=maskAudio;}
           else if(wf["15"]&&wf["15"].class_type==="VHS_VideoCombine"){wf["15"].inputs.frame_rate=["18",3];wf["15"].inputs.audio=maskAudio;}
           wf["500"]={class_type:"SAM3_TrackPreview",inputs:{track_data:["21",0],images:["18",0],opacity:0.5,fps:24},_meta:{title:"Tracking Overlay"}};
+          wf["501"]={class_type:"H3OneSAM3CropCheck",inputs:{bboxes:["24",2],track_data:["21",0],masks:["23",0],confidence_threshold:0.4},_meta:{title:"Crop + Confidence Report"}};
         }
         return wf;
       };
@@ -6071,13 +6225,26 @@ function persist(){
     const d=evt.detail;
     const pid=d?.prompt_id;
     const out=d?.output||null;
+    if(d&&d.node==="501"&&out&&Array.isArray(out.text)&&out.text.length){
+      let crop=null;
+      try{crop=JSON.parse(out.text[out.text.length-1]);}catch(e){crop=null;}
+      if(crop&&typeof crop==="object"){
+        const qj=pid?_queuedJobs.get(pid):null;
+        const target=qj&&qj.node?qj.node:(_activeNode&&_batchIds.includes(pid)?_activeNode:null);
+        if(target){
+          target._h3_cropCheck={pid:pid,crop:crop};
+          if(target._h3_cropCheckChanged) target._h3_cropCheckChanged(target._h3_cropCheck);
+        }
+      }
+      return;
+    }
     const overlay=d&&d.node==="500"&&out?(out.videos||out.images||out.gifs||null):null;
     if(Array.isArray(overlay)&&overlay.length){
       const it=overlay[overlay.length-1];
       const item={filename:it.filename,subfolder:it.subfolder||"",type:it.type||"temp",kind:"video"};
       const qj=pid?_queuedJobs.get(pid):null;
-      if(qj&&qj.node&&qj.node._h3_maskTrackingOverlay) qj.node._h3_maskTrackingOverlay(item);
-      else if(_activeNode&&_batchIds.includes(pid)&&_activeNode._h3_maskTrackingOverlay) _activeNode._h3_maskTrackingOverlay(item);
+      if(qj&&qj.node&&qj.node._h3_maskTrackingOverlay) qj.node._h3_maskTrackingOverlay(item,pid);
+      else if(_activeNode&&_batchIds.includes(pid)&&_activeNode._h3_maskTrackingOverlay) _activeNode._h3_maskTrackingOverlay(item,pid);
       return;
     }
     const qentry=pid?_queuedJobs.get(pid):null;
