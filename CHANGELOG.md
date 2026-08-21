@@ -12,6 +12,7 @@ Newest first.
  - Preview tracking explains itself when SAM 3 finds nothing to track: it names the Mask target and the Detection level and suggests lowering Detection or using a clearer target, instead of a raw crop error.
  - A Mask run now refuses a Detection level of 90% or higher with an explanation, because SAM 3 almost never detects anything there, and shows the same guidance if tracking still comes back empty.
  - In the Smart mask tool, each click now shows a marker on the video: a green plus adds to the mask, a blue cross keeps that spot out, and Clear also resets the clicks. The Smart button explains both clicks when you hover over it.
+ - The paint editor has a Move tool: click the painted region and drag it into place if SAM 3 put it slightly off.
 
 ## 0.11.0 (2026-08-21)
 

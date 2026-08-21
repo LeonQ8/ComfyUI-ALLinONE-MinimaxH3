@@ -1176,7 +1176,7 @@ function openVideoMaskEditor({videoName,maskName,startTime,onSave,sam3Ckpt}){
     const toolBtn=(label)=>{const b=mk("button",{height:"30px",padding:"0 12px",borderRadius:"7px",border:`1px solid ${C.border}`,background:C.bg2,color:C.text,fontSize:"10px",fontWeight:"700",cursor:"pointer",outline:"none"},{type:"button"});tx(b,label);return b;};
     const zoomOutBtn=toolBtn("−"),zoomInBtn=toolBtn("+"),zoomFitBtn=toolBtn("Fit");
     const zoomLabel=mk("span",{fontSize:"9px",color:C.muted,minWidth:"38px",textAlign:"center"});tx(zoomLabel,"100%");
-    const drawBtn=toolBtn("Paint"),eraseBtn=toolBtn("Erase"),circleBtn=toolBtn("Circle"),squareBtn=toolBtn("Square"),smartBtn=toolBtn("Smart"),undoBtn=toolBtn("Undo"),redoBtn=toolBtn("Redo"),clearBtn=toolBtn("Clear");
+    const drawBtn=toolBtn("Paint"),eraseBtn=toolBtn("Erase"),circleBtn=toolBtn("Circle"),squareBtn=toolBtn("Square"),smartBtn=toolBtn("Smart"),moveBtn=toolBtn("Move"),undoBtn=toolBtn("Undo"),redoBtn=toolBtn("Redo"),clearBtn=toolBtn("Clear");
     smartBtn.title="Left-click the character to add it to the mask (green marker). Right-click anything to keep it out, like a mic (blue marker). Each click re-segments with all your clicks together.";
     const sizeLabel=mk("label",{display:"flex",alignItems:"center",gap:"6px",fontSize:"10px",color:C.muted});
     const sizeText=mk("span",{});tx(sizeText,"Brush 48 px");
@@ -1187,11 +1187,12 @@ function openVideoMaskEditor({videoName,maskName,startTime,onSave,sam3Ckpt}){
     const status=mk("div",{fontSize:"9px",color:C.muted,marginLeft:"auto"});tx(status,maskName?"Existing mask loaded":"No saved mask");
     const cancelBtn=toolBtn("Cancel"),saveBtn=toolBtn("Save mask");
     saveBtn.style.borderColor=C.lime;saveBtn.style.color=C.lime;
-    tools.append(zoomOutBtn,zoomInBtn,zoomFitBtn,zoomLabel,drawBtn,eraseBtn,circleBtn,squareBtn,smartBtn,undoBtn,redoBtn,clearBtn,sizeLabel,maskStats,status,cancelBtn,saveBtn);
+    tools.append(zoomOutBtn,zoomInBtn,zoomFitBtn,zoomLabel,drawBtn,eraseBtn,circleBtn,squareBtn,smartBtn,moveBtn,undoBtn,redoBtn,clearBtn,sizeLabel,maskStats,status,cancelBtn,saveBtn);
     panel.append(head,scrollBox,tools);overlay.appendChild(panel);document.body.appendChild(overlay);
 
     let mode="draw",drawing=false,last=null,activePointer=null,ready=false,closed=false,saving=false;
     let smart=false,smartBusy=false,posPts=[],negPts=[];
+    let moving=false,moveStart=null,moveSnapshot=null,moved=false;
     let zoom=1;
     let undoStack=[],redoStack=[],beforeState=null;
     const snap=()=>maskCtx.getImageData(0,0,maskCanvas.width,maskCanvas.height);
@@ -1213,9 +1214,11 @@ function openVideoMaskEditor({videoName,maskName,startTime,onSave,sam3Ckpt}){
       circleBtn.style.color=mode==="circle"?C.lime:C.text;
       squareBtn.style.borderColor=mode==="square"?C.lime:C.border;
       squareBtn.style.color=mode==="square"?C.lime:C.text;
+      moveBtn.style.borderColor=mode==="move"?C.lime:C.border;
+      moveBtn.style.color=mode==="move"?C.lime:C.text;
       smartBtn.style.borderColor=smart?C.lime:C.border;
       smartBtn.style.color=smart?C.lime:C.text;
-      canvas.style.cursor=smart?"crosshair":(mode==="draw"?"crosshair":"crosshair");
+      canvas.style.cursor=smart?"crosshair":(mode==="move"?"move":(mode==="draw"?"crosshair":"crosshair"));
     };
     const exitSmart=()=>{
       if(!smart) return;
@@ -1402,6 +1405,15 @@ function openVideoMaskEditor({videoName,maskName,startTime,onSave,sam3Ckpt}){
         runSmart();
         return;
       }
+      if(mode==="move"){
+        e.preventDefault();
+        if(!ready||activePointer!==null) return;
+        const p=point(e);if(!p)return;
+        if(maskCtx.getImageData(p.x,p.y,1,1).data[3]<=8) return;
+        activePointer=e.pointerId;canvas.setPointerCapture(e.pointerId);
+        moveSnapshot=snap();beforeState=moveSnapshot;moveStart=p;moving=true;moved=false;
+        return;
+      }
       if(!ready||activePointer!==null) return;e.preventDefault();activePointer=e.pointerId;canvas.setPointerCapture(e.pointerId);drawing=true;beforeState=snap();
       const p=point(e);if(!p)return;
       if(mode==="circle"||mode==="square"){
@@ -1417,6 +1429,17 @@ function openVideoMaskEditor({videoName,maskName,startTime,onSave,sam3Ckpt}){
         e.preventDefault();
         scrollBox.scrollLeft=panScrollLeft-(e.clientX-panStartX);
         scrollBox.scrollTop=panScrollTop-(e.clientY-panStartY);
+        return;
+      }
+      if(moving&&e.pointerId===activePointer){
+        e.preventDefault();
+        const p=point(e);if(!p)return;
+        const dx=Math.max(-maskCanvas.width,Math.min(maskCanvas.width,p.x-moveStart.x));
+        const dy=Math.max(-maskCanvas.height,Math.min(maskCanvas.height,p.y-moveStart.y));
+        if(dx||dy) moved=true;
+        maskCtx.clearRect(0,0,maskCanvas.width,maskCanvas.height);
+        maskCtx.putImageData(moveSnapshot,dx,dy);
+        renderMask();
         return;
       }
       if(!drawing||e.pointerId!==activePointer) return;e.preventDefault();
@@ -1435,15 +1458,17 @@ function openVideoMaskEditor({videoName,maskName,startTime,onSave,sam3Ckpt}){
     const commitStroke=(e)=>{
       if(e.pointerId===panPointer){endPan();return;}
       if(e.pointerId!==activePointer)return;
-      if(beforeState){undoStack.push(beforeState);if(undoStack.length>20)undoStack.shift();redoStack.length=0;}
+      if(beforeState&&(mode!=="move"||moved)){undoStack.push(beforeState);if(undoStack.length>20)undoStack.shift();redoStack.length=0;}
       beforeState=null;
+      moving=false;moveSnapshot=null;moveStart=null;moved=false;
       drawing=false;last=null;shapeStart=null;shapeCurr=null;savedMask=null;activePointer=null;
       updateUndo();
     };
-    const cancelStroke=(e)=>{if(e.pointerId===panPointer){endPan();return;}if(e.pointerId!==activePointer)return;beforeState=null;drawing=false;last=null;shapeStart=null;shapeCurr=null;savedMask=null;activePointer=null;};
+    const cancelStroke=(e)=>{if(e.pointerId===panPointer){endPan();return;}if(e.pointerId!==activePointer)return;beforeState=null;moving=false;moveSnapshot=null;moveStart=null;moved=false;drawing=false;last=null;shapeStart=null;shapeCurr=null;savedMask=null;activePointer=null;};
     canvas.onpointerup=commitStroke;canvas.onpointercancel=cancelStroke;
     drawBtn.onclick=()=>{exitSmart();mode="draw";renderMode();};eraseBtn.onclick=()=>{exitSmart();mode="erase";renderMode();};
     circleBtn.onclick=()=>{exitSmart();mode="circle";renderMode();};squareBtn.onclick=()=>{exitSmart();mode="square";renderMode();};
+    moveBtn.onclick=()=>{exitSmart();mode="move";renderMode();tx(status,"Move - drag the painted region into place");status.style.color=C.muted;};
     smartBtn.onclick=()=>{
       if(smart){exitSmart();return;}
       smart=true;mode="draw";renderMode();

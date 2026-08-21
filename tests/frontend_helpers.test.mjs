@@ -1007,6 +1007,14 @@ test("bundle marks smart clicks visibly and explains the gestures", () => {
   assert.ok(bundle.includes("posPts.length=0;negPts.length=0"), "Clear must also reset the accumulated smart clicks");
 });
 
+test("bundle lets the user move the painted region into place", () => {
+  const bundle = readFileSync(bundlePath, "utf8");
+  assert.ok(bundle.includes("moveBtn=toolBtn(\"Move\")"), "the paint editor must expose a Move tool");
+  assert.ok(bundle.includes("moveSnapshot"), "Move must grab the mask before dragging");
+  assert.ok(bundle.includes("putImageData(moveSnapshot,dx,dy)"), "dragging must translate the grabbed mask");
+  assert.ok(bundle.includes('mode!=="move"||moved'), "a Move with no actual movement must not add an undo step");
+});
+
 test("lumaToAlpha turns an opaque black+white mask into a white mask with alpha", () => {
   const data = new Uint8ClampedArray([
     255, 255, 255, 255,
