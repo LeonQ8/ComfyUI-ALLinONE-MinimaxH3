@@ -1411,5 +1411,97 @@ class TestAudioJoinSmooth(_NodesTestBase):
         self.assertEqual(out[0]["waveform"].shape[-1], total)
 
 
+class TestSmartMask(_NodesTestBase):
+    def _stub_comfy_utils(self):
+        """Register the comfy helpers _smart_mask_segment needs so it runs
+        standalone. _install_stubs only wires comfy.model_base, so the smart
+        helper must get its own model_management/utils/mapping stubs."""
+        import sys
+
+        comfy = sys.modules.get("comfy")
+        comfy.__path__ = []
+        mm = sys.modules.get("comfy.model_management") or types.ModuleType("comfy.model_management")
+        sys.modules["comfy.model_management"] = mm
+        mm.get_torch_device = lambda: "cpu"
+        mm.load_model_gpu = lambda model: None
+        mm.intermediate_device = lambda: "cpu"
+        cu = sys.modules.get("comfy.utils") or types.ModuleType("comfy.utils")
+        sys.modules["comfy.utils"] = cu
+
+        def common_upscale(tensor, width, height, method, crop="disabled"):
+            return torch.nn.functional.interpolate(tensor, size=(height, width), mode="bilinear", align_corners=False)
+
+        cu.common_upscale = common_upscale
+        comfy.model_management = mm
+        comfy.utils = cu
+        return mm, cu
+
+    def _fake_model(self):
+        captured = {}
+
+        def forward_segment(self, _frame, point_inputs=None, mask_inputs=None, **kwargs):
+            if point_inputs is not None:
+                captured["point_coords"] = point_inputs["point_coords"]
+                captured["point_labels"] = point_inputs["point_labels"]
+            return torch.ones((1, 1, 1008, 1008)) * 2.0
+
+        decoder = type("Decoder", (), {"forward_segment": forward_segment})()
+        fake = type("Model", (), {})()
+        fake.diffusion_model = decoder
+        fake.get_dtype = lambda: torch.float32
+        model = type("Wrapped", (), {})()
+        model.model = fake
+        return model, captured
+
+    @unittest.skipUnless(_HAS_TORCH, "torch not available")
+    def test_segment_builds_point_inputs_and_thresholds(self):
+        self._stub_comfy_utils()
+        model, captured = self._fake_model()
+        image = torch.zeros((1, 40, 60, 3))
+        mask = self.nodes._smart_mask_segment(model, image, [(10, 10)], [(30, 20)], refine_iterations=2, threshold=0.5)
+        self.assertEqual(mask.shape, (40, 60))
+        self.assertEqual(mask.max().item(), 1.0)
+        labels = captured["point_labels"]
+        self.assertEqual(labels[0].tolist(), [1, 0])
+        coords = captured["point_coords"][0]
+        self.assertAlmostEqual(float(coords[0][0]), 10 / 60 * 1008, places=4)
+        self.assertAlmostEqual(float(coords[1][1]), 20 / 40 * 1008, places=4)
+
+    def test_parse_smart_points_normalizes_ints(self):
+        self.assertEqual(
+            self.nodes._parse_smart_points([{"x": 1.7, "y": 2.4}, {"x": "5", "y": 0}]),
+            [(2, 2), (5, 0)],
+        )
+
+    def test_parse_smart_points_rejects_bad_shape(self):
+        with self.assertRaises(ValueError):
+            self.nodes._parse_smart_points("nope")
+        with self.assertRaises(ValueError):
+            self.nodes._parse_smart_points([{"x": "a", "y": 1}])
+        with self.assertRaises(ValueError):
+            self.nodes._parse_smart_points([1, 2])
+
+    def test_clamp_smart_points_into_bounds(self):
+        pts = self.nodes._clamp_smart_points([(-5, 200), (300, -2)], 100, 50)
+        self.assertEqual(pts, [(0, 49), (99, 0)])
+
+    def test_clamp_smart_points_empty_frame(self):
+        self.assertEqual(self.nodes._clamp_smart_points([(1, 1)], 0, 0), [])
+
+    def test_smart_mask_route_rejects_missing_fields(self):
+        resp = _run(self.nodes.smart_mask(_FakeRequest({})))
+        self.assertEqual(resp.kwargs["status"], 400)
+        resp = _run(self.nodes.smart_mask(_FakeRequest({"source": "a.mp4"})))
+        self.assertEqual(resp.kwargs["status"], 400)
+        resp = _run(self.nodes.smart_mask(_FakeRequest({"source": "a.mp4", "ckpt_name": "x"})))
+        self.assertEqual(resp.kwargs["status"], 400)
+        resp = _run(self.nodes.smart_mask(_FakeRequest({"source": "a.mp4", "ckpt_name": "x", "positive": []})))
+        self.assertEqual(resp.kwargs["status"], 400)
+
+    def test_smart_mask_route_rejects_bad_json(self):
+        resp = _run(self.nodes.smart_mask(_FakeRequest("not a dict")))
+        self.assertEqual(resp.kwargs["status"], 400)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -1513,6 +1513,197 @@ async def mask_preview_progress(request):
     return web.json_response(_preview_progress_snapshot(str(request.query.get("token", "") or "")))
 
 
+# ---------------------------------------------------------------------------
+# Smart inpainting: SAM3 point-prompt click-to-segment for the mask editor
+# ---------------------------------------------------------------------------
+# Reproduces SAM3_Detect's point-prompt path in-process so a click in the paint
+# editor can produce an object-aware first-frame mask without a full queue run.
+# Positive points include the object, negative points carve it out (e.g. a mic
+# held in the hand). Kept as pure helpers so the backend tests can assert the
+# coordinate math and mask thresholding without a ComfyUI install.
+def _parse_smart_points(raw):
+    """Normalize a client point list to [(x, y)] int pairs, clamped later.
+
+    Accepts [{"x": int, "y": int}, ...] and returns a list of (int, int).
+    Raises ValueError for a non-list or a malformed entry so the route can
+    reject bad payloads instead of crashing mid-segment."""
+    if not isinstance(raw, list):
+        raise ValueError("expected a list of points")
+    out = []
+    for entry in raw:
+        if not isinstance(entry, dict):
+            raise ValueError("each point must be an object")
+        try:
+            x = int(round(float(entry.get("x", 0))))
+            y = int(round(float(entry.get("y", 0))))
+        except (TypeError, ValueError):
+            raise ValueError("point coordinates must be numeric")
+        out.append((x, y))
+    return out
+
+
+def _clamp_smart_points(points, width, height):
+    """Clamp pixel points into the frame bounds and drop empty frames."""
+    w, h = int(width), int(height)
+    if w <= 0 or h <= 0:
+        return []
+    out = []
+    for x, y in points:
+        out.append((max(0, min(w - 1, x)), max(0, min(h - 1, y))))
+    return out
+
+
+def _smart_mask_segment(model, image, positive, negative, refine_iterations=2, threshold=0.5):
+    """Run SAM3 point prompting on a single source-res frame and return a mask.
+
+    model: the SAM3 wrapped model (model.model.diffusion_model is the decoder).
+    image: [1, H, W, 3] float frame tensor in 0..1 (source resolution).
+    positive/negative: lists of (x, y) int pixel coords.
+    refine_iterations: SAM decoder refinement passes after the first point pass.
+    threshold: final binarization level.
+    Returns a [H, W] float mask tensor (1.0 on the object, 0.0 off) on the
+    same device the decoder ran on."""
+    import torch
+    import torch.nn.functional as F
+    import comfy.model_management
+    import comfy.utils
+
+    B, H, W, C = image.shape
+    frame_in = comfy.utils.common_upscale(image[..., :3].movedim(-1, 1), 1008, 1008, "bilinear", crop="disabled")
+    comfy.model_management.load_model_gpu(model)
+    device = comfy.model_management.get_torch_device()
+    dtype = model.model.get_dtype()
+    sam3_model = model.model.diffusion_model
+
+    all_coords = [[x / W * 1008, y / H * 1008] for x, y in positive] + \
+                 [[x / W * 1008, y / H * 1008] for x, y in negative]
+    all_labels = [1] * len(positive) + [0] * len(negative)
+    point_inputs = {
+        "point_coords": torch.tensor([all_coords], dtype=dtype, device=device),
+        "point_labels": torch.tensor([all_labels], dtype=torch.int32, device=device),
+    }
+
+    frame_t = frame_in.to(device=device, dtype=dtype)
+    mask_logit = sam3_model.forward_segment(frame_t, point_inputs=point_inputs)
+    for _ in range(max(0, int(refine_iterations) - 1)):
+        mask_logit = sam3_model.forward_segment(frame_t, mask_inputs=mask_logit)
+    mask = F.interpolate(mask_logit, size=(H, W), mode="bilinear", align_corners=False)
+    return (mask[0, 0] > float(threshold)).float()
+
+
+def _smart_mask_png(mask, width, height):
+    """Render a binary mask tensor to black+white PNG bytes."""
+    import io
+    import numpy as np
+    from PIL import Image
+    arr = (mask.detach().cpu().numpy() * 255).astype("uint8")
+    img = Image.fromarray(arr, mode="L").resize((int(width), int(height)), Image.NEAREST)
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def _mask_source_frame(path, start_time=0.0):
+    """Extract the frame at the trim start of a source video as a tensor.
+
+    Mirrors what LoadVideo + Video Slice at start_time hand SAM3 in a real run:
+    seek to the nearest frame at the given time and return [1, H, W, 3] float
+    plus (width, height). Falls back to frame 0 when the seek or container
+    cannot be read."""
+    import numpy as np
+    import torch
+    try:
+        import av
+    except Exception:
+        return None, None
+    try:
+        with av.open(path) as container:
+            stream = next(s for s in container.streams if s.type == "video")
+            stream.thread_type = "AUTO"
+            seconds = max(0.0, float(start_time))
+            if seconds > 0:
+                try:
+                    container.seek(int(seconds * stream.time_base.denominator), backward=True, stream=stream)
+                except Exception:
+                    pass
+            frame = next(iter(container.decode(stream)))
+            arr = frame.to_ndarray(format="rgb24")
+            h, w = arr.shape[:2]
+            f = torch.from_numpy(arr.astype(np.float32) / 255.0)[None,]
+            return f, (w, h)
+    except Exception:
+        return None, None
+
+
+@PromptServer.instance.routes.post("/h3one/smart_mask")
+async def smart_mask(request):
+    try:
+        data = await request.json()
+    except Exception:
+        return web.json_response({"ok": False, "error": "invalid JSON"}, status=400)
+    if not isinstance(data, dict):
+        return web.json_response({"ok": False, "error": "invalid payload"}, status=400)
+    source = str(data.get("source", "") or "").strip()
+    ckpt_name = str(data.get("ckpt_name", "") or "").strip()
+    if not source:
+        return web.json_response({"ok": False, "error": "a source video file is required"}, status=400)
+    if not ckpt_name:
+        return web.json_response({"ok": False, "error": "a SAM 3 checkpoint is required"}, status=400)
+    try:
+        positive = _parse_smart_points(data.get("positive"))
+        negative = _parse_smart_points(data.get("negative"))
+    except ValueError as e:
+        return web.json_response({"ok": False, "error": str(e)}, status=400)
+    if not positive:
+        return web.json_response({"ok": False, "error": "at least one positive point is required"}, status=400)
+    try:
+        start_time = max(0.0, float(data.get("start", 0.0) or 0.0))
+    except (TypeError, ValueError):
+        start_time = 0.0
+    try:
+        refine_iterations = max(0, min(5, int(data.get("refine_iterations", 2) or 2)))
+    except (TypeError, ValueError):
+        refine_iterations = 2
+    try:
+        threshold = max(0.0, min(1.0, float(data.get("threshold", 0.5) or 0.5)))
+    except (TypeError, ValueError):
+        threshold = 0.5
+
+    try:
+        name = Path(str(source).replace("\\", "/")).name
+        path = _safe_join(str(Path(folder_paths.get_input_directory()).resolve()), "", name)
+    except ValueError:
+        return web.json_response({"ok": False, "error": "invalid source path"}, status=400)
+    if not os.path.isfile(path):
+        return web.json_response({"ok": False, "error": "source video not found"}, status=404)
+
+    frame, dims = _mask_source_frame(path, start_time)
+    if frame is None or not dims:
+        return web.json_response({"ok": False, "error": "could not read the source video"}, status=500)
+    width, height = dims
+    positive = _clamp_smart_points(positive, width, height)
+    negative = _clamp_smart_points(negative, width, height)
+    if not positive:
+        return web.json_response({"ok": False, "error": "positive points fell outside the frame"}, status=400)
+
+    try:
+        checkpoint = folder_paths.get_full_path("checkpoints", ckpt_name)
+        if not checkpoint or not os.path.isfile(checkpoint):
+            raise ValueError("checkpoint not found")
+        import comfy.sd
+        model, _clip, _vae = comfy.sd.load_checkpoint_guess_config(checkpoint, output_vae=True, output_clip=True)
+        mask = _smart_mask_segment(model, frame, positive, negative, refine_iterations, threshold)
+        png = _smart_mask_png(mask, width, height)
+        mask_name = f"h3_smart_{uuid.uuid4().hex[:10]}.png"
+        input_dir = folder_paths.get_input_directory()
+        with open(os.path.join(input_dir, mask_name), "wb") as fh:
+            fh.write(png)
+        return web.json_response({"ok": True, "mask": mask_name, "width": width, "height": height})
+    except Exception as e:
+        print(f"[H3One] smart mask error: {e}")
+        return web.json_response({"ok": False, "error": str(e)}, status=500)
+
+
 def _empty_image_tensor():
     import torch
     return torch.zeros((1, 64, 64, 3), dtype=torch.float32)

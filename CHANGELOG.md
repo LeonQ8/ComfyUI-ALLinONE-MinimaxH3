@@ -6,6 +6,8 @@ Newest first.
 
  - Preview tracking now shows live progress right in the preview box: how many frames SAM 3 has tracked and roughly how many seconds are left, instead of just a spinner. Each preview is its own run, so clicking again or changing the clip duration always starts fresh.
 
+ - A new Smart tool in the Mask paint editor builds your first-frame mask with a click. Click the character and SAM 3 paints just that object, respecting hard edges and the shape it holds; right-click anything in hand (like a microphone) to carve it back out. The mask shows live in red over the video and you can still touch it up by hand before saving.
+
 ## 0.11.0 (2026-08-21)
 
  - In Mask mode, painting a whole head now replaces that whole region, not just the face SAM 3 detects. So long hair, hats and accessories from the replacement reference appear, and they stay attached to the head as it moves instead of flashing in and out.

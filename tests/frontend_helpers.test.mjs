@@ -965,6 +965,25 @@ test("bundle passes the trim start to the mask editor so the paint lands on the 
   );
 });
 
+test("bundle wires the Smart click-to-segment tool in the mask editor", () => {
+  const bundle = readFileSync(bundlePath, "utf8");
+  assert.ok(bundle.includes("smartBtn=toolBtn(\"Smart\")"), "the paint editor must expose a Smart tool button");
+  assert.ok(bundle.includes("Smart on - left-click the character"), "turning Smart on must explain the gesture");
+  assert.ok(bundle.includes("posPts") && bundle.includes("negPts"), "Smart must accumulate positive and negative click points");
+  assert.ok(bundle.includes('fetch("/h3one/smart_mask"'), "a Smart click must POST to the segmentation route");
+  assert.ok(bundle.includes("positive:posPts.map"), "the route call must send the accumulated positive points");
+  assert.ok(bundle.includes("negative:negPts.map"), "the route call must send the accumulated negative points");
+  assert.ok(bundle.includes("e.button===2"), "a right-click must be treated as an exclude point");
+  assert.ok(bundle.includes('contextmenu') && bundle.includes('e.preventDefault()'), "the right-click exclude must not open the browser menu");
+  assert.ok(bundle.includes("smartBusy"), "Smart must guard against overlapping in-flight segments");
+  assert.ok(bundle.includes("applySmartMask"), "the returned mask must be merged into the canvas");
+  assert.ok(bundle.includes("maskCtx.drawImage(img,0,0,maskCanvas.width,maskCanvas.height)"), "the returned mask must be OR-drawn over the existing paint");
+  assert.ok(bundle.includes("smartEsc"), "Escape must exit Smart mode");
+  assert.ok(bundle.includes("exitSmart()"), "the editor must leave Smart mode when another tool is chosen");
+  assert.ok(bundle.includes("ckpt_name:S.models.sam3"), "Smart must send the configured SAM 3 checkpoint");
+  assert.ok(bundle.includes("refine_iterations:2"), "Smart must request decoder refinement for crisp edges");
+});
+
 test("bundle clears a painted mask when the trim start changes", () => {
   const bundle = readFileSync(bundlePath, "utf8");
   assert.ok(

@@ -1159,7 +1159,7 @@ function openVideoMaskEditor({videoName,maskName,startTime,onSave}){
     const toolBtn=(label)=>{const b=mk("button",{height:"30px",padding:"0 12px",borderRadius:"7px",border:`1px solid ${C.border}`,background:C.bg2,color:C.text,fontSize:"10px",fontWeight:"700",cursor:"pointer",outline:"none"},{type:"button"});tx(b,label);return b;};
     const zoomOutBtn=toolBtn("−"),zoomInBtn=toolBtn("+"),zoomFitBtn=toolBtn("Fit");
     const zoomLabel=mk("span",{fontSize:"9px",color:C.muted,minWidth:"38px",textAlign:"center"});tx(zoomLabel,"100%");
-    const drawBtn=toolBtn("Paint"),eraseBtn=toolBtn("Erase"),circleBtn=toolBtn("Circle"),squareBtn=toolBtn("Square"),undoBtn=toolBtn("Undo"),redoBtn=toolBtn("Redo"),clearBtn=toolBtn("Clear");
+    const drawBtn=toolBtn("Paint"),eraseBtn=toolBtn("Erase"),circleBtn=toolBtn("Circle"),squareBtn=toolBtn("Square"),smartBtn=toolBtn("Smart"),undoBtn=toolBtn("Undo"),redoBtn=toolBtn("Redo"),clearBtn=toolBtn("Clear");
     const sizeLabel=mk("label",{display:"flex",alignItems:"center",gap:"6px",fontSize:"10px",color:C.muted});
     const sizeText=mk("span",{});tx(sizeText,"Brush 48 px");
     const sizeInput=mk("input",{width:"150px",accentColor:C.lime},{type:"range",min:"4",max:"512",step:"2",value:"48"});
@@ -1169,10 +1169,11 @@ function openVideoMaskEditor({videoName,maskName,startTime,onSave}){
     const status=mk("div",{fontSize:"9px",color:C.muted,marginLeft:"auto"});tx(status,maskName?"Existing mask loaded":"No saved mask");
     const cancelBtn=toolBtn("Cancel"),saveBtn=toolBtn("Save mask");
     saveBtn.style.borderColor=C.lime;saveBtn.style.color=C.lime;
-    tools.append(zoomOutBtn,zoomInBtn,zoomFitBtn,zoomLabel,drawBtn,eraseBtn,circleBtn,squareBtn,undoBtn,redoBtn,clearBtn,sizeLabel,maskStats,status,cancelBtn,saveBtn);
+    tools.append(zoomOutBtn,zoomInBtn,zoomFitBtn,zoomLabel,drawBtn,eraseBtn,circleBtn,squareBtn,smartBtn,undoBtn,redoBtn,clearBtn,sizeLabel,maskStats,status,cancelBtn,saveBtn);
     panel.append(head,scrollBox,tools);overlay.appendChild(panel);document.body.appendChild(overlay);
 
     let mode="draw",drawing=false,last=null,activePointer=null,ready=false,closed=false,saving=false;
+    let smart=false,smartBusy=false,posPts=[],negPts=[];
     let zoom=1;
     let undoStack=[],redoStack=[],beforeState=null;
     const snap=()=>maskCtx.getImageData(0,0,maskCanvas.width,maskCanvas.height);
@@ -1194,6 +1195,50 @@ function openVideoMaskEditor({videoName,maskName,startTime,onSave}){
       circleBtn.style.color=mode==="circle"?C.lime:C.text;
       squareBtn.style.borderColor=mode==="square"?C.lime:C.border;
       squareBtn.style.color=mode==="square"?C.lime:C.text;
+      smartBtn.style.borderColor=smart?C.lime:C.border;
+      smartBtn.style.color=smart?C.lime:C.text;
+      canvas.style.cursor=smart?"crosshair":(mode==="draw"?"crosshair":"crosshair");
+    };
+    const exitSmart=()=>{
+      if(!smart) return;
+      smart=false;posPts.length=0;negPts.length=0;renderMode();
+      tx(status,"Smart off - painted mask kept");
+      status.style.color=C.muted;
+    };
+    const runSmart=async()=>{
+      if(smartBusy||!ready) return;
+      const hasAny=posPts.length>0||negPts.length>0;
+      if(!hasAny) return;
+      if(!String(S.models.sam3||"").trim()){tx(status,"Pick the SAM 3 checkpoint under Settings first");status.style.color=C.err;return;}
+      smartBusy=true;canvas.style.cursor="progress";
+      const stamp=Date.now();
+      tx(status,`Segmenting ${posPts.length} in / ${negPts.length} out...`);
+      status.style.color=C.muted;
+      try{
+        const r=await fetch("/h3one/smart_mask",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({
+          source:videoName,ckpt_name:S.models.sam3,start:Number(startTime)||0,
+          positive:posPts.map(p=>({x:p.x,y:p.y})),negative:negPts.map(p=>({x:p.x,y:p.y})),
+          refine_iterations:2,
+        })});
+        const d=await r.json();
+        if(!r.ok||!d||!d.ok) throw new Error((d&&d.error)||("smart mask failed (HTTP "+r.status+")"));
+        await applySmartMask(d.mask);
+        if(closed) return;
+        tx(status,`Smart mask merged - click again to refine (${posPts.length} in, ${negPts.length} out)`);
+        status.style.color=C.lime;
+      }catch(e){
+        tx(status,"Smart segment failed: "+fmtErr(e));status.style.color=C.err;
+      }finally{
+        smartBusy=false;if(!closed) canvas.style.cursor="crosshair";
+      }
+    };
+    const applySmartMask=async(name)=>{
+      const img=new Image();
+      await new Promise((res,rej)=>{img.onload=res;img.onerror=()=>rej(new Error("mask load failed"));img.src=api.apiURL(`/view?filename=${encodeURIComponent(name)}&type=input&subfolder=&t=${Date.now()}`);});
+      if(closed) return;
+      pushUndo();
+      maskCtx.drawImage(img,0,0,maskCanvas.width,maskCanvas.height);
+      renderMask();
     };
     const renderMask=()=>{
       if(!ready) return;
@@ -1227,8 +1272,11 @@ function openVideoMaskEditor({videoName,maskName,startTime,onSave}){
     const close=(value=null)=>{
       if(closed) return;
       closed=true;
+      document.removeEventListener("keydown",smartEsc);
       video.pause();video.removeAttribute("src");video.load();overlay.remove();resolve(value);
     };
+    const smartEsc=(e)=>{if(e.key==="Escape")exitSmart();};
+    document.addEventListener("keydown",smartEsc);
     const loadMask=()=>{
       ready=false;
       undoStack.length=0;redoStack.length=0;updateUndo();
@@ -1296,6 +1344,15 @@ function openVideoMaskEditor({videoName,maskName,startTime,onSave}){
         e.preventDefault();
         return;
       }
+      if(smart){
+        e.preventDefault();
+        if(!ready||smartBusy) return;
+        const p=point(e);if(!p)return;
+        if(e.button===2) negPts.push(p);
+        else posPts.push(p);
+        runSmart();
+        return;
+      }
       if(!ready||activePointer!==null) return;e.preventDefault();activePointer=e.pointerId;canvas.setPointerCapture(e.pointerId);drawing=true;beforeState=snap();
       const p=point(e);if(!p)return;
       if(mode==="circle"||mode==="square"){
@@ -1336,8 +1393,15 @@ function openVideoMaskEditor({videoName,maskName,startTime,onSave}){
     };
     const cancelStroke=(e)=>{if(e.pointerId===panPointer){endPan();return;}if(e.pointerId!==activePointer)return;beforeState=null;drawing=false;last=null;shapeStart=null;shapeCurr=null;savedMask=null;activePointer=null;};
     canvas.onpointerup=commitStroke;canvas.onpointercancel=cancelStroke;
-    drawBtn.onclick=()=>{mode="draw";renderMode();};eraseBtn.onclick=()=>{mode="erase";renderMode();};
-    circleBtn.onclick=()=>{mode="circle";renderMode();};squareBtn.onclick=()=>{mode="square";renderMode();};
+    drawBtn.onclick=()=>{exitSmart();mode="draw";renderMode();};eraseBtn.onclick=()=>{exitSmart();mode="erase";renderMode();};
+    circleBtn.onclick=()=>{exitSmart();mode="circle";renderMode();};squareBtn.onclick=()=>{exitSmart();mode="square";renderMode();};
+    smartBtn.onclick=()=>{
+      if(smart){exitSmart();return;}
+      smart=true;mode="draw";renderMode();
+      tx(status,`Smart on - left-click the character, right-click anything to exclude (e.g. a mic)`);
+      status.style.color=C.lime;
+    };
+    canvas.addEventListener("contextmenu",e=>{if(smart){e.preventDefault();}});
     zoomOutBtn.onclick=()=>{zoom=zoom/1.25;applyZoom();};
     zoomInBtn.onclick=()=>{zoom=zoom*1.25;applyZoom();};
     zoomFitBtn.onclick=()=>{zoom=1;applyZoom();};
