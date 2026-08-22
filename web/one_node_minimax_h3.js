@@ -337,60 +337,6 @@ function matchQualityPreset(flags,table,order){
   return "custom";
 }
 
-// Mirrors web/h3_helpers.mjs (kept in sync): the draft recipe's noise schedule
-// as a curve. H3 is a flow model, so sigma(t) = time_snr_shift(shift, t) from
-// comfy/model_sampling.py, and the scheduler step mapping mirrors
-// comfy/samplers.py. The "beta" scheduler (draft default) reproduces ComfyUI's
-// scipy.stats.beta.ppf quantiles via a Numerical Recipes continued fraction.
-function timeSnrShift(shift,t){
-  const s=Number(shift),x=Number(t);
-  if(!Number.isFinite(s)||!Number.isFinite(x)) return 0;
-  if(s<=0) return 0;
-  if(s===1) return x;
-  return (s*x)/(1+(s-1)*x);
-}
-function _gammln(xx){
-  const cof=[76.18009172947146,-86.50532032941677,24.01409824083091,-1.231739572450155,0.1208650973866179e-2,-0.5395239384953e-5];
-  let x=xx,y=xx,tmp=x+5.5;tmp-=(x+0.5)*Math.log(tmp);let ser=1.000000000190015;
-  for(let j=0;j<6;j++)ser+=cof[j]/++y;
-  return -tmp+Math.log(2.5066282746310005*ser/x);
-}
-function _betacf(a,b,x){
-  const MAXIT=200,EPS=3e-7,FPMIN=1e-30,qab=a+b,qap=a+1,qam=a-1;
-  let c=1,d=1-qab*x/qap;if(Math.abs(d)<FPMIN)d=FPMIN;d=1/d;let h=d;
-  for(let m=1;m<=MAXIT;m++){
-    const m2=2*m;let aa=m*(b-m)*x/((qam+m2)*(a+m2));
-    d=1+aa*d;if(Math.abs(d)<FPMIN)d=FPMIN;c=1+aa/c;if(Math.abs(c)<FPMIN)c=FPMIN;d=1/d;h*=d*c;
-    aa=-(a+m)*(qab+m)*x/((a+m2)*(qap+m2));
-    d=1+aa*d;if(Math.abs(d)<FPMIN)d=FPMIN;c=1+aa/c;if(Math.abs(c)<FPMIN)c=FPMIN;d=1/d;
-    const del=d*c;h*=del;if(Math.abs(del-1)<EPS)break;
-  }
-  return h;
-}
-function _betai(a,b,x){if(x<=0)return 0;if(x>=1)return 1;
-  const bt=Math.exp(_gammln(a+b)-_gammln(a)-_gammln(b)+a*Math.log(x)+b*Math.log(1-x));
-  return x<(a+1)/(a+b+2)?bt*_betacf(a,b,x)/a:1-bt*_betacf(b,a,1-x)/b;}
-function _betaincinv(a,b,p){if(p<=0)return 0;if(p>=1)return 1;let lo=0,hi=1;
-  for(let i=0;i<80;i++){const mid=(lo+hi)/2;if(_betai(a,b,mid)<p)lo=mid;else hi=mid;}
-  return (lo+hi)/2;}
-function schedulerStepIndices(scheduler,steps){
-  const n=Math.max(1,Math.floor(Number(steps))||1);
-  if(scheduler==="beta"){
-    const idx=[];let last=-1;
-    for(let i=0;i<n;i++){const u=1-i/n;const t=Math.round(_betaincinv(0.6,0.6,u)*999);if(t!==last)idx.push(t);last=t;}
-    return idx;
-  }
-  const idx=[];
-  for(let i=0;i<n;i++)idx.push(999-Math.floor(i*(1000/n)));
-  return idx;
-}
-function draftSigmaCurve(opts){
-  const o=opts||{};
-  const s=Number(o.shift)>0?Number(o.shift):12;
-  const indices=schedulerStepIndices(o.scheduler||"simple",o.steps||6);
-  return indices.map(t=>({step:t+1,sigma:timeSnrShift(s,(t+1)/1000)}));
-}
-
 function imgProfileShort(key){
   if(!key||key==="custom") return "Custom";
   const k=String(key);
@@ -2432,40 +2378,10 @@ function persist(){
         row.append(lbl,ni);
         return row;
       };
-      let _drawSlaCurve=null;
       const slaLoraNI=NI("",S.speedLoraStrength,0.1,1.5,0.05,v=>{S.speedLoraStrength=Math.round(v*100)/100;persist();},"60px");
-      const shiftVNI=NI("",S.shiftVideo,1,20,1,v=>{S.shiftVideo=Math.round(v);persist();if(_drawSlaCurve)_drawSlaCurve();},"60px");
+      const shiftVNI=NI("",S.shiftVideo,1,20,1,v=>{S.shiftVideo=Math.round(v);persist();},"60px");
       const shiftANI=NI("",S.shiftAudio,0,10,1,v=>{S.shiftAudio=Math.round(v);persist();},"60px");
       slaWrap.append(_slaField("Turbo/SLA LoRA strength",slaLoraNI),_slaField("Shift video",shiftVNI),_slaField("Shift audio",shiftANI));
-      const slaCurveWrap=mk("div",{marginTop:"8px",display:"flex",flexDirection:"column",gap:"3px"});
-      const slaCurveLbl=mk("div",{fontSize:"9px",color:C.muted});
-      tx(slaCurveLbl,"Noise schedule (Sampler x Scheduler x Steps x Shift video)");
-      const slaCurveCanvas=mk("canvas",{width:"230",height:"34",display:"block",boxSizing:"border-box",border:"1px solid "+C.border,borderRadius:"6px",background:C.bg2});
-      slaCurveWrap.append(slaCurveLbl,slaCurveCanvas);
-      slaWrap.appendChild(slaCurveWrap);
-      _drawSlaCurve=()=>{
-        try{
-          const pts=draftSigmaCurve({steps:S.steps,scheduler:S.schedulerName||"simple",shift:S.shiftVideo});
-          const ctx=slaCurveCanvas.getContext("2d");
-          const w=slaCurveCanvas.width=230,h=slaCurveCanvas.height=34;
-          ctx.clearRect(0,0,w,h);
-          if(!pts.length) return;
-          ctx.strokeStyle=C.lime;ctx.lineWidth=1.5;ctx.beginPath();
-          const maxS=Math.max.apply(null,pts.map(p=>p.sigma))||1;
-          pts.forEach((p,i)=>{
-            const x=w*i/Math.max(1,pts.length-1);
-            const y=h-2-(h-4)*(p.sigma/maxS);
-            i?ctx.lineTo(x,y):ctx.moveTo(x,y);
-          });
-          ctx.stroke();
-          const last=pts[pts.length-1];
-          ctx.fillStyle=C.muted;ctx.font="8px monospace";
-          ctx.fillText("0",2,h-2);
-          ctx.fillText("sigma "+(maxS>=1?"1.0":maxS.toFixed(2)),2,8);
-          if(last) ctx.fillText(last.sigma.toFixed(3),w-34,h-2);
-        }catch(e){}
-      };
-      slaCurveCanvas.addEventListener("click",()=>{if(_drawSlaCurve)_drawSlaCurve();});
       const audioToggle=Toggle("Generate native audio",S.audioOn,v=>{S.audioOn=v;persist();},"Audio Drive and R2V (with audio refs) always use the audio you provide - this toggle only controls the model's own generated soundtrack in T2V / I2V / Keyframes. You do not need to turn it off for audio modes.");
       const soundToggle=Toggle("Notification sound on complete",S.soundEnabled,v=>{S.soundEnabled=v;persist();});
       const playOnFinishToggle=Toggle("Play video on finish",S.playOnFinish,v=>{S.playOnFinish=v;persist();});
@@ -2716,7 +2632,7 @@ function persist(){
         _renderDetail();
       };
       const historyBtn=mkTopBtn('<path d="M12 7v5l3.5 2"/><circle cx="12" cy="12" r="8.5"/>',"History",()=>{_renderHistory();openOverlay(historyOverlay);});
-      const settingsBtn=mkTopBtn('<path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/>',"Settings",()=>{if(typeof _drawSlaCurve==="function")_drawSlaCurve();openOverlay(settingsOverlay);});
+      const settingsBtn=mkTopBtn('<path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/>',"Settings",()=>openOverlay(settingsOverlay));
 
       // -- LIBRARY OVERLAY ---------------------------------------------------
       const libraryOverlay=mk("div",{
