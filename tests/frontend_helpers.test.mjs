@@ -1595,6 +1595,17 @@ test("compare library picker filters to videos and offers favorites-only", () =>
   assert.ok(bundle.includes("await _renderLibrary()"), "the picker must populate before the overlay opens");
 });
 
+test("library grid declares isImg before its use in the card url", () => {
+  const bundle = readFileSync(bundlePath, "utf8");
+  const renderStart = bundle.indexOf("const _renderLibrary=async()=>{");
+  const renderEnd = bundle.indexOf("const _libOpen=async(item)=>{");
+  const body = bundle.slice(renderStart, renderEnd);
+  const isImgDecl = body.indexOf("const isImg=item.kind===\"image\"");
+  const urlUse = body.indexOf("const url=api.apiURL(isImg?");
+  assert.ok(isImgDecl !== -1 && urlUse !== -1 && isImgDecl < urlUse,
+    "the library card must declare isImg before building the url, or the first card throws in the temporal dead zone and the grid renders blank");
+});
+
 test("outputs strip uses compact icon-only actions on one line", () => {
   const bundle = readFileSync(bundlePath, "utf8");
   assert.ok(bundle.includes('actBtn("",()=>_favCurrent()'), "Favorite must be icon-only");

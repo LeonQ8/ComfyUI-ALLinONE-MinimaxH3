@@ -2944,8 +2944,8 @@ function persist(){
         vis.forEach(item=>{
           const card=mk("div",{background:C.bg1,border:`1px solid ${C.border}`,borderRadius:"9px",overflow:"hidden",cursor:"pointer",display:"flex",flexDirection:"column",transition:"border-color .15s, background .15s"});
           card.style.position="relative";
-          const url=api.apiURL(isImg?`/h3one/thumb?${thumbQuery(item,256)}`:`/view?${viewQuery(item)}`);
           const isImg=item.kind==="image"||/\.(png|jpe?g|webp|bmp)$/i.test(item.filename||"");
+          const url=api.apiURL(isImg?`/h3one/thumb?${thumbQuery(item,256)}`:`/view?${viewQuery(item)}`);
           const v=isImg
             ? mk("img",{width:"100%",height:"78px",objectFit:"cover",display:"block",background:"#000",pointerEvents:"none"},{src:url})
             : mk("video",{width:"100%",height:"78px",objectFit:"cover",display:"block",background:"#000",pointerEvents:"none"},{muted:true,preload:"metadata"});
