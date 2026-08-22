@@ -3391,6 +3391,20 @@ function persist(){
       });
       vcCodecCol.appendChild(vcCodecDD.el);
       vcOptRow.append(vcColsCol,vcPadCol,vcMatchCol,vcPadFramesCol,vcCodecCol);
+      const vcPrevCap=mk("div",{fontSize:"9px",fontWeight:"700",letterSpacing:".08em",textTransform:"uppercase",color:C.muted,marginBottom:"6px"});
+      tx(vcPrevCap,"Preview");
+      const vcPrevRow=mk("div",{display:"flex",gap:"12px",flexWrap:"wrap"});
+      const vcLayoutCard=mk("div",{display:"flex",flexDirection:"column",gap:"8px",background:C.bg1,border:`1px solid ${C.border}`,borderRadius:"10px",padding:"10px 12px",flex:"1 1 180px",minWidth:"180px"});
+      const vcLayoutTitle=mk("div",{fontSize:"8px",fontWeight:"700",letterSpacing:".05em",textTransform:"uppercase",color:C.muted});
+      tx(vcLayoutTitle,"Layout");
+      const vcLayoutPrev=mk("div",{display:"grid",gap:"5px",padding:"10px",background:C.bg2,borderRadius:"7px",border:`1px solid ${C.border}`,alignContent:"center",justifyContent:"center",minHeight:"46px"});
+      vcLayoutCard.append(vcLayoutTitle,vcLayoutPrev);
+      const vcMatchCard=mk("div",{display:"flex",flexDirection:"column",gap:"8px",background:C.bg1,border:`1px solid ${C.border}`,borderRadius:"10px",padding:"10px 12px",flex:"1 1 230px",minWidth:"230px"});
+      const vcMatchTitle=mk("div",{fontSize:"8px",fontWeight:"700",letterSpacing:".05em",textTransform:"uppercase",color:C.muted});
+      tx(vcMatchTitle,"Frame match");
+      const vcMatchPrev=mk("div",{display:"flex",flexDirection:"column",gap:"4px",padding:"8px 10px",background:C.bg2,borderRadius:"7px",border:`1px solid ${C.border}`});
+      vcMatchCard.append(vcMatchTitle,vcMatchPrev);
+      vcPrevRow.append(vcLayoutCard,vcMatchCard);
       const vcTrimWrap=mk("div",{display:"flex",flexDirection:"column",gap:"5px",flexShrink:"0"});
       const vcExportWrap=mk("div",{display:"flex",alignItems:"center",gap:"10px",flexWrap:"wrap",marginTop:"auto",paddingTop:"10px",borderTop:`1px solid ${C.border}`,flexShrink:"0"});
       const vcExport=mk("button",{background:C.lime,color:"#111",border:"none",borderRadius:"9px",padding:"9px 20px",fontSize:"12px",fontWeight:"800",cursor:"pointer",outline:"none"});
@@ -3406,12 +3420,47 @@ function persist(){
       vcExportStatus.append(vcExportBarWrap,vcExportStatusLbl);
       const vcExportResult=mk("video",{width:"100%",maxHeight:"220px",borderRadius:"8px",background:"#000",objectFit:"contain",display:"none"},{controls:true,playsInline:true});
       vcExportResult.addEventListener("wheel",e=>e.stopPropagation(),{passive:true});
-      vcStitchBody.append(vcOptRow,vcTrimWrap,vcExportWrap,vcExportStatus,vcExportResult);
+      vcStitchBody.append(vcOptRow,vcPrevCap,vcPrevRow,vcTrimWrap,vcExportWrap,vcExportStatus,vcExportResult);
       vcOverlay.append(vcHdr,vcSlotBar,vcCompareBody,vcStitchBody);
+
+      const _vcRenderStitchPreview=()=>{
+        const count=_vcSlots.length;
+        const cols=count>0?compareGridColumns(count,S.compareColumns||0):1;
+        const rows=compareGridRows(count,cols);
+        vcLayoutPrev.style.gridTemplateColumns=`repeat(${cols},1fr)`;
+        vcLayoutPrev.style.gridTemplateRows=`repeat(${rows},1fr)`;
+        vcLayoutPrev.innerHTML="";
+        for(let i=0;i<count;i++){
+          const has=_vcSlots[i]&&_vcSlots[i].item;
+          const cell=mk("div",{width:"26px",height:"20px",borderRadius:"4px",background:has?"rgba(var(--h3accent-rgb),.6)":"#313131",border:`1px solid ${has?"transparent":C.border}`,flexShrink:"0"});
+          cell.title=`Clip ${i+1}`+(has?" (loaded)":" (empty)");
+          vcLayoutPrev.appendChild(cell);
+        }
+        const mode=S.compareFrameMatch||"trim_to_shortest";
+        vcMatchPrev.innerHTML="";
+        const maxLen=Math.max(1,..._vcSlots.map(s=>Math.max(1,Number(s.duration)||1)));
+        _vcSlots.forEach((s,i)=>{
+          const dur=Math.max(1,Number(s.duration)||1);
+          const pctLen=Math.max(10,Math.round(dur/maxLen*100));
+          const row=mk("div",{display:"flex",alignItems:"center",gap:"6px"});
+          const lbl=mk("span",{fontSize:"8px",color:C.muted,width:"20px",flexShrink:"0",fontVariantNumeric:"tabular-nums"}); tx(lbl,String(i+1));
+          const barWrap=mk("div",{flex:"1",background:C.bg1,borderRadius:"4px",height:"10px",overflow:"hidden",border:`1px solid ${C.border}`});
+          const fill=mk("div",{background:"rgba(var(--h3accent-rgb),.75)",height:"100%",width:pctLen+"%"});
+          barWrap.appendChild(fill);
+          row.append(lbl,barWrap);
+          vcMatchPrev.appendChild(row);
+        });
+        const hint=mk("div",{fontSize:"8px",color:C.muted,lineHeight:"1.45",marginTop:"4px",borderTop:`1px solid ${C.border}`,paddingTop:"6px"});
+        if(mode==="trim_to_shortest") tx(hint,"Every clip is cut to the shortest clip's length.");
+        else if(mode==="pad_to_longest") tx(hint,"Shorter clips are padded with the chosen filler up to the longest.");
+        else tx(hint,"Each clip uses its own start/end trim; shorter windows pad up.");
+        vcMatchPrev.appendChild(hint);
+      };
 
       const _vcRenderStitch=()=>{
         vcColsDD.set(_vcColsLabel());
         vcMatchDD.set(_vcMatchLabel());
+        _vcRenderStitchPreview();
         vcTrimWrap.innerHTML="";
         if((S.compareFrameMatch||"trim_to_shortest")==="per_clip"){
           vcTrimWrap.appendChild(_vcRowCap("Clip trim (start - end seconds)"));
@@ -3478,7 +3527,10 @@ function persist(){
           const r=await _fetchTimed("/h3one/compare_workflow",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({clips,options})},20000);
           const d=await r.json();
           if(!d.ok||!d.wf) throw new Error(d.error||"Could not build the compare workflow");
-          const body={prompt:d.wf,client_id:api.clientId,extra_data:{enable_previews:true}};
+          const body={prompt:d.wf,client_id:api.clientId,extra_data:{
+            enable_previews:true,
+            extra_pnginfo:{workflow:{extra:{VHS_KeepIntermediate:false,VHS_MetadataImage:false}}},
+          }};
           const res=await api.fetchApi("/prompt",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
           const data=await res.json();
           if(data.error||!data.prompt_id) throw new Error(data.error?.message||"Unknown error");

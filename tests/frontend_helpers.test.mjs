@@ -1646,6 +1646,25 @@ test("stitch export stays in the overlay and shows progress and the result there
     !exportBody.includes("closeOverlayFade(vcOverlay)"),
     "the export must keep the Compare & Stitch page open and show the result there, not close it",
   );
+  assert.ok(
+    exportBody.includes("VHS_KeepIntermediate:false"),
+    "the export must ask VHS to drop the video-only intermediate so each run writes one file, not three",
+  );
+  assert.ok(
+    exportBody.includes("VHS_MetadataImage:false"),
+    "the export must ask VHS to skip the metadata poster PNG so the Library does not show a stray image per export",
+  );
+});
+
+test("stitch tab renders organized layout and frame-match examples", () => {
+  const bundle = readFileSync(bundlePath, "utf8");
+  assert.ok(bundle.includes("_vcRenderStitchPreview"), "the stitch tab must render a small example");
+  assert.ok(bundle.includes("Layout"), "the layout option must show a mini grid diagram");
+  assert.ok(bundle.includes("Frame match"), "the frame-match option must show a mini length diagram");
+  assert.ok(bundle.includes("Every clip is cut to the shortest clip's length"), "the example must explain trim-to-shortest");
+  assert.ok(bundle.includes("Shorter clips are padded with the chosen filler"), "the example must explain pad-to-longest");
+  assert.ok(bundle.includes("Each clip uses its own start/end trim"), "the example must explain per-clip trim");
+  assert.ok(bundle.includes("_vcRenderStitchPreview();"), "the preview must refresh when the options change");
 });
 
 test("compare library picker filters to videos and offers favorites-only", () => {
