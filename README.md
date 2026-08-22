@@ -23,6 +23,10 @@ No node graph to build, no wires to connect, no hunting through twelve custom no
 
 In Mask mode, painting a region and describing it with text are two separate paths. In my testing, mixing manual inpainting with a text prompt does not work well, so pick one approach per mask.
 
+## Compare & Stitch
+
+Pick 2-4 outputs from the Library or the outputs strip and open **Compare & Stitch**. The Compare tab plays every clip side by side in sync, and the Stitch tab exports them as one side-by-side clip: deterministic frame matching at 24 fps, spacing and gutter color, per-clip trim, and h264 or h265/mp4 output. Audio comes from clip 1. Needs only ComfyUI VideoHelperSuite, which the node already lists below.
+
 ## Screenshots
 
 **Modes** — switch between modes, R2V, T2V, T2I, I2V, Audio Drive, Keyframes, Extend, Chain.

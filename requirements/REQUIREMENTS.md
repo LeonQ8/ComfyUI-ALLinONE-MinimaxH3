@@ -50,6 +50,8 @@ Each accelerator also has an on/off chip under the Quality dropdown (SolAttn / S
 
 **Preview without saving** (auto-save off): [ComfyUI-VideoHelperSuite](https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite)
 
+**Compare & Stitch** (the Compare button on the outputs strip and in the Library): needs [ComfyUI-VideoHelperSuite](https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite) for deterministic frame matching and the side-by-side export. The stitch node itself is internal to this pack; no other packs are needed.
+
 **Live Preview** (the toggle under the video): [ComfyUI-KJNodes](https://github.com/kijai/ComfyUI-KJNodes) plus `taeh3.safetensors` in `ComfyUI/models/vae_approx/` ([Kijai/MiniMax-H3-TAE](https://huggingface.co/Kijai/MiniMax-H3-TAE)). Powered by KJNodes Model Preview Override: the clip plays in the preview box while it samples. A quality dropdown next to the toggle picks Fast, Balanced or Detailed previews, which trade preview smoothness against generation speed. Works in every video mode, not with the Turbo preset or Image mode. Your copy can sit in a subfolder of `vae_approx`, pick it under Settings: Live Preview decoder. Tested on ComfyUI 0.33.
 
 **Image mode prompts**: they follow the H3 Studio shape, a `summary:` line with the goal and a `detailed_description:` with the full scene. Name your references `@Image1`, `@Image2` and give each one a clear job (identity, pose, style, outfit). Edits are a semantic regeneration of the source image, not pixel inpainting, so describe what changes instead of expecting a perfect cutout. The Discover tab ships with Text to image, Image edit and Reference mix templates.

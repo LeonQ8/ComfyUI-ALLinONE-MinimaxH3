@@ -2356,5 +2356,442 @@ class H3OneSAM3CropCheck:
         return {"result": (payload,), "ui": {"text": [payload]}}
 
 
-NODE_CLASS_MAPPINGS = {"H3OneNode": H3OneNode, "H3CacheBust": H3CacheBust, "H3MaskVideoPrepare": H3MaskVideoPrepare, "H3IdentityAnchor": H3IdentityAnchor, "H3AudioTrim": H3AudioTrim, "H3AudioJoinSmooth": H3AudioJoinSmooth, "H3OneSAM3CropCheck": H3OneSAM3CropCheck, "H3PaintedRegion": H3PaintedRegion}
-NODE_DISPLAY_NAME_MAPPINGS = {"H3OneNode": "ALL in ONE MiniMaxH3", "H3CacheBust": "H3 Cache Fingerprint (internal)", "H3MaskVideoPrepare": "H3 Mask Video Prepare (internal)", "H3IdentityAnchor": "H3 Identity Anchor (internal)", "H3AudioTrim": "H3 Audio Trim (internal)", "H3AudioJoinSmooth": "H3 Audio Join Smooth (internal)", "H3OneSAM3CropCheck": "H3 Crop + Confidence Report (internal)", "H3PaintedRegion": "H3 Painted Region (internal)"}
+# ---------------------------------------------------------------------------
+# Video Compare + Stitch
+# ---------------------------------------------------------------------------
+# Deterministic side-by-side compare and stitch for the Compare & Stitch page.
+# No content auto-sync in v1: every clip is force-loaded at 24 fps and the
+# frame-match plan derives skip_first_frames / frame_load_cap per clip so the
+# loaded windows line up by construction. Audio passes through from clip 1.
+def _clamp_int(value, lo, hi, default):
+    try:
+        v = int(value)
+    except (TypeError, ValueError):
+        return default
+    return max(lo, min(hi, v))
+
+
+def _hex_to_rgb_tuple(value):
+    """Parse '#rrggbb' (or 'rrggbb') into a (r, g, b) float tuple in 0..1."""
+    text = str(value or "").strip().lstrip("#")
+    if len(text) == 3:
+        text = "".join(ch * 2 for ch in text)
+    if len(text) != 6:
+        return (0.0, 0.0, 0.0)
+    try:
+        return tuple(int(text[i:i + 2], 16) / 255.0 for i in (0, 2, 4))
+    except ValueError:
+        return (0.0, 0.0, 0.0)
+
+
+def _fit_cell(w, h, cell_w, cell_h):
+    """Contain-fit a (w, h) source into a (cell_w, cell_h) cell.
+
+    Returns (scaled_w, scaled_h, offset_x, offset_y) so the source keeps its
+    aspect and is centered inside the cell (letterboxed, never cropped)."""
+    w, h = int(w), int(h)
+    cell_w, cell_h = int(cell_w), int(cell_h)
+    if w <= 0 or h <= 0 or cell_w <= 0 or cell_h <= 0:
+        return (1, 1, 0, 0)
+    scale = min(cell_w / w, cell_h / h)
+    sw = max(1, int(round(w * scale)))
+    sh = max(1, int(round(h * scale)))
+    return (sw, sh, (cell_w - sw) // 2, (cell_h - sh) // 2)
+
+
+def _stitch_grid(sizes, padding=8, columns=0):
+    """Grid geometry for a side-by-side stitch of `sizes` = [(w, h), ...].
+
+    Cell size is the max width and max height across clips, so every source
+    letterboxes into the same-sized cell and nothing is ever cropped.
+    `columns` 0 means auto: ceil(sqrt(n)). Returns the canvas size plus one
+    cell rect per clip (row-major) with the padding gutters included."""
+    n = len(sizes)
+    if n < 1:
+        raise ValueError("stitch needs at least one image")
+    cols = _clamp_int(columns, 0, n, 0)
+    if cols <= 0:
+        cols = max(1, int(math.ceil(math.sqrt(n))))
+    rows = max(1, int(math.ceil(n / cols)))
+    pad = max(0, int(padding))
+    cell_w = max(1, int(max(s[0] for s in sizes)))
+    cell_h = max(1, int(max(s[1] for s in sizes)))
+    canvas_w = cols * cell_w + pad * (cols + 1)
+    canvas_h = rows * cell_h + pad * (rows + 1)
+    cells = []
+    for i, (_w, _h) in enumerate(sizes):
+        col = i % cols
+        row = i // cols
+        cells.append({
+            "x": pad + col * (cell_w + pad),
+            "y": pad + row * (cell_h + pad),
+            "w": cell_w,
+            "h": cell_h,
+        })
+    return {
+        "columns": cols,
+        "rows": rows,
+        "cell_w": cell_w,
+        "cell_h": cell_h,
+        "canvas_w": canvas_w,
+        "canvas_h": canvas_h,
+        "cells": cells,
+    }
+
+
+def _stitch_frame_count(frames):
+    """The combined batch length: the longest clip, so shorter ones pad."""
+    return max(1, max(int(f) for f in frames))
+
+
+def _stitch_images(images, padding=8, pad_frames="freeze", columns=0, background="#000000"):
+    """Combine N IMAGE batches into one side-by-side IMAGE batch.
+
+    Shorter clips are padded to the longest frame count (repeat-last-frame
+    `freeze` or `black`), each frame is contain-fit into its grid cell, and
+    the result is one canvas with the requested gutter/background color."""
+    import torch
+    import torch.nn.functional as F
+
+    n = len(images)
+    if n < 1:
+        raise ValueError("stitch needs at least one image")
+    if n == 1:
+        return images[0]
+    sizes = [(int(img.shape[2]), int(img.shape[1])) for img in images]
+    geom = _stitch_grid(sizes, padding, columns)
+    out_frames = _stitch_frame_count([int(img.shape[0]) for img in images])
+    prepared = []
+    for img in images:
+        frames = int(img.shape[0])
+        if frames < out_frames:
+            if pad_frames == "freeze":
+                pad = img[-1:].repeat(out_frames - frames, 1, 1, 1)
+            else:
+                pad = torch.zeros(
+                    (out_frames - frames,) + tuple(img.shape[1:]),
+                    dtype=img.dtype, device=img.device,
+                )
+            img = torch.cat([img, pad], dim=0)
+        prepared.append(img)
+    bg = _hex_to_rgb_tuple(background)
+    canvas = torch.zeros(
+        (out_frames, geom["canvas_h"], geom["canvas_w"], 3),
+        dtype=prepared[0].dtype, device=prepared[0].device,
+    )
+    canvas[..., 0] = bg[0]
+    canvas[..., 1] = bg[1]
+    canvas[..., 2] = bg[2]
+    for idx, (img, (w, h), cell) in enumerate(zip(prepared, sizes, geom["cells"])):
+        sw, sh, ox, oy = _fit_cell(w, h, geom["cell_w"], geom["cell_h"])
+        frame = img[..., :3].movedim(-1, 1)
+        resized = F.interpolate(frame, size=(sh, sw), mode="bilinear", align_corners=False)
+        canvas[:, cell["y"] + oy:cell["y"] + oy + sh, cell["x"] + ox:cell["x"] + ox + sw, :] = resized.movedim(1, -1)
+    return canvas
+
+
+class H3StitchFrames:
+    """Internal side-by-side compare stitcher for the Compare & Stitch page.
+
+    N IMAGE inputs (1-4) become a single IMAGE batch arranged in a grid, so a
+    plain VHS_VideoCombine can write the comparison clip without any external
+    stitch pack. Frame matching is done upstream by the VHS loaders; this node
+    only pads shorter clips and lays the grid out."""
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "image_1": ("IMAGE",),
+                "padding": ("INT", {"default": 8, "min": 0, "max": 256, "step": 1}),
+                "pad_frames": (["freeze", "black"], {"default": "freeze"}),
+                "columns": ("INT", {"default": 0, "min": 0, "max": 4, "step": 1}),
+                "background": ("STRING", {"default": "#000000"}),
+            },
+            "optional": {
+                "image_2": ("IMAGE",),
+                "image_3": ("IMAGE",),
+                "image_4": ("IMAGE",),
+            },
+        }
+
+    RETURN_TYPES = ("IMAGE",)
+    RETURN_NAMES = ("images",)
+    FUNCTION = "stitch"
+    CATEGORY = "One Node"
+
+    def stitch(self, image_1, image_2=None, image_3=None, image_4=None,
+               padding=8, pad_frames="freeze", columns=0, background="#000000"):
+        images = [image_1]
+        for extra in (image_2, image_3, image_4):
+            if extra is not None:
+                images.append(extra)
+        return (_stitch_images(images, padding, pad_frames, columns, background),)
+
+
+def _frame_match_plan(clips, mode="trim_to_shortest", fps=24.0):
+    """Deterministic frame-match plan for the compare loaders.
+
+    clips: list of {frames, fps, trim_start, trim_end}. Every clip is
+    normalized to the shared 24 fps timeline; skip_first_frames and
+    frame_load_cap are the VHS_LoadVideo values (both in the resampled
+    domain). Modes:
+      trim_to_shortest - all clips load exactly the shortest window,
+      pad_to_longest   - every clip loads its full window, shorter clips are
+                         padded by the stitch node,
+      per_clip         - each clip uses its own trim start/end, then shorter
+                         windows pad up to the longest.
+    Returns {out_frames, fps, clips: [{skip_first_frames, frame_load_cap, ...}]}."""
+    fps = max(1.0, float(fps))
+    mode = mode if mode in ("trim_to_shortest", "pad_to_longest", "per_clip") else "trim_to_shortest"
+    per_clip = []
+    for clip in clips or []:
+        frames = max(1, int(clip.get("frames", 0) or 1))
+        try:
+            cfps = float(clip.get("fps", fps) or fps)
+        except (TypeError, ValueError):
+            cfps = fps
+        if cfps <= 0:
+            cfps = fps
+        try:
+            start = max(0.0, float(clip.get("trim_start", 0.0) or 0.0))
+        except (TypeError, ValueError):
+            start = 0.0
+        total24 = max(1, int(round(frames / cfps * fps)))
+        skip = max(0, min(total24 - 1, int(round(start * fps))))
+        avail = max(1, total24 - skip)
+        end = clip.get("trim_end")
+        if end is not None:
+            try:
+                end = max(0.0, float(end) or 0.0)
+            except (TypeError, ValueError):
+                end = None
+        if end is not None and end > start:
+            load = max(1, min(avail, int(round((end - start) * fps))))
+        else:
+            load = avail
+        per_clip.append({
+            "skip_first_frames": skip,
+            "frame_load_cap": load,
+            "loaded_frames": load,
+            "total_frames": total24,
+        })
+    if not per_clip:
+        raise ValueError("compare needs at least one clip")
+    if mode == "trim_to_shortest":
+        out_frames = max(1, min(p["loaded_frames"] for p in per_clip))
+        for p in per_clip:
+            p["frame_load_cap"] = out_frames
+            p["loaded_frames"] = out_frames
+    else:
+        out_frames = max(1, max(p["loaded_frames"] for p in per_clip))
+    return {"out_frames": out_frames, "fps": fps, "clips": per_clip}
+
+
+_COMPARE_CODEC_FORMATS = {
+    "h264": "video/h264-mp4",
+    "h265": "video/h265-mp4",
+}
+
+
+def _build_compare_workflow(clips, options):
+    """Build the self-contained compare/stitch graph (pure, no ComfyUI deps).
+
+    clips: list of {input_name (staged input-folder filename), frames, fps,
+    trim_start, trim_end}. options: {frame_match, padding, pad_frames,
+    columns, background, codec, filename_prefix}. The graph is
+    VHS_LoadVideo (xN, force_rate 24 + frame plan) -> H3StitchFrames ->
+    VHS_VideoCombine (audio from clip 1) saving into one-node-minimax-h3/."""
+    options = options or {}
+    clips = list(clips or [])
+    if not 2 <= len(clips) <= 4:
+        raise ValueError("compare needs 2 to 4 clips")
+    for clip in clips:
+        if not str(clip.get("input_name", "") or "").strip():
+            raise ValueError("each clip needs a staged input file")
+    plan = _frame_match_plan(clips, str(options.get("frame_match", "trim_to_shortest") or "trim_to_shortest"))
+    fps = plan["fps"]
+    wf = {}
+    for i, (clip, entry) in enumerate(zip(clips, plan["clips"])):
+        nid = "l%d" % (i + 1)
+        wf[nid] = {
+            "class_type": "VHS_LoadVideo",
+            "inputs": {
+                "video": str(clip["input_name"]),
+                "force_rate": fps,
+                "custom_width": 0,
+                "custom_height": 0,
+                "frame_load_cap": entry["frame_load_cap"],
+                "skip_first_frames": entry["skip_first_frames"],
+                "select_every_nth": 1,
+                "format": "None",
+            },
+            "_meta": {"title": "Load clip %d" % (i + 1)},
+        }
+    stitch_inputs = {
+        "image_1": ["l1", 0],
+        "padding": _clamp_int(options.get("padding"), 0, 256, 8),
+        "pad_frames": "freeze" if str(options.get("pad_frames", "freeze") or "freeze") == "freeze" else "black",
+        "columns": _clamp_int(options.get("columns"), 0, 4, 0),
+        "background": str(options.get("background", "#000000") or "#000000"),
+    }
+    for i in range(2, len(clips) + 1):
+        stitch_inputs["image_%d" % i] = ["l%d" % i, 0]
+    wf["stitch"] = {
+        "class_type": "H3StitchFrames",
+        "inputs": stitch_inputs,
+        "_meta": {"title": "Stitch side by side"},
+    }
+    codec = str(options.get("codec", "h264") or "h264")
+    fmt = _COMPARE_CODEC_FORMATS.get(codec, "video/h264-mp4")
+    prefix = str(options.get("filename_prefix", "") or "").strip()
+    if not prefix:
+        prefix = "one-node-minimax-h3/compare/h3_compare"
+    wf["combine"] = {
+        "class_type": "VHS_VideoCombine",
+        "inputs": {
+            "images": ["stitch", 0],
+            "frame_rate": fps,
+            "loop_count": 0,
+            "filename_prefix": prefix,
+            "format": fmt,
+            "pingpong": False,
+            "save_output": True,
+            "audio": ["l1", 2],
+        },
+        "_meta": {"title": "Combine compare clip"},
+    }
+    return wf
+
+
+def _probe_video_meta(path):
+    """Return (frame_count, fps) for a video, or (None, None) when unreadable.
+
+    Used by the compare route so the frame-match plan runs on real clip data
+    instead of browser-reported durations."""
+    try:
+        import av
+        with av.open(path) as container:
+            stream = next((s for s in container.streams if s.type == "video"), None)
+            if stream is None:
+                return None, None
+            fps = 0.0
+            try:
+                rate = getattr(stream, "average_rate", None)
+                if rate:
+                    fps = float(rate)
+            except (TypeError, ValueError):
+                fps = 0.0
+            if fps <= 0:
+                try:
+                    rate = getattr(stream, "guessed_rate", None)
+                    if rate:
+                        fps = float(rate)
+                except (TypeError, ValueError):
+                    fps = 0.0
+            if fps <= 0:
+                fps = 24.0
+            frames = int(stream.frames or 0)
+            if frames <= 0:
+                duration_sec = 0.0
+                try:
+                    if stream.duration and stream.time_base:
+                        duration_sec = float(stream.duration * stream.time_base)
+                except (TypeError, ValueError):
+                    duration_sec = 0.0
+                if duration_sec <= 0 and container.duration:
+                    duration_sec = float(container.duration / 1000000.0)
+                if duration_sec > 0:
+                    frames = int(round(duration_sec * fps))
+            if frames <= 0:
+                return None, None
+            return frames, fps
+    except Exception:
+        return None, None
+
+
+_compare_stage_cache = {}
+
+
+def _stage_compare_clip(input_dir, src, key):
+    """Copy an output/temp video into the input folder once per media key, so
+    repeat exports reuse the staged file instead of piling up copies."""
+    staged = _compare_stage_cache.get(key)
+    if staged and os.path.isfile(os.path.join(input_dir, staged)):
+        return staged
+    ext = os.path.splitext(os.path.basename(src))[1] or ".mp4"
+    staged = "h3_cmp_%s%s" % (uuid.uuid4().hex[:10], ext)
+    shutil.copy2(src, os.path.join(input_dir, staged))
+    _compare_stage_cache[key] = staged
+    if len(_compare_stage_cache) > 500:
+        for stale in list(_compare_stage_cache)[:-200]:
+            _compare_stage_cache.pop(stale, None)
+    return staged
+
+
+@PromptServer.instance.routes.post("/h3one/compare_workflow")
+async def compare_workflow(request):
+    """Stage the picked outputs into the input folder, probe their real frame
+    counts, compute the frame-match plan and return the ready-to-queue graph.
+    The JS posts the workflow to /prompt through the node's normal path."""
+    try:
+        data = await request.json()
+    except Exception:
+        return web.json_response({"ok": False, "error": "invalid JSON"}, status=400)
+    if not isinstance(data, dict):
+        return web.json_response({"ok": False, "error": "invalid payload"}, status=400)
+    clips = data.get("clips")
+    if not isinstance(clips, list) or not 2 <= len(clips) <= 4:
+        return web.json_response({"ok": False, "error": "compare needs 2 to 4 clips"}, status=400)
+    options = data.get("options") or {}
+    try:
+        input_dir = str(Path(folder_paths.get_input_directory()).resolve())
+    except Exception:
+        input_dir = str(Path(folder_paths.get_input_directory()))
+    os.makedirs(input_dir, exist_ok=True)
+    built = []
+    for i, clip in enumerate(clips):
+        if not isinstance(clip, dict):
+            return web.json_response({"ok": False, "error": "clip %d is malformed" % (i + 1)}, status=400)
+        filename = str(clip.get("filename", "") or "")
+        subfolder = str(clip.get("subfolder", "") or "")
+        file_type = str(clip.get("type", "output") or "output")
+        if not filename:
+            return web.json_response({"ok": False, "error": "clip %d has no filename" % (i + 1)}, status=400)
+        try:
+            if file_type == "temp":
+                src = _safe_join(str(Path(folder_paths.get_temp_directory()).resolve()), subfolder, filename)
+            else:
+                src = _safe_join(_get_output_dir(), subfolder, filename)
+        except ValueError:
+            return web.json_response({"ok": False, "error": "clip %d has an invalid path" % (i + 1)}, status=400)
+        if not os.path.isfile(src):
+            return web.json_response({"ok": False, "error": "clip %d file not found" % (i + 1)}, status=404)
+        key = _media_key(filename, subfolder, file_type)
+        staged = _stage_compare_clip(input_dir, src, key)
+        frames, fps = _probe_video_meta(src)
+        if not frames:
+            return web.json_response({"ok": False, "error": "could not read clip %d video" % (i + 1)}, status=500)
+        built.append({
+            "input_name": staged,
+            "frames": frames,
+            "fps": fps or 24.0,
+            "trim_start": clip.get("trim_start", 0),
+            "trim_end": clip.get("trim_end"),
+        })
+    try:
+        wf = _build_compare_workflow(built, options)
+    except ValueError as e:
+        return web.json_response({"ok": False, "error": str(e)}, status=400)
+    return web.json_response({
+        "ok": True,
+        "wf": wf,
+        "clips": [
+            {"frames": c["frames"], "fps": c["fps"], "input_name": c["input_name"]}
+            for c in built
+        ],
+    })
+
+
+NODE_CLASS_MAPPINGS = {"H3OneNode": H3OneNode, "H3CacheBust": H3CacheBust, "H3MaskVideoPrepare": H3MaskVideoPrepare, "H3IdentityAnchor": H3IdentityAnchor, "H3AudioTrim": H3AudioTrim, "H3AudioJoinSmooth": H3AudioJoinSmooth, "H3OneSAM3CropCheck": H3OneSAM3CropCheck, "H3PaintedRegion": H3PaintedRegion, "H3StitchFrames": H3StitchFrames}
+NODE_DISPLAY_NAME_MAPPINGS = {"H3OneNode": "ALL in ONE MiniMaxH3", "H3CacheBust": "H3 Cache Fingerprint (internal)", "H3MaskVideoPrepare": "H3 Mask Video Prepare (internal)", "H3IdentityAnchor": "H3 Identity Anchor (internal)", "H3AudioTrim": "H3 Audio Trim (internal)", "H3AudioJoinSmooth": "H3 Audio Join Smooth (internal)", "H3OneSAM3CropCheck": "H3 Crop + Confidence Report (internal)", "H3PaintedRegion": "H3 Painted Region (internal)", "H3StitchFrames": "H3 Stitch Frames (internal)"}

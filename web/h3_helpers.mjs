@@ -595,3 +595,77 @@ export function cropReportText(report) {
   const detail = `Crop OK: ${conf}, steady (worst jump ${Math.round(Number(st.max_step) || 0)}px, ~${jitterPct}% of crop), subject inside${subject}${note}.`;
   return { verdict: "ok", label: "Crop looks good - the box holds the subject steadily and nothing is cut off.", detail, tip: null };
 }
+
+// -- Compare & Stitch --------------------------------------------------------
+// Pure helpers for the Video Compare + Stitch page. Slot state and timecode
+// sync math live here so they can run under plain Node without a browser.
+
+// Clamp a playback time into [0, duration]. Non-finite or missing inputs fall
+// back to 0 so corrupt slot state can never produce a NaN currentTime.
+export function clampTimecode(t, duration) {
+  const d = Number(duration);
+  if (!Number.isFinite(d) || d <= 0) return 0;
+  const v = Number(t);
+  if (!Number.isFinite(v)) return 0;
+  return Math.max(0, Math.min(d, v));
+}
+
+// Grid columns for a side-by-side layout. `fixed` > 0 overrides the auto
+// ceil(sqrt(n)) rule and is clamped to the clip count.
+export function compareGridColumns(count, fixed = 0) {
+  const n = Math.max(1, Math.floor(Number(count) || 1));
+  const f = Math.floor(Number(fixed) || 0);
+  if (f > 0) return Math.min(n, f);
+  return Math.max(1, Math.ceil(Math.sqrt(n)));
+}
+
+export function compareGridRows(count, columns) {
+  const n = Math.max(1, Math.floor(Number(count) || 1));
+  const cols = Math.max(1, Math.floor(Number(columns) || 1));
+  return Math.max(1, Math.ceil(n / cols));
+}
+
+// Shared play window for the Compare tab: the shortest clip duration, so every
+// slot can play the whole window without hitting its own end.
+export function compareWindow(slots) {
+  const durations = (Array.isArray(slots) ? slots : [])
+    .map((s) => (s && Number.isFinite(Number(s.duration)) && Number(s.duration) > 0 ? Number(s.duration) : null))
+    .filter((d) => d !== null);
+  if (!durations.length) return 0;
+  return Math.min(...durations);
+}
+
+// Map a shared window time to each slot's own playback time. Each slot starts
+// at its own trimStart, so a shared timecode becomes trimStart + shared, then
+// clamps to that slot's duration so a short slot can never seek past its end.
+// slots: [{ duration, trimStart }, ...]. Returns an array of target times.
+export function syncTargets(masterTime, slots, window) {
+  const w = Number(window);
+  const shared = Number.isFinite(w) && w > 0 ? clampTimecode(masterTime, w) : 0;
+  return (Array.isArray(slots) ? slots : []).map((s) => {
+    const trim = Number(s && s.trimStart) || 0;
+    const dur = Number(s && s.duration);
+    return clampTimecode(shared + trim, dur);
+  });
+}
+
+// "m:ss.d" clock label for a timecode. Pure so tests can pin the format.
+export function formatTimecode(t) {
+  const s = Math.max(0, Number(t) || 0);
+  const m = Math.floor(s / 60);
+  const sec = s - m * 60;
+  return `${m}:${sec.toFixed(1).padStart(4, "0")}`;
+}
+
+// Fresh slot state for the Compare page: 2-4 slots, each starting empty with
+// its own trim window. Used to seed/reset the picker so slot ids stay stable.
+export function makeCompareSlots(count) {
+  const n = Math.max(2, Math.min(4, Math.floor(Number(count) || 2)));
+  return Array.from({ length: n }, (_, i) => ({
+    id: `vc-${i}`,
+    item: null,
+    duration: 0,
+    trimStart: 0,
+    trimEnd: 0,
+  }));
+}

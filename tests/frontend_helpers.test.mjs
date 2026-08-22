@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { aspect, sizeOf, sameSize, mapMaskPoint, orientRes, fitResolutionToAspect, planMaskCrop, maskTrackingPlan, resolveFitPrimary, imgProfileShort, imgAspectName, viewQuery, thumbQuery, isImageItem, inputFileExists, h3SamCheckpoints, clampImageMP, planImageCanvas, planImageCanvasForRatio, planUpscaleTarget, IMG_MAX_MP, IMG_MIN_MP, IMG_ASPECT_RATIOS, resolveQualityFlags, matchQualityPreset, QUALITY_PRESET_FLAGS, planExtend, queuePromptPayload, settleQueuedOutput, maskSpeechSyncPrompt, cropFrameIndex, cropBoxAt, cropReportText, lumaToAlpha, maskDetectionHint, maskRunErrorHint } from "../web/h3_helpers.mjs";
+import { aspect, sizeOf, sameSize, mapMaskPoint, orientRes, fitResolutionToAspect, planMaskCrop, maskTrackingPlan, resolveFitPrimary, imgProfileShort, imgAspectName, viewQuery, thumbQuery, isImageItem, inputFileExists, h3SamCheckpoints, clampImageMP, planImageCanvas, planImageCanvasForRatio, planUpscaleTarget, IMG_MAX_MP, IMG_MIN_MP, IMG_ASPECT_RATIOS, resolveQualityFlags, matchQualityPreset, QUALITY_PRESET_FLAGS, planExtend, queuePromptPayload, settleQueuedOutput, maskSpeechSyncPrompt, cropFrameIndex, cropBoxAt, cropReportText, lumaToAlpha, maskDetectionHint, maskRunErrorHint, clampTimecode, compareGridColumns, compareGridRows, compareWindow, syncTargets, formatTimecode, makeCompareSlots } from "../web/h3_helpers.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, "..");
@@ -1453,4 +1453,106 @@ test("bundle retries the queued-output history fallback with a bounded deadline"
     !bundle.includes("const item=_mediaItemFromHistory(h&&h[pid]);"),
     "the old single-shot history lookup must be gone from execution_success",
   );
+});
+
+// -- Video Compare + Stitch helpers ------------------------------------------
+
+test("clampTimecode: clamps to [0, duration]", () => {
+  assert.equal(clampTimecode(0.5, 10), 0.5);
+  assert.equal(clampTimecode(-2, 10), 0);
+  assert.equal(clampTimecode(20, 10), 10);
+  assert.equal(clampTimecode(5, 0), 0);
+  assert.equal(clampTimecode(NaN, 10), 0);
+  assert.equal(clampTimecode(5, NaN), 0);
+});
+
+test("compareGridColumns: auto is ceil(sqrt(n)); fixed overrides and clamps", () => {
+  assert.equal(compareGridColumns(2), 2);
+  assert.equal(compareGridColumns(3), 2);
+  assert.equal(compareGridColumns(4), 2);
+  assert.equal(compareGridColumns(1), 1);
+  assert.equal(compareGridColumns(4, 4), 4);
+  assert.equal(compareGridColumns(3, 1), 1);
+  assert.equal(compareGridColumns(3, 9), 3, "fixed columns clamp to the clip count");
+  assert.equal(compareGridColumns(0), 1);
+});
+
+test("compareGridRows: rows wrap per column count", () => {
+  assert.equal(compareGridRows(3, 2), 2);
+  assert.equal(compareGridRows(4, 2), 2);
+  assert.equal(compareGridRows(4, 4), 1);
+  assert.equal(compareGridRows(3, 1), 3);
+  assert.equal(compareGridRows(0, 2), 1);
+});
+
+test("compareWindow: the shortest clip duration wins", () => {
+  assert.equal(compareWindow([{ duration: 5 }, { duration: 3 }, { duration: 10 }]), 3);
+  assert.equal(compareWindow([{ duration: 0 }, { duration: 6 }]), 6, "zero-duration clips are ignored");
+  assert.equal(compareWindow([]), 0);
+  assert.equal(compareWindow([{ duration: NaN }]), 0);
+});
+
+test("syncTargets: maps a shared timecode onto each clip's trim window", () => {
+  const slots = [{ duration: 10, trimStart: 1 }, { duration: 10, trimStart: 4 }, { duration: 5, trimStart: 0 }];
+  assert.deepEqual(syncTargets(0, slots, 5), [1, 4, 0]);
+  assert.deepEqual(syncTargets(3, slots, 5), [4, 7, 3]);
+  assert.deepEqual(syncTargets(5, slots, 5), [6, 9, 5]);
+  assert.deepEqual(syncTargets(9, slots, 5), [6, 9, 5], "a shared time past the window clamps to the window first");
+});
+
+test("formatTimecode: m:ss.d label", () => {
+  assert.equal(formatTimecode(0), "0:00.0");
+  assert.equal(formatTimecode(1.5), "0:01.5");
+  assert.equal(formatTimecode(61.2), "1:01.2");
+  assert.equal(formatTimecode(-5), "0:00.0");
+  assert.equal(formatTimecode(undefined), "0:00.0");
+});
+
+test("makeCompareSlots: 2-4 slots with stable ids and empty state", () => {
+  const s = makeCompareSlots(3);
+  assert.equal(s.length, 3);
+  assert.deepEqual(s.map((x) => x.id), ["vc-0", "vc-1", "vc-2"]);
+  s.forEach((x) => {
+    assert.equal(x.item, null);
+    assert.equal(x.duration, 0);
+    assert.equal(x.trimStart, 0);
+    assert.equal(x.trimEnd, 0);
+  });
+  assert.equal(makeCompareSlots(1).length, 2, "below the floor clamps to 2");
+  assert.equal(makeCompareSlots(9).length, 4, "above the ceiling clamps to 4");
+});
+
+test("bundle wires the Video Compare + Stitch page", () => {
+  const bundle = readFileSync(bundlePath, "utf8");
+  assert.ok(bundle.includes("Compare & Stitch"), "the overlay must be titled Compare & Stitch");
+  assert.ok(bundle.includes("vcOverlay"), "the bundle must build the compare overlay");
+  assert.ok(bundle.includes("vcTabCompare") && bundle.includes("vcTabStitch"), "the overlay must offer Compare and Stitch tabs");
+  assert.ok(bundle.includes("makeCompareSlots(2)"), "the overlay must seed 2 slots");
+  assert.ok(bundle.includes("_openLibraryPick"), "slots must open the library picker");
+  assert.ok(bundle.includes("/h3one/compare_workflow"), "the export must POST to the compare workflow route");
+  assert.ok(bundle.includes('"Export stitch"'), "the Stitch tab must expose the export button");
+  assert.ok(bundle.includes("compareGridColumns"), "the compare grid must use the auto-column helper");
+  assert.ok(bundle.includes("syncTargets"), "the sync loop must use the timecode helper");
+  assert.ok(bundle.includes('actBtn("Compare",()=>openCompare()'), "the outputs strip must mount a Compare button");
+  assert.ok(bundle.includes("libCompareBtn"), "the library must mount a Compare button");
+  assert.ok(bundle.includes('vcOverlay.style.display!=="none"'), "Space must not generate while the compare overlay is open");
+});
+
+test("bundle stages picked outputs through the compare route before queueing", () => {
+  const bundle = readFileSync(bundlePath, "utf8");
+  assert.ok(
+    bundle.includes("trim_start:Number(s.trimStart)||0"),
+    "the export payload must send each slot's trim start",
+  );
+  assert.ok(
+    bundle.includes("frame_match:S.compareFrameMatch||\"trim_to_shortest\""),
+    "the export payload must carry the frame-match mode",
+  );
+  assert.ok(
+    bundle.includes("filename_prefix:\"one-node-minimax-h3/compare/h3_compare\""),
+    "the export must save into the compare output folder",
+  );
+  assert.ok(bundle.includes("_batchIds=[data.prompt_id]"), "the export must queue through the node's normal prompt path");
+  assert.ok(bundle.includes("_armFinishWatch()"), "the export must arm the finish watch for progress and gallery refresh");
+  assert.ok(bundle.includes("tx(genBtnLbl,\"Stitching...\")"), "the export must label the in-flight job Stitching");
 });

@@ -1774,5 +1774,315 @@ class TestSmartMask(_NodesTestBase):
         comfy.sd = sd
 
 
+class TestFrameMatchPlan(_NodesTestBase):
+    def test_trim_to_shortest_caps_every_clip_to_the_shortest_window(self):
+        plan = self.nodes._frame_match_plan(
+            [{"frames": 120, "fps": 24}, {"frames": 240, "fps": 24}],
+            mode="trim_to_shortest",
+        )
+        self.assertEqual(plan["out_frames"], 120)
+        self.assertEqual(plan["fps"], 24.0)
+        self.assertEqual([p["frame_load_cap"] for p in plan["clips"]], [120, 120])
+        self.assertEqual([p["skip_first_frames"] for p in plan["clips"]], [0, 0])
+
+    def test_pad_to_longest_loads_every_clip_fully(self):
+        plan = self.nodes._frame_match_plan(
+            [{"frames": 120, "fps": 24}, {"frames": 240, "fps": 24}],
+            mode="pad_to_longest",
+        )
+        self.assertEqual(plan["out_frames"], 240)
+        self.assertEqual([p["frame_load_cap"] for p in plan["clips"]], [120, 240])
+
+    def test_normalizes_clip_fps_to_shared_timeline(self):
+        plan = self.nodes._frame_match_plan(
+            [{"frames": 120, "fps": 30}, {"frames": 96, "fps": 24}],
+            mode="trim_to_shortest",
+        )
+        # 120 frames at 30 fps is 4s -> 96 frames at 24 fps.
+        self.assertEqual(plan["out_frames"], 96)
+        self.assertEqual([p["frame_load_cap"] for p in plan["clips"]], [96, 96])
+
+    def test_per_clip_trim_start_skips_frames_and_end_limits_the_window(self):
+        plan = self.nodes._frame_match_plan(
+            [
+                {"frames": 240, "fps": 24, "trim_start": 1.0},
+                {"frames": 240, "fps": 24, "trim_start": 0.0, "trim_end": 5.0},
+            ],
+            mode="per_clip",
+        )
+        a, b = plan["clips"]
+        self.assertEqual(a["skip_first_frames"], 24)
+        self.assertEqual(a["frame_load_cap"], 216)
+        self.assertEqual(b["skip_first_frames"], 0)
+        self.assertEqual(b["frame_load_cap"], 120)
+        self.assertEqual(plan["out_frames"], 216, "shorter windows pad up to the longest")
+
+    def test_trim_start_clamps_to_at_least_one_frame(self):
+        plan = self.nodes._frame_match_plan(
+            [{"frames": 24, "fps": 24, "trim_start": 10.0}],
+            mode="per_clip",
+        )
+        self.assertEqual(plan["clips"][0]["skip_first_frames"], 23)
+        self.assertEqual(plan["clips"][0]["frame_load_cap"], 1)
+
+    def test_zero_or_missing_frames_degrades_to_one(self):
+        plan = self.nodes._frame_match_plan([{"frames": 0, "fps": 24}], mode="pad_to_longest")
+        self.assertEqual(plan["clips"][0]["frame_load_cap"], 1)
+
+    def test_unknown_mode_falls_back_to_shortest(self):
+        plan = self.nodes._frame_match_plan(
+            [{"frames": 120, "fps": 24}, {"frames": 240, "fps": 24}],
+            mode="bogus",
+        )
+        self.assertEqual(plan["out_frames"], 120)
+
+    def test_requires_at_least_one_clip(self):
+        with self.assertRaises(ValueError):
+            self.nodes._frame_match_plan([], "trim_to_shortest")
+
+
+class TestStitchGeometry(_NodesTestBase):
+    def test_fit_cell_contain_centers_and_never_crops(self):
+        self.assertEqual(self.nodes._fit_cell(1920, 1080, 960, 540), (960, 540, 0, 0))
+        self.assertEqual(self.nodes._fit_cell(640, 360, 1920, 1080), (1920, 1080, 0, 0))
+        self.assertEqual(self.nodes._fit_cell(400, 800, 800, 800), (400, 800, 200, 0))
+
+    def test_fit_cell_rejects_degenerate_cells(self):
+        self.assertEqual(self.nodes._fit_cell(0, 100, 800, 800), (1, 1, 0, 0))
+        self.assertEqual(self.nodes._fit_cell(100, 100, 0, 800), (1, 1, 0, 0))
+
+    def test_grid_auto_columns_use_ceil_sqrt(self):
+        geom = self.nodes._stitch_grid([(640, 360), (1920, 1080)], padding=8)
+        self.assertEqual(geom["columns"], 2)
+        self.assertEqual(geom["rows"], 1)
+        self.assertEqual(geom["cell_w"], 1920)
+        self.assertEqual(geom["cell_h"], 1080)
+        self.assertEqual(geom["canvas_w"], 2 * 1920 + 8 * 3)
+        self.assertEqual(geom["canvas_h"], 1080 + 8 * 2)
+        self.assertEqual(geom["cells"][0], {"x": 8, "y": 8, "w": 1920, "h": 1080})
+        self.assertEqual(geom["cells"][1], {"x": 1936, "y": 8, "w": 1920, "h": 1080})
+
+    def test_grid_explicit_columns_wrap_rows(self):
+        geom = self.nodes._stitch_grid([(100, 100)] * 3, padding=4, columns=2)
+        self.assertEqual(geom["columns"], 2)
+        self.assertEqual(geom["rows"], 2)
+        self.assertEqual(geom["cells"][2]["x"], 4)
+        self.assertEqual(geom["cells"][2]["y"], 4 + 100 + 4)
+
+    def test_grid_single_column_stacks_vertically(self):
+        geom = self.nodes._stitch_grid([(100, 100)] * 3, padding=0, columns=1)
+        self.assertEqual(geom["columns"], 1)
+        self.assertEqual(geom["rows"], 3)
+        self.assertEqual(geom["canvas_w"], 100)
+        self.assertEqual(geom["canvas_h"], 300)
+
+    def test_stitch_frame_count_uses_the_longest_clip(self):
+        self.assertEqual(self.nodes._stitch_frame_count([120, 240, 7]), 240)
+        self.assertEqual(self.nodes._stitch_frame_count([5]), 5)
+
+    def test_hex_to_rgb_tuple_parses_and_defaults_black(self):
+        self.assertEqual(self.nodes._hex_to_rgb_tuple("#ff0000"), (1.0, 0.0, 0.0))
+        self.assertEqual(self.nodes._hex_to_rgb_tuple("00ff00"), (0.0, 1.0, 0.0))
+        self.assertEqual(self.nodes._hex_to_rgb_tuple("abc"), (170 / 255.0, 187 / 255.0, 204 / 255.0))
+        self.assertEqual(self.nodes._hex_to_rgb_tuple("nope"), (0.0, 0.0, 0.0))
+        self.assertEqual(self.nodes._hex_to_rgb_tuple(""), (0.0, 0.0, 0.0))
+
+    def test_clamp_int_bounds_and_defaults(self):
+        self.assertEqual(self.nodes._clamp_int(5, 0, 10, 3), 5)
+        self.assertEqual(self.nodes._clamp_int(-2, 0, 10, 3), 0)
+        self.assertEqual(self.nodes._clamp_int(99, 0, 10, 3), 10)
+        self.assertEqual(self.nodes._clamp_int("oops", 0, 10, 3), 3)
+
+
+class TestBuildCompareWorkflow(_NodesTestBase):
+    def _clips(self):
+        return [
+            {"input_name": "h3_cmp_a.mp4", "frames": 120, "fps": 24, "trim_start": 0, "trim_end": None},
+            {"input_name": "h3_cmp_b.mp4", "frames": 240, "fps": 24, "trim_start": 0, "trim_end": None},
+        ]
+
+    def test_builds_loaders_stitch_and_combine(self):
+        wf = self.nodes._build_compare_workflow(self._clips(), {})
+        self.assertEqual(set(wf.keys()), {"l1", "l2", "stitch", "combine"})
+        self.assertEqual(wf["l1"]["class_type"], "VHS_LoadVideo")
+        self.assertEqual(wf["stitch"]["class_type"], "H3StitchFrames")
+        self.assertEqual(wf["combine"]["class_type"], "VHS_VideoCombine")
+
+    def test_loaders_carry_the_frame_plan_and_force_rate(self):
+        wf = self.nodes._build_compare_workflow(self._clips(), {"frame_match": "pad_to_longest"})
+        self.assertEqual(wf["l1"]["inputs"]["force_rate"], 24.0)
+        self.assertEqual(wf["l1"]["inputs"]["frame_load_cap"], 120)
+        self.assertEqual(wf["l2"]["inputs"]["frame_load_cap"], 240)
+        self.assertEqual(wf["l1"]["inputs"]["skip_first_frames"], 0)
+        self.assertEqual(wf["l1"]["inputs"]["select_every_nth"], 1)
+        self.assertEqual(wf["l1"]["inputs"]["format"], "None")
+        self.assertEqual(wf["l1"]["inputs"]["video"], "h3_cmp_a.mp4")
+
+    def test_trim_to_shortest_matches_caps_to_shortest(self):
+        wf = self.nodes._build_compare_workflow(self._clips(), {"frame_match": "trim_to_shortest"})
+        self.assertEqual(wf["l1"]["inputs"]["frame_load_cap"], 120)
+        self.assertEqual(wf["l2"]["inputs"]["frame_load_cap"], 120)
+
+    def test_stitch_wires_every_loaded_image(self):
+        wf = self.nodes._build_compare_workflow(self._clips(), {})
+        self.assertEqual(wf["stitch"]["inputs"]["image_1"], ["l1", 0])
+        self.assertEqual(wf["stitch"]["inputs"]["image_2"], ["l2", 0])
+        four = self.nodes._build_compare_workflow(
+            [{"input_name": "h3_cmp_%d.mp4" % i, "frames": 120, "fps": 24} for i in range(4)], {}
+        )
+        self.assertEqual(four["stitch"]["inputs"]["image_4"], ["l4", 0])
+
+    def test_combine_uses_clip_1_audio_and_saves_to_compare_folder(self):
+        wf = self.nodes._build_compare_workflow(self._clips(), {})
+        self.assertEqual(wf["combine"]["inputs"]["audio"], ["l1", 2])
+        self.assertEqual(wf["combine"]["inputs"]["images"], ["stitch", 0])
+        self.assertEqual(wf["combine"]["inputs"]["frame_rate"], 24.0)
+        self.assertEqual(wf["combine"]["inputs"]["save_output"], True)
+        self.assertEqual(wf["combine"]["inputs"]["filename_prefix"], "one-node-minimax-h3/compare/h3_compare")
+
+    def test_options_flow_into_the_graph(self):
+        wf = self.nodes._build_compare_workflow(self._clips(), {
+            "padding": 16, "columns": 1, "background": "#123456",
+            "codec": "h265", "filename_prefix": "one-node-minimax-h3/compare/mine",
+        })
+        self.assertEqual(wf["stitch"]["inputs"]["padding"], 16)
+        self.assertEqual(wf["stitch"]["inputs"]["columns"], 1)
+        self.assertEqual(wf["stitch"]["inputs"]["background"], "#123456")
+        self.assertEqual(wf["combine"]["inputs"]["format"], "video/h265-mp4")
+        self.assertEqual(wf["combine"]["inputs"]["filename_prefix"], "one-node-minimax-h3/compare/mine")
+
+    def test_unknown_codec_falls_back_to_h264(self):
+        wf = self.nodes._build_compare_workflow(self._clips(), {"codec": "bogus"})
+        self.assertEqual(wf["combine"]["inputs"]["format"], "video/h264-mp4")
+
+    def test_rejects_wrong_clip_counts(self):
+        with self.assertRaisesRegex(ValueError, "2 to 4"):
+            self.nodes._build_compare_workflow([self._clips()[0]], {})
+        with self.assertRaisesRegex(ValueError, "2 to 4"):
+            self.nodes._build_compare_workflow(self._clips() * 3, {})
+
+    def test_rejects_clip_without_a_staged_name(self):
+        with self.assertRaisesRegex(ValueError, "staged input file"):
+            self.nodes._build_compare_workflow(
+                [{"input_name": "", "frames": 120, "fps": 24}, {"input_name": "x.mp4", "frames": 120, "fps": 24}], {}
+            )
+
+    def test_every_link_target_resolves(self):
+        wf = self.nodes._build_compare_workflow(self._clips(), {})
+        ids = set(wf.keys())
+        for node in wf.values():
+            for value in node["inputs"].values():
+                if isinstance(value, list) and len(value) == 2 and isinstance(value[0], str):
+                    self.assertIn(value[0], ids)
+
+
+class TestH3StitchFramesNode(_NodesTestBase):
+    def test_input_schema_locks_1_to_4_image_inputs(self):
+        types = self.nodes.H3StitchFrames.INPUT_TYPES()
+        self.assertIn("image_1", types["required"])
+        self.assertIn("image_2", types["optional"])
+        self.assertIn("image_3", types["optional"])
+        self.assertIn("image_4", types["optional"])
+        self.assertNotIn("image_5", types["optional"])
+        self.assertEqual(types["required"]["pad_frames"][0], ["freeze", "black"])
+        self.assertEqual(types["required"]["background"][1]["default"], "#000000")
+
+    @unittest.skipUnless(_HAS_TORCH, "torch not available")
+    def test_returns_single_input_passthrough(self):
+        import torch
+        img = torch.zeros((5, 8, 8, 3))
+        out = self.nodes.H3StitchFrames().stitch(img, None, None, None, 8, "freeze", 0, "#000000")
+        self.assertIs(out[0], img)
+
+    @unittest.skipUnless(_HAS_TORCH, "torch not available")
+    def test_freezes_short_clips_to_the_longest_frame_count(self):
+        import torch
+        red = torch.zeros((10, 8, 8, 3))
+        red[..., 0] = 1.0
+        blue = torch.zeros((4, 8, 8, 3))
+        blue[..., 2] = 1.0
+        out = self.nodes.H3StitchFrames().stitch(red, blue, None, None, 0, "freeze", 2, "#000000")
+        canvas = out[0]
+        self.assertEqual(canvas.shape, (10, 8, 16, 3))
+        self.assertGreater(canvas[0, 0, 0, 0], 0.9, "left cell red at frame 0")
+        self.assertGreater(canvas[0, 0, 8, 2], 0.9, "right cell blue at frame 0")
+        self.assertGreater(canvas[9, 0, 0, 0], 0.9, "left cell keeps red when frozen")
+        self.assertGreater(canvas[9, 0, 8, 2], 0.9, "right cell freezes blue after its last frame")
+
+    @unittest.skipUnless(_HAS_TORCH, "torch not available")
+    def test_black_pad_short_clips_after_their_last_frame(self):
+        import torch
+        red = torch.zeros((10, 8, 8, 3))
+        red[..., 0] = 1.0
+        blue = torch.zeros((4, 8, 8, 3))
+        blue[..., 2] = 1.0
+        out = self.nodes.H3StitchFrames().stitch(red, blue, None, None, 0, "black", 2, "#000000")
+        canvas = out[0]
+        self.assertEqual(canvas.shape, (10, 8, 16, 3))
+        self.assertEqual(float(canvas[9, 0, 8, 2]), 0.0, "black pad has no blue")
+        self.assertEqual(float(canvas[9, 0, 8, :].sum()), 0.0)
+
+    @unittest.skipUnless(_HAS_TORCH, "torch not available")
+    def test_background_color_fills_the_gutter(self):
+        import torch
+        red = torch.zeros((5, 8, 8, 3))
+        red[..., 0] = 1.0
+        blue = torch.zeros((5, 8, 8, 3))
+        blue[..., 2] = 1.0
+        out = self.nodes.H3StitchFrames().stitch(red, blue, None, None, 8, "freeze", 2, "#00ff00")
+        canvas = out[0]
+        self.assertEqual(canvas.shape, (5, 24, 40, 3), "2 cells of 8px plus 8px gutters")
+        self.assertGreater(canvas[0, 0, 0, 1], 0.9, "gutter pixel is the background green")
+
+
+class TestCompareWorkflowRoute(_NodesTestBase):
+    def test_rejects_too_few_clips(self):
+        resp = _run(self.nodes.compare_workflow(_FakeRequest({"clips": [{"filename": "a.mp4"}]})))
+        self.assertEqual(resp.kwargs["status"], 400)
+        self.assertIn("2 to 4", resp.kwargs["data"]["error"])
+
+    def test_rejects_missing_files(self):
+        resp = _run(self.nodes.compare_workflow(_FakeRequest({
+            "clips": [{"filename": "ghost_a.mp4", "subfolder": ""}, {"filename": "ghost_b.mp4", "subfolder": ""}],
+        })))
+        self.assertEqual(resp.kwargs["status"], 404)
+
+    def test_rejects_invalid_json(self):
+        resp = _run(self.nodes.compare_workflow(_FakeRequest("nope")))
+        self.assertEqual(resp.kwargs["status"], 400)
+
+    def test_stages_and_builds_with_probed_frames(self):
+        import folder_paths as _fp
+        original_probe = self.nodes._probe_video_meta
+
+        def fake_probe(_path):
+            return 120, 24.0
+
+        self.nodes._probe_video_meta = fake_probe
+        out_root = Path(self.nodes._get_output_dir())
+        sub = out_root / "one-node-minimax-h3"
+        sub.mkdir(parents=True, exist_ok=True)
+        (sub / "a.mp4").write_bytes(b"x")
+        (sub / "b.mp4").write_bytes(b"x")
+        try:
+            resp = _run(self.nodes.compare_workflow(_FakeRequest({
+                "clips": [
+                    {"filename": "a.mp4", "subfolder": "one-node-minimax-h3", "type": "output"},
+                    {"filename": "b.mp4", "subfolder": "one-node-minimax-h3", "type": "output"},
+                ],
+                "options": {"frame_match": "trim_to_shortest"},
+            })))
+        finally:
+            self.nodes._probe_video_meta = original_probe
+        data = resp.kwargs["data"]
+        self.assertTrue(data["ok"])
+        self.assertIn("wf", data)
+        wf = data["wf"]
+        self.assertEqual(wf["l1"]["inputs"]["frame_load_cap"], 120)
+        input_dir = Path(_fp.get_input_directory())
+        staged = data["clips"][0]["input_name"]
+        self.assertTrue((input_dir / staged).is_file(), "the output must be staged into the input folder")
+
+
 if __name__ == "__main__":
     unittest.main()

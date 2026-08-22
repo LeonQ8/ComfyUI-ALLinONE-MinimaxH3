@@ -379,6 +379,52 @@ function inputFileExists(files,name){
   return (Array.isArray(files)?files:[]).some(f=>String(f).replace(/\\/g,"/").split("/").pop()===base);
 }
 
+// -- Video Compare + Stitch helpers (mirrored in h3_helpers.mjs) -------------
+function clampTimecode(t,duration){
+  const d=Number(duration);
+  if(!Number.isFinite(d)||d<=0) return 0;
+  const v=Number(t);
+  if(!Number.isFinite(v)) return 0;
+  return Math.max(0,Math.min(d,v));
+}
+function compareGridColumns(count,fixed=0){
+  const n=Math.max(1,Math.floor(Number(count)||1));
+  const f=Math.floor(Number(fixed)||0);
+  if(f>0) return Math.min(n,f);
+  return Math.max(1,Math.ceil(Math.sqrt(n)));
+}
+function compareGridRows(count,columns){
+  const n=Math.max(1,Math.floor(Number(count)||1));
+  const cols=Math.max(1,Math.floor(Number(columns)||1));
+  return Math.max(1,Math.ceil(n/cols));
+}
+function compareWindow(slots){
+  const durations=(Array.isArray(slots)?slots:[])
+    .map(s=>s&&Number.isFinite(Number(s.duration))&&Number(s.duration)>0?Number(s.duration):null)
+    .filter(d=>d!==null);
+  if(!durations.length) return 0;
+  return Math.min(...durations);
+}
+function syncTargets(masterTime,slots,window){
+  const w=Number(window);
+  const shared=Number.isFinite(w)&&w>0?clampTimecode(masterTime,w):0;
+  return (Array.isArray(slots)?slots:[]).map(s=>{
+    const trim=Number(s&&s.trimStart)||0;
+    const dur=Number(s&&s.duration);
+    return clampTimecode(shared+trim,dur);
+  });
+}
+function formatTimecode(t){
+  const s=Math.max(0,Number(t)||0);
+  const m=Math.floor(s/60);
+  const sec=s-m*60;
+  return `${m}:${sec.toFixed(1).padStart(4,"0")}`;
+}
+function makeCompareSlots(count){
+  const n=Math.max(2,Math.min(4,Math.floor(Number(count)||2)));
+  return Array.from({length:n},(_,i)=>({id:`vc-${i}`,item:null,duration:0,trimStart:0,trimEnd:0}));
+}
+
 const IMG_MIN_MP=0.2;
 const IMG_MAX_MP=8.5;
 const IMG_ASPECT_RATIOS={"1:1":1,"16:9":16/9,"9:16":9/16,"4:3":4/3,"3:4":3/4,"3:2":3/2,"2:3":2/3,"21:9":21/9};
@@ -2640,10 +2686,24 @@ function persist(){
       };
       const libClose=mk("button",{background:"transparent",border:`1px solid #e05555`,borderRadius:"6px",padding:"4px 14px",fontSize:"11px",color:"#e05555",cursor:"pointer",outline:"none"});
       tx(libClose,"Close");
-      libClose.onclick=()=>{ _libExitSel(); closeOverlayFade(libraryOverlay); };
-      libActs.append(libSelBtn,libZipBtn,libFavOnly,libRefresh,libClose);
+      libClose.onclick=()=>{ _libPickCallback=null; libPickBar.style.display="none"; tx(libTitle,"Library"); _libExitSel(); closeOverlayFade(libraryOverlay); };
+      const libCompareBtn=mk("button",{background:"transparent",border:`1px solid ${C.border}`,borderRadius:"6px",padding:"4px 12px",fontSize:"11px",color:C.muted,cursor:"pointer",outline:"none",transition:"border-color .15s, color .15s"});
+      tx(libCompareBtn,"Compare");
+      libCompareBtn.title="Open the Video Compare + Stitch page with the outputs you pick.";
+      libCompareBtn.onmouseenter=()=>{libCompareBtn.style.borderColor=C.lime;libCompareBtn.style.color=C.lime;};
+      libCompareBtn.onmouseleave=()=>{libCompareBtn.style.borderColor=C.border;libCompareBtn.style.color=C.muted;};
+      libCompareBtn.onclick=()=>{ _libPickCallback=null; libPickBar.style.display="none"; tx(libTitle,"Library"); _libExitSel(); closeOverlayFade(libraryOverlay); openCompare(); };
+      libActs.append(libSelBtn,libZipBtn,libFavOnly,libCompareBtn,libRefresh,libClose);
       const libStats=mk("div",{fontSize:"10px",color:C.muted,flexShrink:"0",fontVariantNumeric:"tabular-nums"});
       libHdr.append(libTitle,libStats,libActs);
+      const libPickBar=mk("div",{display:"none",alignItems:"center",gap:"8px",marginBottom:"10px",padding:"7px 10px",background:"rgba(var(--h3accent-rgb),.07)",border:`1px solid rgba(var(--h3accent-rgb),.35)`,borderRadius:"8px",fontSize:"10px",color:C.lime,flexShrink:"0"});
+      const libPickTxt=mk("span",{flex:"1",minWidth:"0",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"});
+      tx(libPickTxt,"Click an output to load it into the compare slot.");
+      const libPickCancel=mk("button",{background:"transparent",border:`1px solid ${C.borderH}`,borderRadius:"5px",padding:"2px 10px",fontSize:"9px",fontWeight:"700",color:C.muted,cursor:"pointer",outline:"none",flexShrink:"0"});
+      tx(libPickCancel,"Cancel");
+      libPickCancel.onclick=()=>{ _libPickCallback=null; libPickBar.style.display="none"; tx(libTitle,"Library"); };
+      libPickBar.append(libPickTxt,libPickCancel);
+      let _libPickCallback=null;
       const libBulkBar=mk("div",{display:"none",alignItems:"center",gap:"8px",marginBottom:"12px",flexWrap:"wrap"});
       const _libBulkBtn=(l,st)=>{
         const b=mk("button",{background:st&&st.danger?C.bg2:"transparent",border:`1px solid ${st&&st.danger?"rgba(220,80,80,.5)":C.border}`,borderRadius:"6px",padding:"4px 12px",fontSize:"11px",color:st&&st.danger?"#e05555":C.muted,cursor:"pointer",outline:"none",transition:"border-color .15s, color .15s, background .15s"});
@@ -2667,7 +2727,7 @@ function persist(){
       libBulkBar.append(libSelAllBtn,libSelClrBtn,libDelSelBtn,libDelNonBtn,libDelAllBtn,libBulkMsg);
       const libGrid=mk("div",{flex:"1",minHeight:"0",overflowY:"auto",display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(140px,1fr))",gap:"8px",alignContent:"start",scrollbarWidth:"thin",scrollbarColor:`${C.border} transparent`});
       libGrid.addEventListener("wheel",e=>e.stopPropagation(),{passive:true});
-      libraryOverlay.append(libHdr,libBulkBar,libGrid);
+      libraryOverlay.append(libHdr,libPickBar,libBulkBar,libGrid);
       const libLightbox=mk("div",{position:"absolute",inset:"0",background:"rgba(0,0,0,.96)",display:"none",flexDirection:"column",padding:"14px",boxSizing:"border-box",zIndex:"55"});
       const lbHdr=mk("div",{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:"10px"});
       const lbName=mk("div",{fontSize:"11px",color:C.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:"1",minWidth:"0"});
@@ -2895,6 +2955,13 @@ function persist(){
               if(_libSel.has(sel)) _libSel.delete(sel); else _libSel.add(sel);
               _libBulkUpd();
               _libSyncChips();
+            } else if(_libPickCallback){
+              const cb=_libPickCallback;
+              _libPickCallback=null;
+              libPickBar.style.display="none";
+              tx(libTitle,"Library");
+              closeOverlayFade(libraryOverlay);
+              cb(item);
             } else {
               _libOpen(item);
             }
@@ -2969,6 +3036,409 @@ function persist(){
         _libCur=null;_renderLibrary();_loadGallery();
       };
       const libraryBtn=mkTopBtn('<rect x="3.5" y="3.5" width="7.5" height="7.5" rx="1.5"/><rect x="13" y="3.5" width="7.5" height="7.5" rx="1.5"/><rect x="3.5" y="13" width="7.5" height="7.5" rx="1.5"/><rect x="13" y="13" width="7.5" height="7.5" rx="1.5"/>',"Library",()=>{_renderLibrary();openOverlay(libraryOverlay);});
+
+      // -- COMPARE & STITCH OVERLAY -----------------------------------------
+      // One overlay with a Compare tab (client-side, instant, synced <video>
+      // grid) and a Stitch tab (queues a deterministic side-by-side export
+      // through the node's normal /prompt path).
+      const vcOverlay=mk("div",{position:"absolute",inset:"0",background:"#0a0a0a",display:"none",flexDirection:"column",padding:"14px",boxSizing:"border-box",zIndex:"50",borderRadius:"8px",overflow:"hidden",opacity:"0",transition:"opacity .22s ease",transform:"translateY(6px)"});
+      const vcHdr=mk("div",{display:"flex",alignItems:"center",gap:"10px",marginBottom:"10px",flexShrink:"0"});
+      const vcTitle=mk("div",{fontSize:"13px",fontWeight:"700",letterSpacing:".06em",textTransform:"uppercase",color:C.text});
+      tx(vcTitle,"Compare & Stitch");
+      const vcTabs=mk("div",{display:"flex",gap:"6px",marginLeft:"14px"});
+      const _vcTabBtn=(label)=>{
+        const b=mk("button",{background:"transparent",border:`1px solid ${C.border}`,borderRadius:"6px",padding:"4px 14px",fontSize:"11px",color:C.muted,cursor:"pointer",outline:"none",transition:"border-color .15s, color .15s, background .15s"});
+        tx(b,label);
+        return b;
+      };
+      const vcTabCompare=_vcTabBtn("Compare");
+      const vcTabStitch=_vcTabBtn("Stitch");
+      const vcClose=mk("button",{background:"transparent",border:`1px solid #e05555`,borderRadius:"6px",padding:"4px 14px",fontSize:"11px",color:"#e05555",cursor:"pointer",outline:"none",marginLeft:"auto"});
+      tx(vcClose,"Close");
+      vcClose.onclick=()=>{ _vcStopPlayback(); closeOverlayFade(vcOverlay); };
+      vcTabs.append(vcTabCompare,vcTabStitch);
+      vcHdr.append(vcTitle,vcTabs,vcClose);
+      let _vcActiveTab="compare";
+      const _vcSetTab=(which)=>{
+        _vcActiveTab=which==="stitch"?"stitch":"compare";
+        const isCompare=_vcActiveTab==="compare";
+        vcTabCompare.style.background=isCompare?C.lime:"transparent";
+        vcTabCompare.style.color=isCompare?"#111":C.muted;
+        vcTabCompare.style.borderColor=isCompare?C.lime:C.border;
+        vcTabStitch.style.background=isCompare?"transparent":C.lime;
+        vcTabStitch.style.color=isCompare?C.muted:"#111";
+        vcTabStitch.style.borderColor=isCompare?C.border:C.lime;
+        vcCompareBody.style.display=isCompare?"flex":"none";
+        vcStitchBody.style.display=isCompare?"none":"flex";
+      };
+      vcTabCompare.onclick=()=>{ _vcSetTab("compare"); _vcRenderCompare(); };
+      vcTabStitch.onclick=()=>{ _vcSetTab("stitch"); _vcRenderStitch(); };
+
+      const vcSlotBar=mk("div",{display:"flex",alignItems:"center",gap:"8px",flexShrink:"0",flexWrap:"wrap",marginBottom:"10px",padding:"8px",background:C.bg1,border:`1px solid ${C.border}`,borderRadius:"9px"});
+      const vcSlotLbl=mk("div",{fontSize:"9px",fontWeight:"700",letterSpacing:".08em",textTransform:"uppercase",color:C.muted,flexShrink:"0"});
+      tx(vcSlotLbl,"Clips");
+      const vcSlotsWrap=mk("div",{display:"flex",gap:"6px",flexWrap:"wrap",flex:"1",minWidth:"0"});
+      const vcAddSlot=mk("button",{background:"transparent",border:`1px dashed ${C.borderH}`,borderRadius:"7px",padding:"6px 12px",fontSize:"11px",color:C.muted,cursor:"pointer",outline:"none",flexShrink:"0"});
+      tx(vcAddSlot,"+ Add");
+      const vcRemoveSlot=mk("button",{background:"transparent",border:`1px solid rgba(220,80,80,.4)`,borderRadius:"7px",padding:"6px 12px",fontSize:"11px",color:"rgba(220,80,80,.8)",cursor:"pointer",outline:"none",flexShrink:"0",display:"none"});
+      tx(vcRemoveSlot,"Remove");
+      vcSlotBar.append(vcSlotLbl,vcSlotsWrap,vcAddSlot,vcRemoveSlot);
+
+      let _vcSlots=makeCompareSlots(2);
+      let _vcMediaRefs=[];
+      let _vcPlaying=false;
+      let _vcRaf=null;
+      let _vcSharedTime=0;
+      let _vcMutedSlot=0;
+
+      const _vcSetCount=(n)=>{
+        n=Math.max(2,Math.min(4,Math.floor(Number(n)||2)));
+        const cur=_vcSlots;
+        _vcSlots=makeCompareSlots(n).map((s,i)=>({
+          ...s,
+          item:cur[i]?cur[i].item:null,
+          duration:cur[i]?cur[i].duration:0,
+          trimStart:cur[i]?cur[i].trimStart:0,
+          trimEnd:cur[i]?cur[i].trimEnd:0,
+        }));
+        _vcRenderSlots();
+        if(_vcActiveTab==="compare") _vcRenderCompare(); else _vcRenderStitch();
+      };
+      vcAddSlot.onclick=()=>{ if(_vcSlots.length>=4) return; _vcSetCount(_vcSlots.length+1); };
+      vcRemoveSlot.onclick=()=>{ if(_vcSlots.length<=2) return; _vcSetCount(_vcSlots.length-1); };
+
+      const _vcRenderSlots=()=>{
+        vcSlotsWrap.innerHTML="";
+        _vcSlots.forEach((slot,idx)=>{
+          const chip=mk("button",{display:"flex",alignItems:"center",gap:"7px",background:C.bg2,border:`1px solid ${slot.item?C.lime:C.border}`,borderRadius:"7px",padding:"5px 8px",fontSize:"10px",color:C.text,cursor:"pointer",outline:"none",maxWidth:"210px",overflow:"hidden",flexShrink:"0",transition:"border-color .15s"},{type:"button",title:slot.item?(slot.item.filename||"")+" - click to replace":"Click to pick an output"});
+          const num=mk("span",{fontSize:"8px",fontWeight:"700",color:slot.item?C.lime:C.dim,flexShrink:"0"});
+          tx(num,String(idx+1));
+          chip.appendChild(num);
+          if(slot.item){
+            const isImg=isImageItem(slot.item);
+            const thumb=isImg
+              ? mk("img",{width:"40px",height:"24px",borderRadius:"4px",objectFit:"cover",background:"#000",flexShrink:"0",display:"block"},{src:api.apiURL(`/h3one/thumb?${thumbQuery(slot.item,128)}`),alt:""})
+              : mk("video",{width:"40px",height:"24px",borderRadius:"4px",objectFit:"cover",background:"#000",flexShrink:"0",display:"block"},{muted:true,preload:"metadata"});
+            if(!isImg) thumb.src=api.apiURL(`/view?${viewQuery(slot.item)}`);
+            chip.appendChild(thumb);
+          }
+          const name=mk("span",{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",minWidth:"0"});
+          tx(name,slot.item?slot.item.filename:"empty");
+          chip.appendChild(name);
+          if(slot.item){
+            const clear=mk("span",{fontSize:"12px",color:C.dim,marginLeft:"2px",flexShrink:"0",padding:"0 2px"},{title:"Remove from compare"});
+            tx(clear,"×");
+            clear.onclick=(e)=>{ e.stopPropagation(); e.preventDefault(); slot.item=null; slot.duration=0; _vcRenderSlots(); _vcRenderCompare(); _vcRenderStitch(); };
+            chip.appendChild(clear);
+          }
+          chip.onclick=()=>{
+            _openLibraryPick((item)=>{
+              slot.item=item;
+              slot.duration=0;
+              _vcRenderSlots();
+              _vcRenderCompare();
+              _vcRenderStitch();
+            });
+          };
+          vcSlotsWrap.appendChild(chip);
+        });
+        vcAddSlot.style.display=_vcSlots.length>=4?"none":"inline-block";
+        vcRemoveSlot.style.display=_vcSlots.length<=2?"none":"inline-block";
+      };
+
+      // -- Compare tab: client-side synced <video> grid ---------------------
+      const vcCompareBody=mk("div",{flex:"1",minHeight:"0",display:"flex",flexDirection:"column",gap:"8px"});
+      const vcCmpCtrl=mk("div",{display:"flex",alignItems:"center",gap:"8px",flexShrink:"0",flexWrap:"wrap"});
+      const vcPlay=mk("button",{background:C.lime,color:"#111",border:"none",borderRadius:"7px",padding:"5px 14px",fontSize:"11px",fontWeight:"700",cursor:"pointer",outline:"none",flexShrink:"0"});
+      tx(vcPlay,"Play");
+      const vcSeek=mk("input",{flex:"1",minWidth:"120px",accentColor:"var(--h3accent)"},{type:"range",min:"0",max:"100",step:"0.1",value:"0"});
+      const vcTime=mk("span",{fontSize:"10px",color:C.muted,flexShrink:"0",fontVariantNumeric:"tabular-nums",minWidth:"46px"});
+      tx(vcTime,"0:00.0");
+      const vcCmpNote=mk("div",{fontSize:"9px",color:C.muted,lineHeight:"1.5",flex:"1",minWidth:"220px"});
+      tx(vcCmpNote,"Play syncs every clip to the same timecode. Audio comes from clip 1; click a clip's speaker to switch the audio source. Videos play their original length; the slider covers the shortest clip.");
+      vcCmpCtrl.append(vcPlay,vcSeek,vcTime,vcCmpNote);
+      const vcGrid=mk("div",{flex:"1",minHeight:"0",overflowY:"auto",display:"grid",gap:"8px",alignContent:"start",scrollbarWidth:"thin",scrollbarColor:`${C.border} transparent`});
+      vcGrid.addEventListener("wheel",e=>e.stopPropagation(),{passive:true});
+      vcCompareBody.append(vcCmpCtrl,vcGrid);
+
+      const _vcSlotDuration=(slot)=>{
+        if(!slot.item||isImageItem(slot.item)) return 0;
+        return Math.max(0,Number(slot.duration)||0);
+      };
+      const _vcWindow=()=>compareWindow(_vcSlots.map(s=>({duration:_vcSlotDuration(s)})));
+
+      const _vcStopPlayback=()=>{
+        _vcPlaying=false;
+        if(_vcRaf!==null){ cancelAnimationFrame(_vcRaf); _vcRaf=null; }
+        (_vcMediaRefs||[]).forEach(r=>{ if(r.isVideo) r.el.pause(); });
+        tx(vcPlay,"Play");
+      };
+      const _vcPauseAll=_vcStopPlayback;
+
+      const _vcSyncLoop=()=>{
+        if(!_vcPlaying) return;
+        const vids=_vcMediaRefs.filter(r=>r.isVideo);
+        const window=Math.max(0,_vcWindow());
+        const master=vids.find(r=>r.el&&!r.el.paused&&!r.el.ended)||vids[0];
+        if(master&&master.el){
+          const t=Number(master.el.currentTime)||0;
+          const rel=Math.max(0,t-(Number(master.slot.trimStart)||0));
+          _vcSharedTime=rel;
+          vcSeek.value=String(Math.round(rel*10));
+          tx(vcTime,formatTimecode(rel));
+          const slots=_vcMediaRefs.map(r=>({duration:r.slot.duration,trimStart:Number(r.slot.trimStart)||0}));
+          const targets=syncTargets(rel,slots,window);
+          vids.forEach(r=>{
+            if(r===master) return;
+            const ti=targets[_vcMediaRefs.indexOf(r)];
+            try{ if(Math.abs(Number(r.el.currentTime)||0-ti)>0.04) r.el.currentTime=ti; }catch(e){}
+          });
+          if(window>0&&rel>=window){ _vcPauseAll(); _vcSeekTo(window); return; }
+        }
+        _vcRaf=requestAnimationFrame(_vcSyncLoop);
+      };
+      const _vcSeekTo=(rel)=>{
+        _vcSharedTime=rel;
+        vcSeek.value=String(Math.round(rel*10));
+        tx(vcTime,formatTimecode(rel));
+        const slots=_vcMediaRefs.map(r=>({duration:r.slot.duration,trimStart:Number(r.slot.trimStart)||0}));
+        const targets=syncTargets(rel,slots,_vcWindow());
+        (_vcMediaRefs||[]).forEach((r,i)=>{ if(!r.isVideo) return; try{ r.el.currentTime=targets[i]||0; }catch(e){} });
+      };
+      vcSeek.oninput=()=>{ _vcSeekTo((Number(vcSeek.value)||0)/10); };
+      vcSeek.onchange=()=>{ if(_vcPlaying) (_vcMediaRefs||[]).forEach(r=>{ if(r.isVideo) r.el.play().catch(()=>{}); }); };
+
+      const _vcRenderCompare=()=>{
+        _vcStopPlayback();
+        vcGrid.innerHTML="";
+        _vcMediaRefs=[];
+        const filled=_vcSlots.filter(s=>s.item);
+        const cols=compareGridColumns(filled.length||_vcSlots.length);
+        vcGrid.style.gridTemplateColumns=`repeat(${cols},1fr)`;
+        if(!filled.length){
+          const empty=mk("div",{fontSize:"11px",color:C.muted,padding:"30px 0",textAlign:"center",gridColumn:"1 / -1"});
+          tx(empty,"Pick 2-4 outputs above to compare them side by side.");
+          vcGrid.appendChild(empty);
+          vcPlay.disabled=true; vcSeek.disabled=true;
+          return;
+        }
+        vcPlay.disabled=false; vcSeek.disabled=false;
+        const window=Math.max(0,_vcWindow());
+        vcSeek.max=String(Math.round(window*10));
+        vcSeek.value=String(Math.round(_vcSharedTime*10));
+        tx(vcTime,formatTimecode(_vcSharedTime));
+        _vcSlots.forEach((slot,idx)=>{
+          if(!slot.item) return;
+          const isImg=isImageItem(slot.item);
+          const wrap=mk("div",{background:"#000",border:`1px solid ${C.border}`,borderRadius:"8px",overflow:"hidden",display:"flex",flexDirection:"column",minHeight:"0"});
+          const media=isImg
+            ? mk("img",{width:"100%",flex:"1 1 0",minHeight:"0",objectFit:"contain",background:"#000",display:"block"},{src:api.apiURL(`/h3one/thumb?${thumbQuery(slot.item,1600)}`),alt:""})
+            : mk("video",{width:"100%",flex:"1 1 0",minHeight:"0",objectFit:"contain",background:"#000",outline:"none"},{muted:idx!==_vcMutedSlot,playsInline:true,preload:"metadata"});
+          if(!isImg){
+            media.src=api.apiURL(`/view?${viewQuery(slot.item)}`);
+            media.addEventListener("loadedmetadata",()=>{
+              const dur=Number(media.duration)||0;
+              slot.duration=Math.max(0,dur-(Number(slot.trimStart)||0));
+              _vcSyncCompareUI();
+            });
+          }
+          _vcMediaRefs.push({slot,el:media,isVideo:!isImg});
+          const foot=mk("div",{display:"flex",alignItems:"center",gap:"6px",padding:"4px 8px",background:C.bg1,borderTop:`1px solid ${C.border}`,flexShrink:"0"});
+          const name=mk("span",{fontSize:"9px",color:C.muted,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:"1",minWidth:"0"});
+          tx(name,`${idx+1}. ${slot.item.filename}`);
+          const spk=mk("button",{background:"transparent",border:`1px solid ${idx===_vcMutedSlot?C.lime:C.border}`,borderRadius:"5px",padding:"1px 7px",fontSize:"9px",fontWeight:"700",color:idx===_vcMutedSlot?C.lime:C.muted,cursor:"pointer",outline:"none",flexShrink:"0",display:isImg?"none":"inline-block"});
+          tx(spk,idx===_vcMutedSlot?"Audio":"Muted");
+          spk.title="Audio source. Only one clip plays sound at a time.";
+          spk.onclick=()=>{ _vcMutedSlot=idx; _vcRenderCompare(); };
+          foot.append(name,spk);
+          wrap.append(media,foot);
+          vcGrid.appendChild(wrap);
+        });
+        vcPlay.onclick=()=>{
+          if(_vcPlaying){ _vcPauseAll(); return; }
+          _vcPlaying=true;
+          tx(vcPlay,"Pause");
+          const window=Math.max(0,_vcWindow());
+          const rel=Math.min(_vcSharedTime,window);
+          const slots=_vcMediaRefs.map(r=>({duration:r.slot.duration,trimStart:Number(r.slot.trimStart)||0}));
+          const targets=syncTargets(rel,slots,window);
+          _vcMediaRefs.forEach((r,i)=>{
+            if(!r.isVideo) return;
+            r.el.muted=(i!==_vcMutedSlot);
+            try{ r.el.currentTime=targets[i]||0; }catch(e){}
+            r.el.play().catch(()=>{});
+          });
+          _vcRaf=requestAnimationFrame(_vcSyncLoop);
+        };
+        const _vcSyncCompareUI=()=>{
+          if(_vcActiveTab!=="compare") return;
+          const window=Math.max(0,_vcWindow());
+          vcSeek.max=String(Math.round(window*10));
+          vcSeek.value=String(Math.round(_vcSharedTime*10));
+        };
+      };
+
+      // -- Stitch tab: export options ----------------------------------------
+      const vcStitchBody=mk("div",{flex:"1",minHeight:"0",display:"none",flexDirection:"column",gap:"10px",overflowY:"auto",scrollbarWidth:"thin",scrollbarColor:`${C.border} transparent`});
+      vcStitchBody.addEventListener("wheel",e=>e.stopPropagation(),{passive:true});
+      const _vcRowCap=(t)=>{ const c=mk("div",{fontSize:"9px",fontWeight:"700",letterSpacing:".08em",textTransform:"uppercase",color:C.muted}); tx(c,t); return c; };
+      const vcOptRow=mk("div",{display:"flex",alignItems:"flex-start",gap:"14px",flexWrap:"wrap",flexShrink:"0"});
+      const _vcOptCol=(title)=>{
+        const col=mk("div",{display:"flex",flexDirection:"column",gap:"4px",minWidth:"150px"});
+        col.appendChild(_vcRowCap(title));
+        return col;
+      };
+      const vcColsCol=_vcOptCol("Layout");
+      const vcColsDD=DD(["Auto","2 columns","3 columns","4 columns"],_vcColsLabel(),v=>{
+        S.compareColumns=_vcColsVal(v); persist(); _vcRenderStitch();
+      });
+      vcColsCol.appendChild(vcColsDD.el);
+      const vcPadCol=_vcOptCol("Spacing");
+      const vcPadRow=mk("div",{display:"flex",alignItems:"center",gap:"6px"});
+      const vcPadNI=NI("",S.comparePadding!=null?S.comparePadding:8,0,128,1,v=>{ S.comparePadding=Math.round(v); persist(); },"52px");
+      const vcPadColor=mk("input",{width:"26px",height:"26px",background:"transparent",border:`1px solid ${C.border}`,borderRadius:"6px",cursor:"pointer",padding:"1px"},{type:"color",value:S.compareBackground||"#000000"});
+      vcPadColor.oninput=()=>{ S.compareBackground=vcPadColor.value; persist(); };
+      vcPadRow.append(vcPadNI,vcPadColor);
+      vcPadCol.appendChild(vcPadRow);
+      const vcMatchCol=_vcOptCol("Frame match");
+      const vcMatchDD=DD(["Auto trim to shortest","Pad to longest","Per-clip trim start + end"],_vcMatchLabel(),v=>{
+        S.compareFrameMatch=_vcMatchVal(v); persist(); _vcRenderStitch();
+      });
+      vcMatchCol.appendChild(vcMatchDD.el);
+      const vcPadFramesCol=_vcOptCol("Shorter clips");
+      const vcPadFramesDD=DD(["Freeze last frame","Black frames"],S.comparePadFrames==="black"?"Black frames":"Freeze last frame",v=>{
+        S.comparePadFrames=v==="Black frames"?"black":"freeze"; persist();
+      });
+      vcPadFramesCol.appendChild(vcPadFramesDD.el);
+      const vcCodecCol=_vcOptCol("Export codec");
+      const vcCodecDD=DD(["h264 (mp4)","h265 (mp4)"],S.compareCodec==="h265"?"h265 (mp4)":"h264 (mp4)",v=>{
+        S.compareCodec=v==="h265 (mp4)"?"h265":"h264"; persist();
+      });
+      vcCodecCol.appendChild(vcCodecDD.el);
+      vcOptRow.append(vcColsCol,vcPadCol,vcMatchCol,vcPadFramesCol,vcCodecCol);
+      const vcTrimWrap=mk("div",{display:"flex",flexDirection:"column",gap:"5px",flexShrink:"0"});
+      const vcExportWrap=mk("div",{display:"flex",alignItems:"center",gap:"10px",flexWrap:"wrap",marginTop:"auto",paddingTop:"10px",borderTop:`1px solid ${C.border}`,flexShrink:"0"});
+      const vcExport=mk("button",{background:C.lime,color:"#111",border:"none",borderRadius:"9px",padding:"9px 20px",fontSize:"12px",fontWeight:"800",cursor:"pointer",outline:"none"});
+      tx(vcExport,"Export stitch");
+      const vcExportHint=mk("div",{fontSize:"9px",color:C.muted,lineHeight:"1.5",flex:"1",minWidth:"200px"});
+      tx(vcExportHint,"Queues the side-by-side clip through ComfyUI and saves it into your Library under the compare folder. No content auto-sync: clips are force-loaded at 24 fps and frame-matched deterministically.");
+      vcExportWrap.append(vcExport,vcExportHint);
+      vcStitchBody.append(vcOptRow,vcTrimWrap,vcExportWrap);
+
+      const _vcColsLabel=()=>{
+        const v=S.compareColumns||0;
+        return v===2?"2 columns":(v===3?"3 columns":(v===4?"4 columns":"Auto"));
+      };
+      const _vcColsVal=(label)=>{
+        if(label==="2 columns") return 2;
+        if(label==="3 columns") return 3;
+        if(label==="4 columns") return 4;
+        return 0;
+      };
+      const _vcMatchLabel=()=>{
+        const m=S.compareFrameMatch||"trim_to_shortest";
+        return m==="pad_to_longest"?"Pad to longest":(m==="per_clip"?"Per-clip trim start + end":"Auto trim to shortest");
+      };
+      const _vcMatchVal=(label)=>{
+        if(label==="Pad to longest") return "pad_to_longest";
+        if(label==="Per-clip trim start + end") return "per_clip";
+        return "trim_to_shortest";
+      };
+      const _vcRenderStitch=()=>{
+        vcColsDD.set(_vcColsLabel());
+        vcMatchDD.set(_vcMatchLabel());
+        vcTrimWrap.innerHTML="";
+        if((S.compareFrameMatch||"trim_to_shortest")==="per_clip"){
+          vcTrimWrap.appendChild(_vcRowCap("Clip trim (start - end seconds)"));
+          const hint=mk("div",{fontSize:"9px",color:C.muted,lineHeight:"1.5",marginBottom:"2px"});
+          tx(hint,"0 end means 'to the end of the clip'.");
+          vcTrimWrap.appendChild(hint);
+          _vcSlots.forEach((slot,idx)=>{
+            const row=mk("div",{display:"flex",alignItems:"center",gap:"8px"});
+            const lbl=mk("span",{fontSize:"10px",color:C.text,width:"74px",flexShrink:"0"});
+            tx(lbl,`Clip ${idx+1}`);
+            const startNI=NI("",slot.trimStart||0,0,3600,0.1,v=>{ slot.trimStart=Math.max(0,Math.round(v*10)/10); persist(); _vcRenderCompare(); },"64px");
+            const endNI=NI("",slot.trimEnd||0,0,3600,0.1,v=>{ slot.trimEnd=Math.max(0,Math.round(v*10)/10); persist(); },"64px");
+            const toLbl=mk("span",{fontSize:"9px",color:C.dim,flexShrink:"0"}); tx(toLbl,"to");
+            row.append(lbl,startNI,toLbl,endNI);
+            vcTrimWrap.appendChild(row);
+          });
+        } else {
+          const hint=mk("div",{fontSize:"9px",color:C.muted,lineHeight:"1.5"});
+          tx(hint,"Auto modes trim or pad every clip to one shared window. Per-clip trim fields appear when you pick 'Per-clip trim start + end'.");
+          vcTrimWrap.appendChild(hint);
+        }
+      };
+
+      const _vcExportStitch=async()=>{
+        const filled=_vcSlots.filter(s=>s.item);
+        if(filled.length<2){ showError("Pick at least 2 outputs to stitch."); return; }
+        if(filled.some(s=>isImageItem(s.item))){ showError("Stitch works on video outputs. Remove still images from the clips first."); return; }
+        if(S.generating||_workflowBuildBusy){ showError("A generation is already running."); return; }
+        closeOverlayFade(vcOverlay);
+        _vcStopPlayback();
+        _activeNode=self;
+        _activeShowOutput=showOutput;
+        _activeResetBtn=resetBtn;
+        _activeShowError=showError;
+        _activeSetStage=setStage;
+        _activeShowTime=showTime;
+        _activeShowLatest=showLatest;
+        _activeShownFiles=[];
+        _activeGenStartTs=Date.now();
+        S.generating=true;
+        genBtn.disabled=true;tx(genBtnLbl,"Stitching...");
+        progWrap.style.display="flex";setStage("Preparing stitch...",3);
+        try{
+          const clips=_vcSlots.filter(s=>s.item).map(s=>({
+            filename:s.item.filename,
+            subfolder:s.item.subfolder||"",
+            type:s.item.type||"output",
+            trim_start:Number(s.trimStart)||0,
+            trim_end:(Number(s.trimEnd)||0)||null,
+          }));
+          const options={
+            frame_match:S.compareFrameMatch||"trim_to_shortest",
+            padding:Math.round(S.comparePadding!=null?S.comparePadding:8),
+            background:S.compareBackground||"#000000",
+            columns:S.compareColumns||0,
+            pad_frames:S.comparePadFrames||"freeze",
+            codec:S.compareCodec||"h264",
+            filename_prefix:"one-node-minimax-h3/compare/h3_compare",
+          };
+          const r=await _fetchTimed("/h3one/compare_workflow",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({clips,options})},20000);
+          const d=await r.json();
+          if(!d.ok||!d.wf) throw new Error(d.error||"Could not build the compare workflow");
+          const body={prompt:d.wf,client_id:api.clientId,extra_data:{enable_previews:true}};
+          const res=await api.fetchApi("/prompt",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+          const data=await res.json();
+          if(data.error||!data.prompt_id) throw new Error(data.error?.message||"Unknown error");
+          _batchIds=[data.prompt_id];_batchDone=0;_batchFailures=0;_settledBatchIds.clear();_expectedBatchCount=1;_batchSubmissionOpen=false;_activePromptId=data.prompt_id;
+          _activeRunMetaByPrompt.set(data.prompt_id,{mode:"Compare & Stitch",quality:"",prompt:"",duration:0,resolution:"side-by-side",seed:null});
+          _armFinishWatch();
+          setStage("Stitching clips...",8);
+        }catch(e){
+          resetBtn();showError(fmtErr(e));
+        }
+      };
+      vcExport.onclick=()=>{ _vcExportStitch(); };
+
+      const openCompare=()=>{
+        _vcRenderSlots();
+        _vcSetTab("compare");
+        _vcRenderCompare();
+        _vcRenderStitch();
+        openOverlay(vcOverlay);
+      };
+      self._h3_openCompare=openCompare;
+
+      const _openLibraryPick=(cb)=>{
+        _libPickCallback=cb||null;
+        tx(libTitle,"Pick an output");
+        libPickBar.style.display="flex";
+        _renderLibrary();
+        openOverlay(libraryOverlay);
+      };
 
       const fsNodeBtn=mk("button",{}, {type:"button",className:"h3-topbtn",title:"Fullscreen","aria-label":"Fullscreen"});
       fsNodeBtn.innerHTML=`<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg>`;
@@ -5068,6 +5538,7 @@ function persist(){
       const ICON_OPEN='<path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><path d="M15 3h6v6"/><path d="M10 14 21 3"/>';
       const ICON_UP='<path d="M12 19V5"/><path d="M5 12l7-7 7 7"/>';
       const ICON_DEL='<path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/>';
+      const ICON_CMP='<path d="M4 5h6v14H4zM14 5h6v14h-6z"/>';
       const ICON_REFRESH='<path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/>';
       const upBtn=actBtn("2x Upscale",()=>_runUpscale(),{icon:ICON_UP});
       const upFactorWrap=mk("div",{width:"74px",flexShrink:"0"});
@@ -5112,6 +5583,7 @@ function persist(){
         actBtn("Favorite",()=>_favCurrent(),{icon:ICON_FAV}),
         actBtn("Open",()=>_openCurrent(),{icon:ICON_OPEN}),
         upBtn,upFactorWrap,
+        actBtn("Compare",()=>openCompare(),{icon:ICON_CMP,title:"Open the Video Compare + Stitch page. Pick 2-4 outputs to compare side by side or stitch them into one clip."}),
         actBtn("Delete",()=>_delCurrent(),{icon:ICON_DEL,danger:true})
       );
       const saveTogBtn=mk("button",{}, {type:"button",className:"h3-actbtn"+(S.autoSave?" on":"")});
@@ -6600,7 +7072,7 @@ function persist(){
       mainRow.append(leftPanel,rightPanel);
       pad.append(navRow,mainRow,genRow,queueRow);
       scrollEl.appendChild(pad);
-      root.append(scrollEl,settingsOverlay,historyOverlay,libraryOverlay,discoverOverlay);
+      root.append(scrollEl,settingsOverlay,historyOverlay,vcOverlay,libraryOverlay,discoverOverlay);
       _updateTabs();
       _updateModeSections();
       _restoreModeState();
@@ -6615,7 +7087,7 @@ function persist(){
         if(_workflowBuildBusy) return;
         const tag=(document.activeElement||{}).tagName||"";
         if(tag==="INPUT"||tag==="TEXTAREA") return;
-        if(settingsOverlay.style.display!=="none"||historyOverlay.style.display!=="none"||libraryOverlay.style.display!=="none"||discoverOverlay.style.display!=="none") return;
+        if(settingsOverlay.style.display!=="none"||historyOverlay.style.display!=="none"||vcOverlay.style.display!=="none"||libraryOverlay.style.display!=="none"||discoverOverlay.style.display!=="none") return;
         e.preventDefault();e.stopPropagation();
         genBtn.click();
       });
