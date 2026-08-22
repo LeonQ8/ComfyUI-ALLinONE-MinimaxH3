@@ -3230,7 +3230,10 @@ function persist(){
         _vcMediaRefs=[];
         const filled=_vcSlots.filter(s=>s.item);
         const cols=compareGridColumns(filled.length||_vcSlots.length);
+        const rows=compareGridRows(filled.length||1, cols);
         vcGrid.style.gridTemplateColumns=`repeat(${cols},1fr)`;
+        vcGrid.style.gridTemplateRows=`repeat(${rows},minmax(0,1fr))`;
+        vcGrid.style.alignContent="stretch";
         if(!filled.length){
           const empty=mk("div",{fontSize:"11px",color:C.muted,padding:"30px 0",textAlign:"center",gridColumn:"1 / -1"});
           tx(empty,"Pick 2-4 outputs above to compare them side by side.");

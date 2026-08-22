@@ -1584,6 +1584,18 @@ test("compare page auto-opens the library picker when all slots are empty", () =
   assert.ok(bundle.includes("const _vcPickSlot=(slot)=>"), "slot picking must be a shared helper");
 });
 
+test("compare grid rows fill the overlay so the players render big", () => {
+  const bundle = readFileSync(bundlePath, "utf8");
+  assert.ok(
+    bundle.includes("vcGrid.style.gridTemplateRows=`repeat(${rows},minmax(0,1fr))`"),
+    "grid rows must be sized to share the overlay height, or a <video> with no loaded height collapses to 0px and only the audio plays",
+  );
+  assert.ok(
+    bundle.includes("vcGrid.style.alignContent=\"stretch\""),
+    "grid items must stretch to fill their row",
+  );
+});
+
 test("compare library picker filters to videos and offers favorites-only", () => {
   const bundle = readFileSync(bundlePath, "utf8");
   assert.ok(bundle.includes("_libPickVideosOnly"), "pick mode must track the videos-only flag");
