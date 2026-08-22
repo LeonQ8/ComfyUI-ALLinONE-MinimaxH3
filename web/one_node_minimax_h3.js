@@ -2700,11 +2700,20 @@ function persist(){
       libHdr.append(libTitle,libStats,libActs);
       const libPickBar=mk("div",{display:"none",alignItems:"center",gap:"8px",marginBottom:"10px",padding:"7px 10px",background:"rgba(var(--h3accent-rgb),.07)",border:`1px solid rgba(var(--h3accent-rgb),.35)`,borderRadius:"8px",fontSize:"10px",color:C.lime,flexShrink:"0"});
       const libPickTxt=mk("span",{flex:"1",minWidth:"0",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"});
-      tx(libPickTxt,"Click an output to load it into the compare slot.");
+      tx(libPickTxt,"Click a video to load it into the compare slot. Videos only.");
+      const libPickFav=mk("button",{background:"transparent",border:`1px solid ${C.borderH}`,borderRadius:"5px",padding:"2px 10px",fontSize:"9px",fontWeight:"700",color:C.muted,cursor:"pointer",outline:"none",flexShrink:"0"});
+      tx(libPickFav,"Favorites only");
+      libPickFav.onclick=()=>{
+        _libFavOnly=!_libFavOnly;
+        libPickFav.style.background=_libFavOnly?C.lime:"transparent";
+        libPickFav.style.borderColor=_libFavOnly?C.lime:C.borderH;
+        libPickFav.style.color=_libFavOnly?"#111":C.muted;
+        _renderLibrary();
+      };
       const libPickCancel=mk("button",{background:"transparent",border:`1px solid ${C.borderH}`,borderRadius:"5px",padding:"2px 10px",fontSize:"9px",fontWeight:"700",color:C.muted,cursor:"pointer",outline:"none",flexShrink:"0"});
       tx(libPickCancel,"Cancel");
       libPickCancel.onclick=()=>{ _libPickCallback=null; libPickBar.style.display="none"; tx(libTitle,"Library"); };
-      libPickBar.append(libPickTxt,libPickCancel);
+      libPickBar.append(libPickTxt,libPickFav,libPickCancel);
       let _libPickCallback=null;
       const libBulkBar=mk("div",{display:"none",alignItems:"center",gap:"8px",marginBottom:"12px",flexWrap:"wrap"});
       const _libBulkBtn=(l,st)=>{
@@ -2796,6 +2805,7 @@ function persist(){
       libLightbox.append(lbHdr,lbPromptWrap,lbVideo,lbImg);
       libraryOverlay.appendChild(libLightbox);
       let _libFavOnly=false;
+      let _libPickVideosOnly=false;
       let _libItems=[];
       let _libCur=null;
       let _libSelMode=false;
@@ -2921,10 +2931,13 @@ function persist(){
           const d=await r.json();
           _libItems=d.videos||[];
         }catch(e){ _libItems=[]; }
-        const vis=_libItems.filter(v=>!_libFavOnly||v.favorite);
+        const pickingVideos=!!_libPickCallback&&_libPickVideosOnly;
+        const vis=_libItems.filter(v=>(!_libFavOnly||v.favorite)&&(!pickingVideos||!(v.kind==="image"||/\.(png|jpe?g|webp|bmp)$/i.test(v.filename||""))));
         if(!vis.length){
           const empty=mk("div",{fontSize:"11px",color:C.muted,padding:"20px 0",textAlign:"center",gridColumn:"1 / -1"});
-          tx(empty,_libFavOnly?"No favorites yet. Favorite a video to collect it here.":"No videos yet. Generate something to see it here.");
+          if(_libFavOnly) tx(empty,"No favorite videos yet. Favorite a video to collect it here.");
+          else if(pickingVideos) tx(empty,"No videos in your Library yet. Generate a video to see it here.");
+          else tx(empty,"No videos yet. Generate something to see it here.");
           libGrid.appendChild(empty);
           return;
         }
@@ -3437,11 +3450,16 @@ function persist(){
       };
       self._h3_openCompare=openCompare;
 
-      const _openLibraryPick=(cb)=>{
+      const _openLibraryPick=async(cb)=>{
         _libPickCallback=cb||null;
+        _libPickVideosOnly=true;
+        _libFavOnly=false;
+        libPickFav.style.background="transparent";
+        libPickFav.style.borderColor=C.borderH;
+        libPickFav.style.color=C.muted;
         tx(libTitle,"Pick an output");
         libPickBar.style.display="flex";
-        _renderLibrary();
+        await _renderLibrary();
         openOverlay(libraryOverlay);
       };
 

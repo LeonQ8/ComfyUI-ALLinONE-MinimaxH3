@@ -1584,6 +1584,17 @@ test("compare page auto-opens the library picker when all slots are empty", () =
   assert.ok(bundle.includes("const _vcPickSlot=(slot)=>"), "slot picking must be a shared helper");
 });
 
+test("compare library picker filters to videos and offers favorites-only", () => {
+  const bundle = readFileSync(bundlePath, "utf8");
+  assert.ok(bundle.includes("_libPickVideosOnly"), "pick mode must track the videos-only flag");
+  assert.ok(
+    bundle.includes("const pickingVideos=!!_libPickCallback&&_libPickVideosOnly"),
+    "pick mode must filter images out of the grid so an image can never enter a video slot",
+  );
+  assert.ok(bundle.includes("libPickFav"), "the pick bar must offer a Favorites only toggle");
+  assert.ok(bundle.includes("await _renderLibrary()"), "the picker must populate before the overlay opens");
+});
+
 test("outputs strip uses compact icon-only actions on one line", () => {
   const bundle = readFileSync(bundlePath, "utf8");
   assert.ok(bundle.includes('actBtn("",()=>_favCurrent()'), "Favorite must be icon-only");
