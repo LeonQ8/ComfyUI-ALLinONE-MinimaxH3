@@ -628,17 +628,25 @@ function collectLocalDecls(bundle) {
 }
 
 test("resolveQualityFlags: preset flags stay valid for every combo", () => {
-  assert.deepEqual(resolveQualityFlags(false, false, false), { sol: false, sage: false, kitchen: false });
-  assert.deepEqual(resolveQualityFlags(true, false, false), { sol: true, sage: false, kitchen: false });
-  assert.deepEqual(resolveQualityFlags(false, true, false), { sol: false, sage: true, kitchen: false });
-  assert.deepEqual(resolveQualityFlags(false, false, true), { sol: false, sage: false, kitchen: true });
-  assert.deepEqual(resolveQualityFlags(true, false, true), { sol: true, sage: false, kitchen: true });
+  assert.deepEqual(resolveQualityFlags(false, false, false, false), { sol: false, sage: false, kitchen: false, sla: false });
+  assert.deepEqual(resolveQualityFlags(true, false, false, false), { sol: true, sage: false, kitchen: false, sla: false });
+  assert.deepEqual(resolveQualityFlags(false, true, false, false), { sol: false, sage: true, kitchen: false, sla: false });
+  assert.deepEqual(resolveQualityFlags(false, false, true, false), { sol: false, sage: false, kitchen: true, sla: false });
+  assert.deepEqual(resolveQualityFlags(true, false, true, false), { sol: true, sage: false, kitchen: true, sla: false });
 });
 
 test("resolveQualityFlags: kitchen and sage can never run together", () => {
-  assert.deepEqual(resolveQualityFlags(true, true, true), { sol: true, sage: false, kitchen: true });
-  assert.deepEqual(resolveQualityFlags(false, true, true), { sol: false, sage: false, kitchen: true });
-  assert.deepEqual(resolveQualityFlags(true, true, false), { sol: true, sage: true, kitchen: false });
+  assert.deepEqual(resolveQualityFlags(true, true, true, false), { sol: true, sage: false, kitchen: true, sla: false });
+  assert.deepEqual(resolveQualityFlags(false, true, true, false), { sol: false, sage: false, kitchen: true, sla: false });
+  assert.deepEqual(resolveQualityFlags(true, true, false, false), { sol: true, sage: true, kitchen: false, sla: false });
+});
+
+test("resolveQualityFlags: sla is exclusive with sol and sage, kitchen stays", () => {
+  assert.deepEqual(resolveQualityFlags(true, true, false, true), { sol: false, sage: false, kitchen: false, sla: true });
+  assert.deepEqual(resolveQualityFlags(true, true, true, true), { sol: false, sage: false, kitchen: true, sla: true });
+  assert.deepEqual(resolveQualityFlags(false, true, true, true), { sol: false, sage: false, kitchen: true, sla: true });
+  assert.deepEqual(resolveQualityFlags(false, false, true, true), { sol: false, sage: false, kitchen: true, sla: true });
+  assert.deepEqual(resolveQualityFlags(false, false, false, true), { sol: false, sage: false, kitchen: false, sla: true });
 });
 
 test("matchQualityPreset: preset combos resolve to their keys", () => {
@@ -646,36 +654,58 @@ test("matchQualityPreset: preset combos resolve to their keys", () => {
   assert.equal(matchQualityPreset({ sol: true, sage: false, kitchen: false }, QUALITY_PRESET_FLAGS, ["balanced"]), "balanced");
   assert.equal(matchQualityPreset({ sol: false, sage: true, kitchen: false }), "high");
   assert.equal(matchQualityPreset({ sol: false, sage: false, kitchen: false }), "native");
+  assert.equal(matchQualityPreset({ sol: false, sage: false, kitchen: true, sla: true }), "draft");
 });
 
 test("matchQualityPreset: kitchen mixes resolve to custom", () => {
   assert.equal(matchQualityPreset({ sol: false, sage: false, kitchen: true }), "custom");
   assert.equal(matchQualityPreset({ sol: true, sage: false, kitchen: true }), "custom");
   assert.equal(matchQualityPreset({ sol: true, sage: true, kitchen: false }), "custom");
+  assert.equal(matchQualityPreset({ sol: false, sage: false, kitchen: false, sla: true }), "custom");
 });
 
 test("matchQualityPreset: mutual exclusion normalizes before matching", () => {
   assert.equal(matchQualityPreset({ sol: false, sage: true, kitchen: true }), "custom");
   assert.equal(matchQualityPreset({ sol: false, sage: true, kitchen: true }, QUALITY_PRESET_FLAGS, ["high", "native"]), "custom");
+  assert.equal(matchQualityPreset({ sol: true, sage: true, kitchen: true, sla: true }), "draft", "sla must drop sol and sage, so kitchen+sla still matches draft");
 });
 
 test("matchQualityPreset: nullish flags are treated as off", () => {
   assert.equal(matchQualityPreset(null), "native");
   assert.equal(matchQualityPreset({}), "native");
   assert.equal(matchQualityPreset({ sol: null, sage: undefined, kitchen: 0 }), "native");
+  assert.equal(matchQualityPreset({ sol: false, sage: false, kitchen: true, sla: 0 }), "custom");
 });
 
 test("matchQualityPreset: every preset is matchable from its own flags", () => {
   for (const key of Object.keys(QUALITY_PRESET_FLAGS)) {
     if (key === "turbo") continue;
     const p = QUALITY_PRESET_FLAGS[key];
-    const hit = matchQualityPreset({ sol: p.sol, sage: p.sage, kitchen: p.kitchen });
+    const hit = matchQualityPreset({ sol: p.sol, sage: p.sage, kitchen: p.kitchen, sla: p.sla });
     const q = QUALITY_PRESET_FLAGS[hit];
     assert.ok(hit !== "custom", `${key} must match a preset`);
     assert.equal(q.sol, p.sol, key);
     assert.equal(q.sage, p.sage, key);
     assert.equal(q.kitchen, p.kitchen, key);
+    assert.equal(q.sla, p.sla, key);
   }
+});
+
+test("bundle wires the SLA chip, availability probe, and SLA Draft chain", () => {
+  const bundle = readFileSync(bundlePath, "utf8");
+  assert.ok(bundle.includes('_mkOptChip("optSla","SLA"'), "the quality row must expose an SLA chip");
+  assert.ok(bundle.includes("_checkSlaAvail"), "the SLA chip must probe availability on load");
+  assert.ok(bundle.includes("/h3one/sla_status"), "the SLA availability probe must call the backend route");
+  assert.ok(bundle.includes("H3 SLA Attention is not available"), "the SLA chip must explain a missing pack");
+  assert.ok(bundle.includes('class_type:"H3SLAAttention"'), "the SLA Draft build must insert the SLA node");
+  assert.ok(bundle.includes('class_type:"H3AdaLNLoRAFix"'), "the SLA Draft build must port dense LoRA tensors onto the pruned base");
+  assert.ok(bundle.includes('mode:"port"'), "the AdaLN fix must run in port mode");
+  assert.ok(bundle.includes('block_size:"64"'), "the SLA node must use 64-wide blocks");
+  assert.ok(bundle.includes("min_seq_len:8192"), "the SLA node must keep the packed-length threshold");
+  assert.ok(bundle.includes('wf["7"].inputs.model=[sla,0]'), "the guider must take SLA's output directly");
+  assert.ok(bundle.includes('wf["9"].inputs.model=[sla,0]'), "the scheduler must take SLA's output directly");
+  assert.ok(bundle.includes('sampler_name="euler"'), "the draft preset must force the euler sampler");
+  assert.ok(bundle.includes('_QL={balanced:"Balanced"'), "the quality label map must carry the draft label");
 });
 
 function guardOffenders(bundle) {

@@ -308,28 +308,31 @@ function resolveFitPrimary(cfg, slots){
 }
 
 const QUALITY_PRESET_FLAGS={
-  turbo:{sol:false,sage:false,kitchen:false},
-  speed:{sol:true,sage:false,kitchen:false},
-  balanced:{sol:true,sage:false,kitchen:false},
-  high:{sol:false,sage:true,kitchen:false},
-  native:{sol:false,sage:false,kitchen:false},
+  turbo:{sol:false,sage:false,kitchen:false,sla:false},
+  speed:{sol:true,sage:false,kitchen:false,sla:false},
+  balanced:{sol:true,sage:false,kitchen:false,sla:false},
+  high:{sol:false,sage:true,kitchen:false,sla:false},
+  native:{sol:false,sage:false,kitchen:false,sla:false},
+  draft:{sol:false,sage:false,kitchen:true,sla:true},
 };
-const QUALITY_PRESET_ORDER=["speed","balanced","high","native"];
+const QUALITY_PRESET_ORDER=["speed","balanced","high","native","draft"];
 
-function resolveQualityFlags(sol,sage,kitchen){
-  const s=!!sol;
+function resolveQualityFlags(sol,sage,kitchen,sla){
+  let s=!!sol;
   let a=!!sage;
   const k=!!kitchen;
+  const sl=!!sla;
+  if(sl){ s=false; a=false; }
   if(a&&k) a=false;
-  return {sol:s,sage:a,kitchen:k};
+  return {sol:s,sage:a,kitchen:k,sla:sl};
 }
 
 function matchQualityPreset(flags,table,order){
   const t=table||QUALITY_PRESET_FLAGS;
-  const f=resolveQualityFlags(flags&&flags.sol,flags&&flags.sage,flags&&flags.kitchen);
+  const f=resolveQualityFlags(flags&&flags.sol,flags&&flags.sage,flags&&flags.kitchen,flags&&flags.sla);
   for(const key of (order||QUALITY_PRESET_ORDER)){
     const p=t[key];
-    if(p&&f.sol===!!p.sol&&f.sage===!!p.sage&&f.kitchen===!!p.kitchen) return key;
+    if(p&&f.sol===!!p.sol&&f.sage===!!p.sage&&f.kitchen===!!p.kitchen&&f.sla===!!p.sla) return key;
   }
   return "custom";
 }
@@ -1781,12 +1784,12 @@ app.registerExtension({
       const self=this;
       const saved=loadState();
       const _QF=QUALITY_PRESET_FLAGS;
-      const _QL={balanced:"Balanced",speed:"Speed",high:"High Quality",turbo:"Turbo (Speed LoRA)",native:"Native",custom:"Custom"};
-      const _matchQ=()=>matchQualityPreset({sol:S.optSol,sage:S.optSage,kitchen:S.optKitchen},_QF);
+      const _QL={balanced:"Balanced",speed:"Speed",high:"High Quality",turbo:"Turbo (Speed LoRA)",native:"Native",draft:"SLA Draft",custom:"Custom"};
+      const _matchQ=()=>matchQualityPreset({sol:S.optSol,sage:S.optSage,kitchen:S.optKitchen,sla:S.optSla},_QF);
 
       if(!self._h3_S){
         const _sq=(saved.quality==="custom"||(saved.quality&&_QF[saved.quality]))?saved.quality:"balanced";
-        const _qf=_QF[_sq]||{sol:false,sage:false,kitchen:false};
+        const _qf=_QF[_sq]||{sol:false,sage:false,kitchen:false,sla:false};
         self._h3_S={
           mode:            saved.mode||"t2v",
           prompt:          saved.prompt!==undefined?saved.prompt:"",
@@ -1797,6 +1800,7 @@ app.registerExtension({
           optSol:          (saved.quality==="custom")?(saved.optSol!==undefined?saved.optSol:false):_qf.sol,
           optSage:         (saved.quality==="custom")?(saved.optSage!==undefined?saved.optSage:false):_qf.sage,
           optKitchen:      (saved.quality==="custom")?(saved.optKitchen!==undefined?saved.optKitchen:false):_qf.kitchen,
+          optSla:          (saved.quality==="custom")?(saved.optSla!==undefined?saved.optSla:false):_qf.sla,
           samplerName:     saved.samplerName||"res_multistep",
           schedulerName:   saved.schedulerName||"simple",
           seed:            (typeof saved.seed==="number")?Math.max(0,Math.min(H3_SEED_MAX,Math.round(saved.seed))):0,
@@ -1828,6 +1832,9 @@ app.registerExtension({
           chainClips:      Array.isArray(saved.chainClips)&&saved.chainClips.length? saved.chainClips : [{prompt:"",duration:5},{prompt:"",duration:5}],
           models:          Object.assign({}, DEFAULT_MODELS, saved.models||{}),
           speedLora:       saved.speedLora||"",
+          speedLoraStrength: (typeof saved.speedLoraStrength==="number"&&isFinite(saved.speedLoraStrength))?saved.speedLoraStrength:0.8,
+          shiftVideo:      (typeof saved.shiftVideo==="number"&&isFinite(saved.shiftVideo))?saved.shiftVideo:8,
+          shiftAudio:      (typeof saved.shiftAudio==="number"&&isFinite(saved.shiftAudio))?saved.shiftAudio:3,
           audioOn:         saved.audioOn!==undefined?saved.audioOn:true,
           ...normalizeOutputSettings(saved),
           soundEnabled:    saved.soundEnabled!==undefined?saved.soundEnabled:true,
@@ -1898,11 +1905,11 @@ function persist(){
         // quality/resolution/loras survive workflow-tab switches (they used to be
         // captured only when switching mode tabs, so a stale snapshot overwrote
         // the just-changed value on rebuild).
-        S.modeSettings[S.mode]={prompt:S.prompt,steps:S.steps,quality:S.quality,resolution:S.resolution,duration:S.duration,loras:JSON.parse(JSON.stringify(S.loras||[])),optSol:S.optSol,optSage:S.optSage,optKitchen:S.optKitchen};
+        S.modeSettings[S.mode]={prompt:S.prompt,steps:S.steps,quality:S.quality,resolution:S.resolution,duration:S.duration,loras:JSON.parse(JSON.stringify(S.loras||[])),optSol:S.optSol,optSage:S.optSage,optKitchen:S.optKitchen,optSla:S.optSla};
         if(_updRecipeFn){ try{ _updRecipeFn(); }catch(e){} }
         saveState({
           mode:S.mode,prompt:S.prompt,resolution:S.resolution,duration:S.duration,
-          steps:S.steps,quality:S.quality,optSol:S.optSol,optSage:S.optSage,optKitchen:S.optKitchen,samplerName:S.samplerName,schedulerName:S.schedulerName,randomizeSeed:S.randomizeSeed,seed:S.seed,batch:S.batch,
+          steps:S.steps,quality:S.quality,optSol:S.optSol,optSage:S.optSage,optKitchen:S.optKitchen,optSla:S.optSla,samplerName:S.samplerName,schedulerName:S.schedulerName,randomizeSeed:S.randomizeSeed,seed:S.seed,batch:S.batch,
           loras:S.loras,chainClips:S.chainClips.map(c=>({prompt:c.prompt,duration:c.duration})),
           firstFrame:S.firstFrame,lastFrame:S.lastFrame,
           firstFrameSize:S.firstFrameSize,lastFrameSize:S.lastFrameSize,
@@ -1914,7 +1921,7 @@ function persist(){
           maskStartTime:S.maskStartTime,maskTarget:S.maskTarget,maskThreshold:S.maskThreshold,maskCropScale:S.maskCropScale,
           maskAudioMode:S.maskAudioMode,
           kf:(S.kf||[]).map(k=>({img:k.img||null,pos:k.pos||0,width:k.width||null,height:k.height||null})),
-          models:S.models,speedLora:S.speedLora,audioOn:S.audioOn,fps:S.fps,
+          models:S.models,speedLora:S.speedLora,speedLoraStrength:S.speedLoraStrength,shiftVideo:S.shiftVideo,shiftAudio:S.shiftAudio,audioOn:S.audioOn,fps:S.fps,
           soundEnabled:S.soundEnabled,sound:S.sound,accent:S.accent,mcLength:S.mcLength,
           upscaleFactor:S.upscaleFactor,upscaleMethod:S.upscaleMethod,
           modeSettings:S.modeSettings,
@@ -2310,8 +2317,23 @@ function persist(){
       const speedLoraDD=DD(["none"],S.speedLora,v=>{S.speedLora=v==="none"?"":v;persist();});
       speedLoraWrap.appendChild(speedLoraDD.el);
       const speedLoraHint=mk("div",{fontSize:"9px",color:C.muted,marginTop:"4px",lineHeight:"1.4"});
-      tx(speedLoraHint,"Used by the Turbo quality preset.");
+      tx(speedLoraHint,"Used by the Turbo quality preset and the SLA Draft preset (the draft recipe uses a 4-step turbo LoRA at a reduced strength, not 1.0).");
       speedLoraWrap.appendChild(speedLoraHint);
+      const slaWrap=mk("div",{marginBottom:"12px"});
+      slaWrap.appendChild(cap("SLA Draft"));
+      const slaHint=mk("div",{fontSize:"9px",color:C.muted,marginTop:"4px",lineHeight:"1.4"});
+      tx(slaHint,"Settings for the SLA Draft quality preset and any SLA chip combo. Needs ComfyUI-PlagueKind-Nodes and a Speed LoRA above.");
+      slaWrap.appendChild(slaHint);
+      const _slaField=(labelTxt,ni,width="110px")=>{
+        const row=mk("div",{display:"flex",alignItems:"center",gap:"8px",marginTop:"6px"});
+        const lbl=mk("div",{fontSize:"10px",color:C.text,width,flexShrink:"0"});tx(lbl,labelTxt);
+        row.append(lbl,ni);
+        return row;
+      };
+      const slaLoraNI=NI("",S.speedLoraStrength,0.1,1.5,0.05,v=>{S.speedLoraStrength=Math.round(v*100)/100;persist();},"60px");
+      const shiftVNI=NI("",S.shiftVideo,1,20,1,v=>{S.shiftVideo=Math.round(v);persist();},"60px");
+      const shiftANI=NI("",S.shiftAudio,0,10,1,v=>{S.shiftAudio=Math.round(v);persist();},"60px");
+      slaWrap.append(_slaField("Turbo/SLA LoRA strength",slaLoraNI),_slaField("Shift video",shiftVNI),_slaField("Shift audio",shiftANI));
       const audioToggle=Toggle("Generate native audio",S.audioOn,v=>{S.audioOn=v;persist();},"Audio Drive and R2V (with audio refs) always use the audio you provide - this toggle only controls the model's own generated soundtrack in T2V / I2V / Keyframes. You do not need to turn it off for audio modes.");
       const soundToggle=Toggle("Notification sound on complete",S.soundEnabled,v=>{S.soundEnabled=v;persist();});
       const playOnFinishToggle=Toggle("Play video on finish",S.playOnFinish,v=>{S.playOnFinish=v;persist();});
@@ -2349,7 +2371,7 @@ function persist(){
       tx(supBtn,"Buy me a coffee");
       supBtn.onclick=()=>window.open(SUPPORT_URL,"_blank");
       supWrap.append(supCap,supBtn);
-      settingsOverlay.append(settHdr,unetT2VRow,unetR2VRow,clipRow,vaeVRow,vaeARow,sam3Row,taeRow,upMethodWrap,upDitRow,upVaeRow,upHint,speedLoraWrap,audioToggle.el,soundToggle.el,playOnFinishToggle.el,sndWrap,accWrap,supWrap);
+      settingsOverlay.append(settHdr,unetT2VRow,unetR2VRow,clipRow,vaeVRow,vaeARow,sam3Row,taeRow,upMethodWrap,upDitRow,upVaeRow,upHint,speedLoraWrap,slaWrap,audioToggle.el,soundToggle.el,playOnFinishToggle.el,sndWrap,accWrap,supWrap);
 
       // -- HISTORY OVERLAY ---------------------------------------------------
       const historyOverlay=mk("div",{
@@ -4387,19 +4409,20 @@ function persist(){
       const qualRow=mk("div",{display:"flex",flexDirection:"column",gap:"3px"});
       const qualCapRow=mk("div",{display:"flex",alignItems:"center",gap:"4px"});
       const qualCap=mk("div",{fontSize:"10px",color:C.text});tx(qualCap,"Quality");
-      qualCapRow.append(qualCap,infoIcon("The sampling pipeline, not the pixel size. Use the chips below to switch each accelerator on or off - Quality follows, and any manual mix shows as Custom.\nTurbo: Turbo LoRA + 6-step distilled sampler. Fastest, visibly lower quality - needs the Turbo LoRA set in Settings.\nSpeed: SolAttn sparse attention only. Fastest normal pipeline, tiny quality tradeoff.\nBalanced: SolAttn sparse attention only.\nHigh Quality: full SageAttention only - slowest, maximum fidelity.\nKitchen: ComfyUI's built-in Comfy Kitchen attention (pip install comfy-kitchen) - can run alone or with SolAttn, never with SageAttention.\nNative: core ComfyUI H3 pipeline, no accelerators - needs no extra packs."));
-      const qualDD=DD(["Turbo (Speed LoRA)","Speed","Balanced","High Quality","Native","Custom"],_QL[S.quality]||"Custom",v=>{
+      qualCapRow.append(qualCap,infoIcon("The sampling pipeline, not the pixel size. Use the chips below to switch each accelerator on or off - Quality follows, and any manual mix shows as Custom.\nTurbo: Turbo LoRA + 6-step distilled sampler. Fastest, visibly lower quality - needs the Turbo LoRA set in Settings.\nSpeed: SolAttn sparse attention only. Fastest normal pipeline, tiny quality tradeoff.\nBalanced: SolAttn sparse attention only.\nHigh Quality: full SageAttention only - slowest, maximum fidelity.\nKitchen: ComfyUI's built-in Comfy Kitchen attention (pip install comfy-kitchen) - can run alone or with SolAttn, never with SageAttention.\nSLA Draft: H3 SLA Attention (ComfyUI-PlagueKind-Nodes) + Kitchen + a 4-step turbo LoRA at reduced strength, euler/simple 8 steps. Fastest for prompt-tweak drafts, weaker prompt adherence - drafts only, not final quality.\nNative: core ComfyUI H3 pipeline, no accelerators - needs no extra packs."));
+      const qualDD=DD(["Turbo (Speed LoRA)","Speed","Balanced","High Quality","Native","SLA Draft","Custom"],_QL[S.quality]||"Custom",v=>{
         const key=Object.keys(_QL).find(k=>_QL[k]===v)||"custom";
         if(key!=="custom"){
           S.quality=key;
-          const f=_QF[key]||{sol:false,sage:false,kitchen:false};
-          S.optSol=f.sol;S.optSage=f.sage;S.optKitchen=f.kitchen;
+          const f=_QF[key]||{sol:false,sage:false,kitchen:false,sla:false};
+          S.optSol=f.sol;S.optSage=f.sage;S.optKitchen=f.kitchen;S.optSla=f.sla;
           _syncOptChips();
         } else {
           S.quality="custom";
         }
         persist();
         if(S.quality==="turbo"){ stepsNI._inp.value="6"; S.steps=6; }
+        if(S.quality==="draft"){ stepsNI._inp.value="8"; S.steps=8; }
         if(typeof _syncLiveToggle==="function") _syncLiveToggle();
       });
       qualRow.append(qualCapRow,qualDD.el);
@@ -4444,13 +4467,28 @@ function persist(){
         _syncOptChips();
       };
       _checkKitchenAvail();
+      let _slaAvail=null;
+      const _checkSlaAvail=async()=>{
+        try{
+          const r=await fetch("/h3one/sla_status");
+          const d=await r.json();
+          _slaAvail=!!(d&&d.found);
+        }catch(e){ _slaAvail=false; }
+        _syncOptChips();
+      };
+      _checkSlaAvail();
       optRow.append(
-        _mkOptChip("optSol","SolAttn"),
-        _mkOptChip("optSage","SageAttn",{excl:["optKitchen"]}),
+        _mkOptChip("optSol","SolAttn",{excl:["optSla"]}),
+        _mkOptChip("optSage","SageAttn",{excl:["optKitchen","optSla"]}),
         _mkOptChip("optKitchen","Kitchen",{
           excl:["optSage"],
           disabled:()=>_kitchenAvail===false,
           disabledTip:"Comfy Kitchen attention is not available - install the comfy-kitchen pip package and restart ComfyUI.",
+        }),
+        _mkOptChip("optSla","SLA",{
+          excl:["optSol","optSage"],
+          disabled:()=>_slaAvail===false,
+          disabledTip:"H3 SLA Attention is not available - install ComfyUI-PlagueKind-Nodes and restart ComfyUI.",
         })
       );
       const SAMPLERS=["euler","euler_cfg_pp","euler_ancestral","euler_ancestral_cfg_pp","heun","heunpp2","exp_heun_2_x0","exp_heun_2_x0_sde","dpm_2","dpm_2_ancestral","lms","dpm_fast","dpm_adaptive","dpmpp_2s_ancestral","dpmpp_2s_ancestral_cfg_pp","dpmpp_sde","dpmpp_sde_gpu","dpmpp_2m","dpmpp_2m_cfg_pp","dpmpp_2m_sde","dpmpp_2m_sde_gpu","dpmpp_2m_sde_heun","dpmpp_2m_sde_heun_gpu","dpmpp_3m_sde","dpmpp_3m_sde_gpu","ddpm","lcm","ipndm","ipndm_v","deis","res_multistep","res_multistep_cfg_pp","res_multistep_ancestral","res_multistep_ancestral_cfg_pp","gradient_estimation","gradient_estimation_cfg_pp","er_sde","seeds_2","seeds_3","sa_solver","sa_solver_pece","ddim","uni_pc","uni_pc_bh2","legacy_rk","rk","rk_beta","deis_3m_ode","deis_2m_ode","deis_3m","deis_2m","res_6s_ode","res_5s_ode","res_3s_ode","res_2s_ode","res_3m_ode","res_2m_ode","res_6s","res_5s","res_3s","res_2s","res_3m","res_2m"];
@@ -4494,7 +4532,7 @@ function persist(){
         S.modeSettings[S.mode]={
           prompt:S.prompt,steps:S.steps,quality:S.quality,resolution:S.resolution,duration:S.duration,
           loras:JSON.parse(JSON.stringify(S.loras)),
-          optSol:S.optSol,optSage:S.optSage,optKitchen:S.optKitchen,
+          optSol:S.optSol,optSage:S.optSage,optKitchen:S.optKitchen,optSla:S.optSla,
         };
       };
       const _restoreModeState=()=>{
@@ -4508,11 +4546,12 @@ function persist(){
             if(ms.optSol!==undefined) S.optSol=ms.optSol;
             if(ms.optSage!==undefined) S.optSage=ms.optSage;
             if(ms.optKitchen!==undefined) S.optKitchen=ms.optKitchen;
-            const f=resolveQualityFlags(S.optSol,S.optSage,S.optKitchen);
-            S.optSol=f.sol;S.optSage=f.sage;S.optKitchen=f.kitchen;
+            if(ms.optSla!==undefined) S.optSla=ms.optSla;
+            const f=resolveQualityFlags(S.optSol,S.optSage,S.optKitchen,S.optSla);
+            S.optSol=f.sol;S.optSage=f.sage;S.optKitchen=f.kitchen;S.optSla=f.sla;
           } else {
-            const f=_QF[ms.quality]||{sol:false,sage:false,kitchen:false};
-            S.optSol=f.sol;S.optSage=f.sage;S.optKitchen=f.kitchen;
+            const f=_QF[ms.quality]||{sol:false,sage:false,kitchen:false,sla:false};
+            S.optSol=f.sol;S.optSage=f.sage;S.optKitchen=f.kitchen;S.optSla=f.sla;
           }
           _syncOptChips();
           qualDD.set(_QL[ms.quality]||"Custom");
@@ -5677,6 +5716,7 @@ function persist(){
           modelSrc=[id,0];
         });
         const q=S.quality;
+        let useSla=false;
         if(q==="turbo"){
           if(!S.speedLora) throw new Error("Turbo preset needs a Turbo LoRA - set one in Settings (Speed LoRA) or pick another quality.");
           {
@@ -5689,8 +5729,9 @@ function persist(){
           wf["10"]=wf[ts];delete wf[ts];
           wf["9"].inputs.steps=S.steps||6;
         } else {
-          const f=resolveQualityFlags(S.optSol,S.optSage,S.optKitchen);
+          const f=resolveQualityFlags(S.optSol,S.optSage,S.optKitchen,S.optSla);
           const useSol=f.sol, useSage=f.sage, useKitchen=f.kitchen;
+          useSla=f.sla;
           const insSol=()=>{
             const sol=newId();
             wf[sol]={class_type:"SolAttnPatch",inputs:{
@@ -5726,6 +5767,32 @@ function persist(){
           wf["9"].inputs.steps=S.steps;
         }
         wf["5"].inputs.model=modelSrc;
+        if(useSla){
+          // SLA Draft chain: pre-patches -> SigmaShift -> turbo LoRA -> AdaLN
+          // LoRA Fix -> SLA, with SLA's output wired straight into the guider
+          // and scheduler (nothing after it). The AdaLN fix ports dense LoRA
+          // tensors (dareties etc.) onto the pruned base's curve form, so the
+          // turbo LoRA actually applies. SLA needs a recent ComfyUI core
+          // (comfy_api) and falls back to dense attention on kernel failure.
+          if(!S.speedLora) throw new Error("SLA Draft needs a Turbo LoRA - set one in Settings (Speed LoRA) or pick another quality.");
+          wf["5"].inputs.shift_video=(typeof S.shiftVideo==="number")?S.shiftVideo:8;
+          wf["5"].inputs.shift_audio=(typeof S.shiftAudio==="number")?S.shiftAudio:3;
+          const tl=newId();
+          wf[tl]={class_type:"MiniMaxH3TurboLoRA",inputs:{model:["5",0],lora_name:S.speedLora,strength:(typeof S.speedLoraStrength==="number")?S.speedLoraStrength:0.8,low_vram:false},_meta:{title:"Turbo LoRA (SLA)"}};
+          const fix=newId();
+          wf[fix]={class_type:"H3AdaLNLoRAFix",inputs:{model:[tl,0],mode:"port"},_meta:{title:"AdaLN LoRA Fix"}};
+          const sla=newId();
+          wf[sla]={class_type:"H3SLAAttention",inputs:{
+            model:[fix,0],sparsity_ratio:0.9,block_size:"64",min_seq_len:8192,
+            dense_last_steps:0,protect_audio:true,enabled:true,
+          },_meta:{title:"SLA Attention"}};
+          wf["7"].inputs.model=[sla,0];
+          wf["9"].inputs.model=[sla,0];
+          if(q==="draft"){
+            wf["9"].inputs.scheduler="simple";
+            if(wf["10"]&&wf["10"].class_type==="KSamplerSelect") wf["10"].inputs.sampler_name="euler";
+          }
+        }
       };
 
       const _insertImageModelPatches=(wf)=>{
@@ -6177,9 +6244,11 @@ function persist(){
           wf[id]={class_type:"LoraLoaderModelOnly",inputs:{model:modelSrc,lora_name:lr.name,strength_model:lr.strength},_meta:{title:"LoRA"}};
           modelSrc=[id,0];
         });
+        let useSla=false;
         {
-          const f=resolveQualityFlags(S.optSol,S.optSage,S.optKitchen);
+          const f=resolveQualityFlags(S.optSol,S.optSage,S.optKitchen,S.optSla);
           const useSol=f.sol, useSage=f.sage, useKitchen=f.kitchen;
+          useSla=f.sla;
           const insSol=()=>{
             const sol=newId();
             wf[sol]={class_type:"SolAttnPatch",inputs:{
@@ -6223,6 +6292,35 @@ function persist(){
             tiny_vae:S.models.tae||"taeh3.safetensors",
           },_meta:{title:"Live Preview (Model Preview Override)"}};
           wf["s:5"].inputs.model=["s:lp",0];
+        }
+        if(useSla){
+          // Same SLA Draft chain as the plain modes, shared across every clip.
+          if(!S.speedLora) throw new Error("SLA Draft needs a Turbo LoRA - set one in Settings (Speed LoRA) or pick another quality.");
+          wf["s:5"].inputs.shift_video=(typeof S.shiftVideo==="number")?S.shiftVideo:8;
+          wf["s:5"].inputs.shift_audio=(typeof S.shiftAudio==="number")?S.shiftAudio:3;
+          const tl=newId();
+          wf[tl]={class_type:"MiniMaxH3TurboLoRA",inputs:{model:["s:5",0],lora_name:S.speedLora,strength:(typeof S.speedLoraStrength==="number")?S.speedLoraStrength:0.8,low_vram:false},_meta:{title:"Turbo LoRA (SLA)"}};
+          const fix=newId();
+          wf[fix]={class_type:"H3AdaLNLoRAFix",inputs:{model:[tl,0],mode:"port"},_meta:{title:"AdaLN LoRA Fix"}};
+          const sla=newId();
+          wf[sla]={class_type:"H3SLAAttention",inputs:{
+            model:[fix,0],sparsity_ratio:0.9,block_size:"64",min_seq_len:8192,
+            dense_last_steps:0,protect_audio:true,enabled:true,
+          },_meta:{title:"SLA Attention"}};
+          clips.forEach((_cl,idx)=>{
+            const guider=wf["c"+idx+":guider"];
+            const sched=wf["c"+idx+":sched"];
+            if(guider) guider.inputs.model=[sla,0];
+            if(sched){
+              sched.inputs.model=[sla,0];
+              if(S.quality==="draft"){
+                sched.inputs.steps=8;
+                sched.inputs.scheduler="simple";
+                const ksel=wf["c"+idx+":ksel"];
+                if(ksel&&ksel.class_type==="KSamplerSelect") ksel.inputs.sampler_name="euler";
+              }
+            }
+          });
         }
         wf["s:1"].inputs.clip_name=S.models.clip;
         wf["s:2"].inputs.unet_name=S.models.unetT2V;

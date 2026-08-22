@@ -28,6 +28,11 @@ These are the commit SHAs the node was developed against. You don't need to pin 
 | comfy-kitchen (pip) | [GitHub](https://github.com/Comfy-Org/comfy-kitchen) | 0.2.31 | Kitchen chip (ModelAttentionBackend) |
 | ComfyUI-MiniMax-H3-Studio | [GitHub](https://github.com/thaakeno/ComfyUI-MiniMax-H3-Studio) | `99a868e` | Image mode |
 | MaskVidExperiments | [GitHub](https://github.com/drozbay/MaskVidExperiments) | `d98cc89` (0.2.0) | Mask mode |
+| ComfyUI-PlagueKind-Nodes | [GitHub](https://github.com/PlagueKind/ComfyUI-PlagueKind-Nodes) | `6ca3037` | SLA Draft preset (SLA chip) |
+
+## SLA Draft preset
+
+The SLA Draft quality preset pairs H3 SLA Attention from ComfyUI-PlagueKind-Nodes with Comfy Kitchen and a 4-step turbo LoRA at reduced strength, sampled with euler/simple at 8 steps. SLA must be the last model patch, wired directly into the guider and scheduler, so the preset never combines SLA with SolAttn or SageAttention. The pack needs a recent ComfyUI core (comfy_api), and the SLA kernel falls back to dense attention on any failure. Tested on the commit `6ca3037` of the pack.
 
 ## Known issues on newer ComfyUI cores
 

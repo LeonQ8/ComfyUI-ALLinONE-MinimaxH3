@@ -39,11 +39,14 @@ Official MiniMax H3 files from [Comfy-Org/MiniMax-H3](https://huggingface.co/Com
 | Speed | [ComfyUI-SolAttn_triton](https://github.com/kijai/ComfyUI-SolAttn_triton) |
 | Balanced | [ComfyUI-SolAttn_triton](https://github.com/kijai/ComfyUI-SolAttn_triton) |
 | High | [ComfyUI-KJNodes](https://github.com/kijai/ComfyUI-KJNodes) (SageAttention) |
+| SLA Draft | [ComfyUI-PlagueKind-Nodes](https://github.com/PlagueKind/ComfyUI-PlagueKind-Nodes) + a Turbo LoRA (below) |
 | Native | — (ComfyUI core only) |
 
-Each accelerator also has an on/off chip under the Quality dropdown (SolAttn / SageAttn / Kitchen) — flip them for any mix; the preset label switches to **Custom**. Accelerators that are switched off are not even written into the workflow, so their packs don't need to be installed.
+Each accelerator also has an on/off chip under the Quality dropdown (SolAttn / SageAttn / Kitchen / SLA) — flip them for any mix; the preset label switches to **Custom**. Accelerators that are switched off are not even written into the workflow, so their packs don't need to be installed.
 
 **Comfy Kitchen** (`pip install comfy-kitchen`, then restart ComfyUI) is ComfyUI's own int8 attention backend. It replaces SageAttention for people who prefer it: the Kitchen chip can run alone or together with SolAttn, but never with SageAttention — turning one on switches the other off. The chip is disabled with a hint when the package is not installed. The CUDA wheel needs an NVIDIA driver r580 or newer; without the package the node falls back to PyTorch attention.
+
+**SLA Draft**: a fast draft preset for prompt tweaks. It runs H3 SLA Attention from [ComfyUI-PlagueKind-Nodes](https://github.com/PlagueKind/ComfyUI-PlagueKind-Nodes) as the last model patch, on top of Comfy Kitchen, with a 4-step turbo LoRA at reduced strength and 8 euler/simple steps. The pack's H3 AdaLN LoRA Fix node is added automatically so dense turbo LoRAs (like the dareties build) apply to the pruned base model. Needs a recent ComfyUI core (comfy_api). The SLA chip is exclusive with SolAttn and SageAttention and is disabled with a hint until the pack is installed and ComfyUI restarted. This is draft-only quality: prompt adherence is weaker, and multishot clips can reorder actions.
 
 **Preview without saving** (auto-save off): [ComfyUI-VideoHelperSuite](https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite)
 

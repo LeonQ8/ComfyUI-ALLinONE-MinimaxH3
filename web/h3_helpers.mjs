@@ -249,35 +249,45 @@ export function inputFileExists(files, name) {
 // Quality preset flag table. Keys mirror config.json quality_presets; each
 // entry says which accelerators that preset turns on. Turbo is not matchable
 // by flags alone (it needs a speed LoRA), so it is excluded from matching.
+// Draft (SLA Draft) pairs SLA with Kitchen and is the only preset with sla on.
 export const QUALITY_PRESET_FLAGS = {
-  turbo: { sol: false, sage: false, kitchen: false },
-  speed: { sol: true, sage: false, kitchen: false },
-  balanced: { sol: true, sage: false, kitchen: false },
-  high: { sol: false, sage: true, kitchen: false },
-  native: { sol: false, sage: false, kitchen: false },
+  turbo: { sol: false, sage: false, kitchen: false, sla: false },
+  speed: { sol: true, sage: false, kitchen: false, sla: false },
+  balanced: { sol: true, sage: false, kitchen: false, sla: false },
+  high: { sol: false, sage: true, kitchen: false, sla: false },
+  native: { sol: false, sage: false, kitchen: false, sla: false },
+  draft: { sol: false, sage: false, kitchen: true, sla: true },
 };
 
-export const QUALITY_PRESET_ORDER = ["speed", "balanced", "high", "native"];
+export const QUALITY_PRESET_ORDER = ["speed", "balanced", "high", "native", "draft"];
 
 // Comfy Kitchen attention replaces the whole attention function, same as
 // SageAttention, so the two can never run together. SolAttn layers on top of
-// either of them. When a request would pair kitchen with sage, sage is
+// either of them. H3 SLA attention is itself a sparse-attention engine, so it
+// is exclusive with Sol and Sage; turning it on drops both. Kitchen can pair
+// with SLA (Kitchen is a general attention backend, SLA sits on top as the
+// final model patch). When a request would pair kitchen with sage, sage is
 // dropped, so the flag combo always stays valid.
-export function resolveQualityFlags(sol, sage, kitchen) {
-  const s = !!sol;
+export function resolveQualityFlags(sol, sage, kitchen, sla) {
+  let s = !!sol;
   let a = !!sage;
   const k = !!kitchen;
+  const sl = !!sla;
+  if (sl) {
+    s = false;
+    a = false;
+  }
   if (a && k) a = false;
-  return { sol: s, sage: a, kitchen: k };
+  return { sol: s, sage: a, kitchen: k, sla: sl };
 }
 
-// Match a (sol, sage, kitchen) combo against the quality preset table.
+// Match a (sol, sage, kitchen, sla) combo against the quality preset table.
 // Returns the preset key, or "custom" for any mix no preset matches.
 export function matchQualityPreset(flags, table = QUALITY_PRESET_FLAGS, order = QUALITY_PRESET_ORDER) {
-  const f = resolveQualityFlags(flags && flags.sol, flags && flags.sage, flags && flags.kitchen);
+  const f = resolveQualityFlags(flags && flags.sol, flags && flags.sage, flags && flags.kitchen, flags && flags.sla);
   for (const key of order) {
     const p = table[key];
-    if (p && f.sol === !!p.sol && f.sage === !!p.sage && f.kitchen === !!p.kitchen) return key;
+    if (p && f.sol === !!p.sol && f.sage === !!p.sage && f.kitchen === !!p.kitchen && f.sla === !!p.sla) return key;
   }
   return "custom";
 }

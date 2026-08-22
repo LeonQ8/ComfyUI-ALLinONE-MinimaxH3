@@ -653,6 +653,27 @@ async def get_tae_status(request):
     return web.json_response({"ok": True, "found": bool(found), "files": sorted(found)})
 
 
+def _sla_installed():
+    """True when ComfyUI-PlagueKind-Nodes is loaded and registered H3SLAAttention.
+
+    The pack's nodes are registered in ComfyUI's global NODE_CLASS_MAPPINGS
+    when the pack imports; the import is guarded so a missing pack reports
+    False instead of crashing. Used by the SLA quality chip so users without
+    the pack see a hint instead of a failed queue."""
+    try:
+        from nodes import NODE_CLASS_MAPPINGS
+        return bool(NODE_CLASS_MAPPINGS) and "H3SLAAttention" in NODE_CLASS_MAPPINGS
+    except Exception:
+        return False
+
+
+@PromptServer.instance.routes.get("/h3one/sla_status")
+async def get_sla_status(request):
+    """Reports whether the H3SLAAttention node from ComfyUI-PlagueKind-Nodes is
+    registered (the SLA Draft quality chip depends on it)."""
+    return web.json_response({"ok": True, "found": _sla_installed()})
+
+
 @PromptServer.instance.routes.get("/h3one/config")
 async def get_config(request):
     return web.json_response(_load_config())

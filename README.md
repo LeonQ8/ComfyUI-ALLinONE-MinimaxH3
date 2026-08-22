@@ -53,6 +53,8 @@ In Mask mode, painting a region and describing it with text are two separate pat
 
 T2V, I2V and R2V run on ComfyUI core alone. Everything else you might need, every model and every optional custom node pack, is listed in **[requirements/REQUIREMENTS.md](requirements/REQUIREMENTS.md)**.
 
+The optional **SLA Draft** quality preset is a fast prompt-tweak mode that needs the [ComfyUI-PlagueKind-Nodes](https://github.com/PlagueKind/ComfyUI-PlagueKind-Nodes) pack. It is off by default.
+
 ## Installation
 
 ```bash

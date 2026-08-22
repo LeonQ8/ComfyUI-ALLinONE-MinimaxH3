@@ -202,8 +202,26 @@ class TestConfig(_NodesTestBase):
         presets = cfg.get("quality_presets", {})
         self.assertTrue(presets, "quality_presets should exist")
         for key, p in presets.items():
-            for flag in ("sol_attn", "sage", "kitchen"):
+            for flag in ("sol_attn", "sage", "kitchen", "sla"):
                 self.assertIn(flag, p, f"preset {key} missing {flag}")
+
+    def test_draft_preset_ships_sla_with_kitchen(self):
+        cfg = self.nodes._load_builtin_config()
+        draft = cfg.get("quality_presets", {}).get("draft")
+        self.assertIsInstance(draft, dict, "draft preset must exist")
+        self.assertEqual(draft.get("label"), "SLA Draft")
+        self.assertEqual(draft.get("steps"), 8)
+        self.assertTrue(draft.get("kitchen"), "draft must pair SLA with Kitchen")
+        self.assertTrue(draft.get("sla"), "draft must enable SLA")
+        self.assertFalse(draft.get("sol_attn"), "draft must not use SolAttn")
+        self.assertFalse(draft.get("sage"), "draft must not use SageAttention")
+
+    def test_sla_settings_defaults_shipped(self):
+        cfg = self.nodes._load_builtin_config()
+        defaults = cfg.get("model_defaults", {})
+        self.assertEqual(defaults.get("speed_lora_strength"), 0.8)
+        self.assertEqual(defaults.get("shift_video"), 8)
+        self.assertEqual(defaults.get("shift_audio"), 3)
 
     def test_mask_prompt_template_is_shipped(self):
         cfg = self.nodes._load_builtin_config()
@@ -565,6 +583,49 @@ class TestFavoriteToggle(_NodesTestBase):
         favs = self.nodes._load_favorites()
         self.assertIn("output|chain|video.mp4", favs)
         self.assertIn("output||video.mp4", favs)
+
+
+class TestSlaStatus(_NodesTestBase):
+    """The SLA availability check must be safe without ComfyUI-PlagueKind-Nodes
+    and reflect the pack once it registers H3SLAAttention."""
+
+    def _fake_nodes_module(self, mappings):
+        import sys
+
+        nodes = types.ModuleType("nodes")
+        nodes.NODE_CLASS_MAPPINGS = mappings
+        sys.modules["nodes"] = nodes
+        self._added_nodes_module = True
+
+    def tearDown(self):
+        super().tearDown()
+        if getattr(self, "_added_nodes_module", False):
+            import sys
+
+            sys.modules.pop("nodes", None)
+
+    def test_reports_false_when_pack_absent(self):
+        self.assertFalse(self.nodes._sla_installed())
+
+    def test_reports_false_when_class_not_registered(self):
+        self._fake_nodes_module({"SomeOtherNode": object})
+        self.assertFalse(self.nodes._sla_installed())
+
+    def test_reports_true_when_registered(self):
+        self._fake_nodes_module({"H3SLAAttention": object, "SomeOtherNode": object})
+        self.assertTrue(self.nodes._sla_installed())
+
+    def test_route_returns_found_flag(self):
+        resp = _run(self.nodes.get_sla_status(_FakeRequest({})))
+        data = resp.kwargs["data"]
+        self.assertTrue(data["ok"])
+        self.assertIn("found", data)
+        self.assertFalse(data["found"])
+
+    def test_route_reflects_registered_class(self):
+        self._fake_nodes_module({"H3SLAAttention": object})
+        resp = _run(self.nodes.get_sla_status(_FakeRequest({})))
+        self.assertTrue(resp.kwargs["data"]["found"])
 
 
 class TestGalleryMigration(_NodesTestBase):
