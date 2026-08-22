@@ -2,7 +2,7 @@
 
 Newest first.
 
-## Unreleased
+## 0.15.0 (2026-08-22)
 
  - Mask mode now feeds the motion reference to H3 at a small short edge instead of the full crop. It only carries movement, so tracking and replacement quality are unchanged.
 
@@ -10,6 +10,11 @@ Newest first.
  - The SLA Draft turbo LoRA strength defaults to full strength (1.0) to match the reference 8-step turbo LoRA recipe. Your saved value is kept.
 
  - New Compare & Stitch page. Pick 2 to 4 videos from your Library, compare them side by side in sync, or export them stitched into one clip. Frame matching is deterministic at 24 fps, audio comes from clip 1, and export is h264 or h265 mp4. Needs only VideoHelperSuite, which the node already uses.
+
+## 0.13.0 (2026-08-22)
+
+ - New SLA Draft quality preset and an SLA chip under Quality. A fast draft mode for prompt tweaks, for testing. Off by default.
+ - Needs the ComfyUI-PlagueKind-Nodes pack and a 4-step turbo LoRA. The pack's H3 AdaLN LoRA Fix is applied automatically so dense turbo LoRAs work on the pruned model. See COMPATIBILITY.md for the pinned pack version and requirements/REQUIREMENTS.md for the files.
 
 ## 0.12.0 (2026-08-21)
 
