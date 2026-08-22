@@ -1536,6 +1536,10 @@ test("bundle wires the Video Compare + Stitch page", () => {
   assert.ok(bundle.includes('actBtn("Compare",()=>openCompare()'), "the outputs strip must mount a Compare button");
   assert.ok(bundle.includes("libCompareBtn"), "the library must mount a Compare button");
   assert.ok(bundle.includes('vcOverlay.style.display!=="none"'), "Space must not generate while the compare overlay is open");
+  assert.ok(
+    bundle.includes("vcOverlay.append(vcHdr,vcSlotBar,vcCompareBody,vcStitchBody)"),
+    "the overlay must mount its header, slot bar and both tab bodies",
+  );
 });
 
 test("bundle stages picked outputs through the compare route before queueing", () => {

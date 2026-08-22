@@ -3343,6 +3343,7 @@ function persist(){
       tx(vcExportHint,"Queues the side-by-side clip through ComfyUI and saves it into your Library under the compare folder. No content auto-sync: clips are force-loaded at 24 fps and frame-matched deterministically.");
       vcExportWrap.append(vcExport,vcExportHint);
       vcStitchBody.append(vcOptRow,vcTrimWrap,vcExportWrap);
+      vcOverlay.append(vcHdr,vcSlotBar,vcCompareBody,vcStitchBody);
 
       const _vcRenderStitch=()=>{
         vcColsDD.set(_vcColsLabel());
@@ -5511,7 +5512,7 @@ function persist(){
         if(_curItem) _updateTimeBar(mediaKey(_curItem));
       };
       const galleryBox=mk("div",{display:"flex",gap:"8px",overflowX:"auto",paddingBottom:"4px",scrollbarWidth:"thin"});
-      const galleryHdr=mk("div",{display:"flex",alignItems:"center",justifyContent:"space-between",gap:"6px",padding:"2px 0 5px"});
+      const galleryHdr=mk("div",{display:"flex",alignItems:"center",justifyContent:"space-between",gap:"6px 10px",flexWrap:"wrap",padding:"2px 0 5px"});
       const galleryFoldHdr=mk("div",{display:"flex",alignItems:"center",gap:"6px",cursor:"pointer",userSelect:"none"});
       const galleryTitle=mk("div",{fontSize:"9px",fontWeight:"700",letterSpacing:".1em",textTransform:"uppercase",color:C.muted});
       tx(galleryTitle,"Outputs");
@@ -5524,7 +5525,7 @@ function persist(){
       galleryRefresh.onmouseenter=()=>{galleryRefresh.style.borderColor=C.lime;galleryRefresh.style.color=C.lime;};
       galleryRefresh.onmouseleave=()=>{galleryRefresh.style.borderColor=C.border;galleryRefresh.style.color=C.muted;};
       galleryRefresh.onclick=()=>_loadGallery();
-      const galleryActs=mk("div",{display:"flex",gap:"5px",alignItems:"center"});
+      const galleryActs=mk("div",{display:"flex",gap:"5px",alignItems:"center",flexWrap:"wrap",justifyContent:"flex-end",flex:"1 1 auto",minWidth:"0"});
       const actBtn=(l,cb,opts={})=>{
         const b=mk("button",{}, {type:"button",className:"h3-actbtn"+(opts.danger?" danger":"")+(opts.warn?" warn":"")+(opts.on?" on":"")});
         if(opts.icon) b.innerHTML=`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${opts.icon}</svg>`;
