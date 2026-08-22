@@ -4,6 +4,10 @@ Newest first.
 
 ## Unreleased
 
+ - The SLA Draft quality preset now defaults to the reference recipe: er_sde sampler, beta scheduler and 6 steps. They are defaults, not forced: change sampler, scheduler or steps anywhere and the run uses your choice.
+ - A small curve in Settings shows the SLA Draft noise schedule for the current sampler, scheduler, steps and shift, so you can see how the recipe changes before you run.
+ - The SLA Draft turbo LoRA strength defaults to full strength (1.0) to match the reference 8-step turbo LoRA recipe. Your saved value is kept.
+
  - New Compare & Stitch page. Pick 2 to 4 videos from your Library, compare them side by side in sync, or export them stitched into one clip. Frame matching is deterministic at 24 fps, audio comes from clip 1, and export is h264 or h265 mp4. Needs only VideoHelperSuite, which the node already uses.
 
 ## 0.12.0 (2026-08-21)

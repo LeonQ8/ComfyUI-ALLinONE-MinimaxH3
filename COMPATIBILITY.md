@@ -32,7 +32,7 @@ These are the commit SHAs the node was developed against. You don't need to pin 
 
 ## SLA Draft preset
 
-The SLA Draft quality preset pairs H3 SLA Attention from ComfyUI-PlagueKind-Nodes with Comfy Kitchen and a 4-step turbo LoRA at reduced strength, sampled with euler/simple at 8 steps. SLA must be the last model patch, wired directly into the guider and scheduler, so the preset never combines SLA with SolAttn or SageAttention. The pack needs a recent ComfyUI core (comfy_api), and the SLA kernel falls back to dense attention on any failure. Tested on the commit `6ca3037` of the pack.
+The SLA Draft quality preset pairs H3 SLA Attention from ComfyUI-PlagueKind-Nodes with Comfy Kitchen and a turbo LoRA. It defaults to the reference recipe (er_sde sampler, beta scheduler, 6 steps, 8-step turbo LoRA at full strength) but only as defaults: sampler, scheduler and steps are never forced at build time, so the user's own choice always wins. SLA must be the last model patch, wired directly into the guider and scheduler, so the preset never combines SLA with SolAttn or SageAttention. The pack needs a recent ComfyUI core (comfy_api), and the SLA kernel falls back to dense attention on any failure. Tested on the commit `6ca3037` of the pack.
 
 ## Known issues on newer ComfyUI cores
 

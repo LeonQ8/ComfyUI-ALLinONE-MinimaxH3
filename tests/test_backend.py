@@ -210,7 +210,7 @@ class TestConfig(_NodesTestBase):
         draft = cfg.get("quality_presets", {}).get("draft")
         self.assertIsInstance(draft, dict, "draft preset must exist")
         self.assertEqual(draft.get("label"), "SLA Draft")
-        self.assertEqual(draft.get("steps"), 8)
+        self.assertEqual(draft.get("steps"), 6)
         self.assertTrue(draft.get("kitchen"), "draft must pair SLA with Kitchen")
         self.assertTrue(draft.get("sla"), "draft must enable SLA")
         self.assertFalse(draft.get("sol_attn"), "draft must not use SolAttn")
@@ -219,7 +219,7 @@ class TestConfig(_NodesTestBase):
     def test_sla_settings_defaults_shipped(self):
         cfg = self.nodes._load_builtin_config()
         defaults = cfg.get("model_defaults", {})
-        self.assertEqual(defaults.get("speed_lora_strength"), 0.8)
+        self.assertEqual(defaults.get("speed_lora_strength"), 1.0)
         self.assertEqual(defaults.get("shift_video"), 8)
         self.assertEqual(defaults.get("shift_audio"), 3)
 

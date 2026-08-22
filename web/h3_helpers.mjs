@@ -669,3 +669,127 @@ export function makeCompareSlots(count) {
     trimEnd: 0,
   }));
 }
+
+// -- Sigma schedule ---------------------------------------------------------
+// Pure helpers that turn the SLA Draft recipe's noise schedule into a curve so
+// the UI can show what the sampler will actually run. MiniMax H3 is a flow
+// model: its sigma schedule is time_snr_shift(shift, t) for t in [0, 1], from
+// comfy/model_sampling.py (ModelSamplingAV). The reference workflow's hand
+// tuned ManualSigmas curves are literally this formula sampled at shift 12.
+// The scheduler step mapping mirrors comfy/samplers.py (simple_scheduler and
+// beta_scheduler) so the curve matches the draft defaults; every scheduler in
+// the UI dropdown has its own shape, and steps change the step count. The
+// "beta" scheduler is the draft default.
+
+// time_snr_shift(shift, t) - the flow sigma at schedule position t.
+// shift 1 is the identity; higher shift keeps more high-sigma (noisy) steps
+// early, which reads as "more coarse structure first".
+export function timeSnrShift(shift, t) {
+  const s = Number(shift);
+  const x = Number(t);
+  if (!Number.isFinite(s) || !Number.isFinite(x)) return 0;
+  if (s <= 0) return 0;
+  if (s === 1) return x;
+  return (s * x) / (1 + (s - 1) * x);
+}
+
+// Regularized incomplete beta I_x(a,b) and its inverse, needed to reproduce
+// ComfyUI's beta_scheduler quantiles. Numerical Recipes continued fraction,
+// same math scipy.stats.beta.ppf implements; used with a=b=0.6 (the ComfyUI
+// default for the beta scheduler).
+function gammln(xx) {
+  const cof = [76.18009172947146, -86.50532032941677, 24.01409824083091, -1.231739572450155, 0.1208650973866179e-2, -0.5395239384953e-5];
+  let x = xx;
+  let y = xx;
+  let tmp = x + 5.5;
+  tmp -= (x + 0.5) * Math.log(tmp);
+  let ser = 1.000000000190015;
+  for (let j = 0; j < 6; j++) ser += cof[j] / ++y;
+  return -tmp + Math.log(2.5066282746310005 * ser / x);
+}
+
+function betacf(a, b, x) {
+  const MAXIT = 200;
+  const EPS = 3e-7;
+  const FPMIN = 1e-30;
+  const qab = a + b;
+  const qap = a + 1;
+  const qam = a - 1;
+  let c = 1;
+  let d = 1 - qab * x / qap;
+  if (Math.abs(d) < FPMIN) d = FPMIN;
+  d = 1 / d;
+  let h = d;
+  for (let m = 1; m <= MAXIT; m++) {
+    const m2 = 2 * m;
+    let aa = m * (b - m) * x / ((qam + m2) * (a + m2));
+    d = 1 + aa * d;
+    if (Math.abs(d) < FPMIN) d = FPMIN;
+    c = 1 + aa / c;
+    if (Math.abs(c) < FPMIN) c = FPMIN;
+    d = 1 / d;
+    h *= d * c;
+    aa = -(a + m) * (qab + m) * x / ((a + m2) * (qap + m2));
+    d = 1 + aa * d;
+    if (Math.abs(d) < FPMIN) d = FPMIN;
+    c = 1 + aa / c;
+    if (Math.abs(c) < FPMIN) c = FPMIN;
+    d = 1 / d;
+    const del = d * c;
+    h *= del;
+    if (Math.abs(del - 1) < EPS) break;
+  }
+  return h;
+}
+
+function betai(a, b, x) {
+  if (x <= 0) return 0;
+  if (x >= 1) return 1;
+  const bt = Math.exp(gammln(a + b) - gammln(a) - gammln(b) + a * Math.log(x) + b * Math.log(1 - x));
+  return x < (a + 1) / (a + b + 2) ? bt * betacf(a, b, x) / a : 1 - bt * betacf(b, a, 1 - x) / b;
+}
+
+export function betaincinv(a, b, p) {
+  if (p <= 0) return 0;
+  if (p >= 1) return 1;
+  let lo = 0;
+  let hi = 1;
+  for (let i = 0; i < 80; i++) {
+    const mid = (lo + hi) / 2;
+    if (betai(a, b, mid) < p) lo = mid;
+    else hi = mid;
+  }
+  return (lo + hi) / 2;
+}
+
+// Map a scheduler + step count onto positions in the model's 1000-step sigma
+// buffer, mirroring comfy/samplers.py. Unknown schedulers fall back to the
+// simple (linear in t) mapping so the curve always has a sane shape.
+export function schedulerStepIndices(scheduler, steps) {
+  const n = Math.max(1, Math.floor(Number(steps)) || 1);
+  if (scheduler === "beta") {
+    const idx = [];
+    let last = -1;
+    for (let i = 0; i < n; i++) {
+      const u = 1 - i / n;
+      const t = Math.round(betaincinv(0.6, 0.6, u) * 999);
+      if (t !== last) idx.push(t);
+      last = t;
+    }
+    return idx;
+  }
+  const idx = [];
+  for (let i = 0; i < n; i++) idx.push(999 - Math.floor(i * (1000 / n)));
+  return idx;
+}
+
+// Approximate live sigma curve for a scheduler/steps/shift combo, as an array
+// of { step, sigma } points (step is 1-based, sigma descending to ~0). Exact
+// for "simple" and "beta"; a linear-t approximation for the rest. Used by the
+// SLA Draft settings sparkline to show what the schedule looks like before a
+// run, so users can see how sampler/scheduler/steps/shift change it.
+export function draftSigmaCurve({ steps = 6, scheduler = "simple", shift = 12 } = {}) {
+  const s = Number(shift) > 0 ? Number(shift) : 12;
+  const indices = schedulerStepIndices(scheduler, steps);
+  return indices.map((t) => ({ step: t + 1, sigma: timeSnrShift(s, (t + 1) / 1000) }));
+}

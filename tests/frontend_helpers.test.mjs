@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { aspect, sizeOf, sameSize, mapMaskPoint, orientRes, fitResolutionToAspect, planMaskCrop, maskTrackingPlan, resolveFitPrimary, imgProfileShort, imgAspectName, viewQuery, thumbQuery, isImageItem, inputFileExists, h3SamCheckpoints, clampImageMP, planImageCanvas, planImageCanvasForRatio, planUpscaleTarget, IMG_MAX_MP, IMG_MIN_MP, IMG_ASPECT_RATIOS, resolveQualityFlags, matchQualityPreset, QUALITY_PRESET_FLAGS, planExtend, queuePromptPayload, settleQueuedOutput, maskSpeechSyncPrompt, cropFrameIndex, cropBoxAt, cropReportText, lumaToAlpha, maskDetectionHint, maskRunErrorHint, clampTimecode, compareGridColumns, compareGridRows, compareWindow, syncTargets, formatTimecode, makeCompareSlots } from "../web/h3_helpers.mjs";
+import { aspect, sizeOf, sameSize, mapMaskPoint, orientRes, fitResolutionToAspect, planMaskCrop, maskTrackingPlan, resolveFitPrimary, imgProfileShort, imgAspectName, viewQuery, thumbQuery, isImageItem, inputFileExists, h3SamCheckpoints, clampImageMP, planImageCanvas, planImageCanvasForRatio, planUpscaleTarget, IMG_MAX_MP, IMG_MIN_MP, IMG_ASPECT_RATIOS, resolveQualityFlags, matchQualityPreset, QUALITY_PRESET_FLAGS, planExtend, queuePromptPayload, settleQueuedOutput, maskSpeechSyncPrompt, cropFrameIndex, cropBoxAt, cropReportText, lumaToAlpha, maskDetectionHint, maskRunErrorHint, clampTimecode, compareGridColumns, compareGridRows, compareWindow, syncTargets, formatTimecode, makeCompareSlots, timeSnrShift, schedulerStepIndices, draftSigmaCurve } from "../web/h3_helpers.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, "..");
@@ -691,11 +691,52 @@ test("matchQualityPreset: every preset is matchable from its own flags", () => {
   }
 });
 
+test("timeSnrShift: flow sigma matches the reference ManualSigmas curve", () => {
+  // The reference workflow's 5-step ManualSigmas (shift 12) are exactly
+  // time_snr_shift(12, t): 0.9231 at t=0.5, 0.8780 at t=0.375, 0.8000 at
+  // t=0.25, 0.6316 at t=0.125.
+  const near = (a, b) => Math.abs(a - b) < 1e-4;
+  assert.ok(near(timeSnrShift(12, 0.5), 0.9231), "t=0.5 @ shift 12");
+  assert.ok(near(timeSnrShift(12, 0.375), 0.8780), "t=0.375 @ shift 12");
+  assert.ok(near(timeSnrShift(12, 0.25), 0.8), "t=0.25 @ shift 12");
+  assert.ok(near(timeSnrShift(12, 0.125), 0.6316), "t=0.125 @ shift 12");
+  assert.equal(timeSnrShift(1, 0.4), 0.4, "shift 1 is the identity");
+  assert.equal(timeSnrShift(0, 0.5), 0, "non-positive shift yields 0");
+  assert.ok(timeSnrShift(12, 1) === 1, "t=1 maps to sigma 1");
+});
+
+test("schedulerStepIndices: beta quantiles match the draft default schedule", () => {
+  // ComfyUI beta_scheduler with steps=6, alpha=beta=0.6 gives these buffer
+  // indices (verified against scipy.stats.beta.ppf). The beta scheduler is
+  // the SLA Draft default.
+  assert.deepEqual(schedulerStepIndices("beta", 6), [999, 908, 724, 500, 275, 91]);
+  const idx = schedulerStepIndices("beta", 3);
+  assert.equal(idx.length, 3);
+  assert.ok(idx[0] === 999, "first beta step is the max sigma");
+  const simple = schedulerStepIndices("simple", 6);
+  assert.deepEqual(simple, [999, 833, 666, 499, 333, 166], "simple indexes uniformly");
+  const fallback = schedulerStepIndices("bogus", 4);
+  assert.deepEqual(fallback, [999, 749, 499, 249], "unknown schedulers fall back to simple");
+});
+
+test("draftSigmaCurve: yields descending sigma points and respects the shift", () => {
+  const curve = draftSigmaCurve({ steps: 6, scheduler: "beta", shift: 12 });
+  assert.equal(curve.length, 6);
+  for (let i = 1; i < curve.length; i++) {
+    assert.ok(curve[i].sigma < curve[i - 1].sigma, `sigma must descend at step ${i}`);
+  }
+  assert.ok(curve[0].sigma > 0.99, "first sigma near 1.0");
+  assert.ok(curve[curve.length - 1].sigma > 0 && curve[curve.length - 1].sigma < 0.6, "last sigma near 0.55 (draft beta/6)");
+  // Higher shift pulls the early curve up.
+  const hi = draftSigmaCurve({ steps: 6, scheduler: "beta", shift: 20 });
+  assert.ok(hi[1].sigma > curve[1].sigma, "higher shift raises early sigma");
+  assert.deepEqual(draftSigmaCurve({ steps: 1, scheduler: "beta", shift: 12 })[0].sigma, 1, "single step hits max sigma");
+});
+
 test("bundle wires the SLA chip, availability probe, and SLA Draft chain", () => {
   const bundle = readFileSync(bundlePath, "utf8");
   assert.ok(bundle.includes('_mkOptChip("optSla","SLA"'), "the quality row must expose an SLA chip");
-  assert.ok(bundle.includes("_checkSlaAvail"), "the SLA chip must probe availability on load");
-  assert.ok(bundle.includes("/h3one/sla_status"), "the SLA availability probe must call the backend route");
+  assert.ok(bundle.includes("_checkSlaAvail"), "the SLA chip must probe availability on load");  assert.ok(bundle.includes("/h3one/sla_status"), "the SLA availability probe must call the backend route");
   assert.ok(bundle.includes("H3 SLA Attention is not available"), "the SLA chip must explain a missing pack");
   assert.ok(bundle.includes('class_type:"H3SLAAttention"'), "the SLA Draft build must insert the SLA node");
   assert.ok(bundle.includes('class_type:"H3AdaLNLoRAFix"'), "the SLA Draft build must port dense LoRA tensors onto the pruned base");
@@ -704,7 +745,10 @@ test("bundle wires the SLA chip, availability probe, and SLA Draft chain", () =>
   assert.ok(bundle.includes("min_seq_len:8192"), "the SLA node must keep the packed-length threshold");
   assert.ok(bundle.includes('wf["7"].inputs.model=[sla,0]'), "the guider must take SLA's output directly");
   assert.ok(bundle.includes('wf["9"].inputs.model=[sla,0]'), "the scheduler must take SLA's output directly");
-  assert.ok(bundle.includes('sampler_name="euler"'), "the draft preset must force the euler sampler");
+  assert.ok(bundle.includes('S.samplerName="er_sde"'), "picking the draft preset must set the reference sampler default");
+  assert.ok(bundle.includes('S.schedulerName="beta"'), "picking the draft preset must set the reference scheduler default");
+  assert.ok(!/wf\["9"\]\.inputs\.scheduler="simple"/.test(bundle), "the draft preset must never force the scheduler at build time");
+  assert.ok(!/sampler_name="euler"/.test(bundle), "the draft preset must never force the sampler at build time");
   assert.ok(bundle.includes('_QL={balanced:"Balanced"'), "the quality label map must carry the draft label");
 });
 

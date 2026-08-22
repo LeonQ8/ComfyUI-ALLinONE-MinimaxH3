@@ -13,7 +13,7 @@
     "balanced": { "label": "Balanced", "steps": 30, "sol_attn": true, "sage": false, "kitchen": false, "sla": false },
     "high": { "label": "High Quality", "steps": 40, "sol_attn": false, "sage": true, "kitchen": false, "sla": false },
     "native": { "label": "Native", "steps": 30, "sol_attn": false, "sage": false, "kitchen": false, "sla": false },
-    "draft": { "label": "SLA Draft", "steps": 8, "sol_attn": false, "sage": false, "kitchen": true, "sla": true }
+    "draft": { "label": "SLA Draft", "steps": 6, "sol_attn": false, "sage": false, "kitchen": true, "sla": true }
   },
   "prompt_templates": {
     "t2v": {
@@ -150,7 +150,7 @@
     "vae_video": "minimax_h3_video_vae_fp16.safetensors",
     "vae_audio": "minimax_h3_audio_vae_fp32.safetensors",
     "speed_lora": "",
-    "speed_lora_strength": 0.8,
+    "speed_lora_strength": 1.0,
     "shift_video": 8,
     "shift_audio": 3,
     "fps": 24,
