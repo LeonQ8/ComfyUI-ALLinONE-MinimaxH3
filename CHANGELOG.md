@@ -6,9 +6,6 @@ Newest first.
 
  - New Compare & Stitch page. Pick 2 to 4 videos from your Library, compare them side by side in sync, or export them stitched into one clip. Frame matching is deterministic at 24 fps, audio comes from clip 1, and export is h264 or h265 mp4. Needs only VideoHelperSuite, which the node already uses.
 
- - New SLA Draft quality preset and an SLA chip under Quality. A fast draft mode for prompt tweaks, for testing.
- - Needs the ComfyUI-PlagueKind-Nodes pack and a 4-step turbo LoRA. See COMPATIBILITY.md for the pinned pack version and requirements/REQUIREMENTS.md for the files.
-
 ## 0.12.0 (2026-08-21)
 
  - Mask mode now feeds the tracked source region back to H3 as a motion reference, so a replaced person keeps the original video's movements instead of inventing new ones.
