@@ -2192,6 +2192,8 @@ function persist(){
           /* raised action buttons (under the preview) */
           .h3-actbtn{display:inline-flex;align-items:center;gap:5px;height:26px;padding:0 10px;border-radius:8px;background:linear-gradient(180deg,#2b2b2b,#1e1e1e);border:1px solid var(--h3-line2);border-bottom-color:#141414;color:var(--h3-tx2);font-size:9.5px;font-weight:700;letter-spacing:.03em;text-transform:uppercase;cursor:pointer;font-family:inherit;box-shadow:inset 0 1px 0 rgba(255,255,255,.07),0 1px 3px rgba(0,0,0,.45);transition:border-color .15s,color .15s,background .15s,box-shadow .15s,transform .1s;flex-shrink:0;}
           .h3-actbtn svg{width:11px;height:11px;flex-shrink:0;}
+          .h3-actbtn.ico{padding:0 7px;}
+          .h3-actbtn.ico svg{width:12px;height:12px;}
           .h3-actbtn:hover{border-color:var(--h3accent);color:var(--h3accent);background:linear-gradient(180deg,#313131,#232323);transform:translateY(-1px);box-shadow:inset 0 1px 0 rgba(255,255,255,.09),0 2px 6px rgba(0,0,0,.5);}
           .h3-actbtn:active{transform:translateY(0);background:linear-gradient(180deg,#1a1a1a,#212121);box-shadow:inset 0 1px 3px rgba(0,0,0,.5);}
           .h3-actbtn:focus-visible{outline:none;box-shadow:0 0 0 3px rgba(192,169,150,.35);}
@@ -3131,19 +3133,20 @@ function persist(){
             clear.onclick=(e)=>{ e.stopPropagation(); e.preventDefault(); slot.item=null; slot.duration=0; _vcRenderSlots(); _vcRenderCompare(); _vcRenderStitch(); };
             chip.appendChild(clear);
           }
-          chip.onclick=()=>{
-            _openLibraryPick((item)=>{
-              slot.item=item;
-              slot.duration=0;
-              _vcRenderSlots();
-              _vcRenderCompare();
-              _vcRenderStitch();
-            });
-          };
+          chip.onclick=()=>{ _vcPickSlot(slot); };
           vcSlotsWrap.appendChild(chip);
         });
         vcAddSlot.style.display=_vcSlots.length>=4?"none":"inline-block";
         vcRemoveSlot.style.display=_vcSlots.length<=2?"none":"inline-block";
+      };
+      const _vcPickSlot=(slot)=>{
+        _openLibraryPick((item)=>{
+          slot.item=item;
+          slot.duration=0;
+          _vcRenderSlots();
+          _vcRenderCompare();
+          _vcRenderStitch();
+        });
       };
 
       // -- Compare tab: client-side synced <video> grid ---------------------
@@ -3430,6 +3433,7 @@ function persist(){
         _vcRenderCompare();
         _vcRenderStitch();
         openOverlay(vcOverlay);
+        if(!_vcSlots.some(s=>s.item)) _vcPickSlot(_vcSlots[0]);
       };
       self._h3_openCompare=openCompare;
 
@@ -5527,10 +5531,11 @@ function persist(){
       galleryRefresh.onclick=()=>_loadGallery();
       const galleryActs=mk("div",{display:"flex",gap:"5px",alignItems:"center",flexWrap:"wrap",justifyContent:"flex-end",flex:"1 1 auto",minWidth:"0"});
       const actBtn=(l,cb,opts={})=>{
-        const b=mk("button",{}, {type:"button",className:"h3-actbtn"+(opts.danger?" danger":"")+(opts.warn?" warn":"")+(opts.on?" on":"")});
+        const b=mk("button",{}, {type:"button",className:"h3-actbtn"+(opts.danger?" danger":"")+(opts.warn?" warn":"")+(opts.on?" on":"")+(opts.iconOnly?" ico":"")});
         if(opts.icon) b.innerHTML=`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${opts.icon}</svg>`;
         b._lbl=mk("span",{}, {textContent:l});
         b.appendChild(b._lbl);
+        if(opts.iconOnly) b._lbl.style.display="none";
         if(opts.title) b.title=opts.title;
         b.onclick=cb;
         return b;
@@ -5581,11 +5586,11 @@ function persist(){
         }
       };
       galleryActs.append(
-        actBtn("Favorite",()=>_favCurrent(),{icon:ICON_FAV}),
+        actBtn("",()=>_favCurrent(),{icon:ICON_FAV,iconOnly:true,title:"Favorite this output"}),
         actBtn("Open",()=>_openCurrent(),{icon:ICON_OPEN}),
         upBtn,upFactorWrap,
         actBtn("Compare",()=>openCompare(),{icon:ICON_CMP,title:"Open the Video Compare + Stitch page. Pick 2-4 outputs to compare side by side or stitch them into one clip."}),
-        actBtn("Delete",()=>_delCurrent(),{icon:ICON_DEL,danger:true})
+        actBtn("",()=>_delCurrent(),{icon:ICON_DEL,iconOnly:true,danger:true,title:"Delete this output"})
       );
       const saveTogBtn=mk("button",{}, {type:"button",className:"h3-actbtn"+(S.autoSave?" on":"")});
       saveTogBtn._lbl=mk("span",{}, {textContent:S.autoSave?"Save On":"Save Off"});
@@ -5673,7 +5678,9 @@ function persist(){
       galleryRefresh.style.borderBottomColor="#141414";
       galleryRefresh.style.boxShadow="inset 0 1px 0 rgba(255,255,255,.07), 0 1px 3px rgba(0,0,0,.45)";
       galleryRefresh.style.fontSize="9.5px";
-      galleryRefresh.innerHTML=`<svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICON_REFRESH}</svg>`+`<span style="margin-left:5px;">Refresh</span>`;
+      galleryRefresh.style.padding="0 7px";
+      galleryRefresh.innerHTML=`<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICON_REFRESH}</svg>`;
+      galleryRefresh.title="Refresh outputs";
       galleryHdr.append(galleryFoldHdr,saveTogBtn,galleryRefresh,galleryActs);
       const galleryWrap=mk("div",{display:"flex",flexDirection:"column",gap:"7px"});
       galleryWrap.append(galleryHdr,galleryBox);

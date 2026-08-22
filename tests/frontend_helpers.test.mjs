@@ -1574,3 +1574,22 @@ test("compare overlay helpers are declared before their build-time use", () => {
   const matchUse = vcBlock.indexOf("vcMatchDD=DD(");
   assert.ok(matchDecl !== -1 && matchUse !== -1 && matchDecl < matchUse, "vcMatchDD must not call _vcMatchLabel before it is declared");
 });
+
+test("compare page auto-opens the library picker when all slots are empty", () => {
+  const bundle = readFileSync(bundlePath, "utf8");
+  assert.ok(
+    bundle.includes("if(!_vcSlots.some(s=>s.item)) _vcPickSlot(_vcSlots[0])"),
+    "opening compare with no clips must open the library picker immediately",
+  );
+  assert.ok(bundle.includes("const _vcPickSlot=(slot)=>"), "slot picking must be a shared helper");
+});
+
+test("outputs strip uses compact icon-only actions on one line", () => {
+  const bundle = readFileSync(bundlePath, "utf8");
+  assert.ok(bundle.includes('actBtn("",()=>_favCurrent()'), "Favorite must be icon-only");
+  assert.ok(bundle.includes('actBtn("",()=>_delCurrent()'), "Delete must be icon-only");
+  assert.ok(bundle.includes("iconOnly:true"), "actBtn must support icon-only buttons");
+  assert.ok(bundle.includes(".h3-actbtn.ico{padding:0 7px;}"), "icon-only buttons must be compact");
+  assert.ok(!bundle.includes('margin-left:5px;">Refresh</span>'), "the refresh button must drop its text label");
+  assert.ok(bundle.includes('galleryRefresh.title="Refresh outputs"'), "the refresh icon must carry a tooltip");
+});
