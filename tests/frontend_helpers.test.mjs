@@ -1596,6 +1596,22 @@ test("compare grid rows fill the overlay so the players render big", () => {
   );
 });
 
+test("compare sync never freezes a follower ahead of its buffered data", () => {
+  const bundle = readFileSync(bundlePath, "utf8");
+  assert.ok(
+    bundle.includes("if(Math.abs(cur-ti)<=0.15) return;"),
+    "the sync loop must tolerate small drift instead of seeking every frame",
+  );
+  assert.ok(
+    bundle.includes("if(r.el.paused){"),
+    "the sync loop must retry play on a paused follower so both clips actually play",
+  );
+  assert.ok(
+    bundle.includes("if(bufEnd<=0||ti<=bufEnd+0.25)"),
+    "a follower must only be seeked once its buffered range covers the target, otherwise it freezes on a frame while it loads",
+  );
+});
+
 test("compare library picker filters to videos and offers favorites-only", () => {
   const bundle = readFileSync(bundlePath, "utf8");
   assert.ok(bundle.includes("_libPickVideosOnly"), "pick mode must track the videos-only flag");

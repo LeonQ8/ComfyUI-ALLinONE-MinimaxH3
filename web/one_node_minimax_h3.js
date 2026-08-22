@@ -3207,7 +3207,16 @@ function persist(){
           vids.forEach(r=>{
             if(r===master) return;
             const ti=targets[_vcMediaRefs.indexOf(r)];
-            try{ if(Math.abs(Number(r.el.currentTime)||0-ti)>0.04) r.el.currentTime=ti; }catch(e){}
+            if(r.el.ended) return;
+            if(r.el.paused){
+              if(r.el.readyState>=2) r.el.play().catch(()=>{});
+              return;
+            }
+            const cur=Number(r.el.currentTime)||0;
+            if(Math.abs(cur-ti)<=0.15) return;
+            let bufEnd=0;
+            try{ if(r.el.buffered&&r.el.buffered.length) bufEnd=r.el.buffered.end(r.el.buffered.length-1); }catch(e){}
+            if(bufEnd<=0||ti<=bufEnd+0.25){ try{ r.el.currentTime=ti; }catch(e){} }
           });
           if(window>0&&rel>=window){ _vcPauseAll(); _vcSeekTo(window); return; }
         }
@@ -3277,14 +3286,9 @@ function persist(){
           if(_vcPlaying){ _vcPauseAll(); return; }
           _vcPlaying=true;
           tx(vcPlay,"Pause");
-          const window=Math.max(0,_vcWindow());
-          const rel=Math.min(_vcSharedTime,window);
-          const slots=_vcMediaRefs.map(r=>({duration:r.slot.duration,trimStart:Number(r.slot.trimStart)||0}));
-          const targets=syncTargets(rel,slots,window);
           _vcMediaRefs.forEach((r,i)=>{
             if(!r.isVideo) return;
             r.el.muted=(i!==_vcMutedSlot);
-            try{ r.el.currentTime=targets[i]||0; }catch(e){}
             r.el.play().catch(()=>{});
           });
           _vcRaf=requestAnimationFrame(_vcSyncLoop);
