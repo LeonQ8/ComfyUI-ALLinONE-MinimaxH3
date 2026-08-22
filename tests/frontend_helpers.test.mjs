@@ -1654,6 +1654,14 @@ test("stitch export stays in the overlay and shows progress and the result there
     exportBody.includes("VHS_MetadataImage:false"),
     "the export must ask VHS to skip the metadata poster PNG so the Library does not show a stray image per export",
   );
+  assert.ok(
+    exportBody.includes("_vcExportSay(\"Failed: \"+fmtErr(e),true)"),
+    "an export failure must be visible in the stitch page instead of hiding behind the overlay",
+  );
+  assert.ok(
+    exportBody.includes("_vcExportSay(\"Pick at least 2 outputs to stitch.\",true)"),
+    "the stitch guards must report into the page, not silently no-op",
+  );
 });
 
 test("stitch tab renders organized layout and frame-match examples", () => {

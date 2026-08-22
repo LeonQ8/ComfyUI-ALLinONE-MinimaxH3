@@ -3486,9 +3486,9 @@ function persist(){
 
       const _vcExportStitch=async()=>{
         const filled=_vcSlots.filter(s=>s.item);
-        if(filled.length<2){ showError("Pick at least 2 outputs to stitch."); return; }
-        if(filled.some(s=>isImageItem(s.item))){ showError("Stitch works on video outputs. Remove still images from the clips first."); return; }
-        if(S.generating||_workflowBuildBusy){ showError("A generation is already running."); return; }
+        if(filled.length<2){ _vcExportSay("Pick at least 2 outputs to stitch.",true); return; }
+        if(filled.some(s=>isImageItem(s.item))){ _vcExportSay("Stitch works on video outputs. Remove still images first.",true); return; }
+        if(S.generating||_workflowBuildBusy){ _vcExportSay("A generation is already running. Wait for it to finish.",true); return; }
         _vcStopPlayback();
         _vcExporting=true;
         vcExport.disabled=true;
@@ -3541,11 +3541,17 @@ function persist(){
         }catch(e){
           _vcExporting=false;
           vcExport.disabled=false;
-          vcExportStatus.style.display="none";
-          resetBtn();showError(fmtErr(e));
+          _vcExportSay("Failed: "+fmtErr(e),true);
+          resetBtn();
         }
       };
       vcExport.onclick=()=>{ _vcExportStitch(); };
+      const _vcExportSay=(msg,isErr)=>{
+        vcExportStatus.style.display="flex";
+        vcExportStatusLbl.style.color=isErr?C.err:C.muted;
+        tx(vcExportStatusLbl,msg);
+        if(isErr) vcExportBar.style.width="0%";
+      };
       const _vcExportSetStage=(l,p)=>{
         if(!_vcExporting) return;
         vcExportStatus.style.display="flex";
@@ -3580,6 +3586,9 @@ function persist(){
         _vcRenderCompare();
         _vcRenderStitch();
         openOverlay(vcOverlay);
+        vcExport.disabled=false;
+        vcExportStatus.style.display="none";
+        vcExportResult.pause();vcExportResult.removeAttribute("src");vcExportResult.load();vcExportResult.style.display="none";
         if(!_vcSlots.some(s=>s.item)) _vcPickSlot(_vcSlots[0]);
       };
       self._h3_openCompare=openCompare;
