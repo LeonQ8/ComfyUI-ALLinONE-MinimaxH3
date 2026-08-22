@@ -1735,6 +1735,40 @@ class TestSmartMask(_NodesTestBase):
         self.assertIn("did not find an object", resp.kwargs["data"]["error"])
 
     @unittest.skipUnless(_HAS_TORCH and _HAS_NUMPY, "torch/numpy not available")
+    def test_smart_mask_route_loads_sam3_without_dynamic_vram(self):
+        (self.tmp / "input" / "clip.mp4").write_bytes(b"\x00\x00")
+        (self.tmp / "models" / "checkpoints").mkdir(parents=True, exist_ok=True)
+        (self.tmp / "models" / "checkpoints" / "sam.safetensors").write_bytes(b"\x00")
+        import folder_paths as _fp
+        original_full = getattr(_fp, "get_full_path", None)
+        original_frame = self.nodes._mask_source_frame
+        original_segment = self.nodes._smart_mask_segment
+        calls = self._stub_comfy_sd()
+
+        def fake_full(key, name):
+            return str(self.tmp / "models" / "checkpoints" / "sam.safetensors")
+
+        _fp.get_full_path = fake_full
+        self.nodes._mask_source_frame = lambda _path, _t: (torch.ones((1, 40, 60, 3)), (60, 40))
+        self.nodes._smart_mask_segment = lambda model, image, positive, negative, **k: torch.ones((40, 60))
+        try:
+            resp = _run(self.nodes.smart_mask(_FakeRequest({
+                "source": "clip.mp4", "ckpt_name": "sam.safetensors",
+                "positive": [{"x": 30, "y": 20}], "negative": [],
+            })))
+        finally:
+            if original_full is None:
+                _fp.__dict__.pop("get_full_path", None)
+            else:
+                _fp.get_full_path = original_full
+            self.nodes._mask_source_frame = original_frame
+            self.nodes._smart_mask_segment = original_segment
+        self.assertEqual(resp.kwargs["status"], 200)
+        self.assertTrue(calls, "the SAM3 loader stub must have been called")
+        self.assertEqual(calls[0].get("disable_dynamic"), True,
+                         "SAM3 must load without ComfyUI dynamic VRAM to avoid the aimdo crash")
+
+    @unittest.skipUnless(_HAS_TORCH and _HAS_NUMPY, "torch/numpy not available")
     def test_smart_mask_route_rejects_a_mask_that_is_only_a_speck(self):
         (self.tmp / "input" / "clip.mp4").write_bytes(b"\x00\x00")
         (self.tmp / "models" / "checkpoints").mkdir(parents=True, exist_ok=True)
@@ -1794,12 +1828,15 @@ class TestSmartMask(_NodesTestBase):
         comfy.__path__ = []
         sd = sys.modules.get("comfy.sd") or types.ModuleType("comfy.sd")
         sys.modules["comfy.sd"] = sd
+        calls = []
 
         def load_checkpoint_guess_config(path, output_vae=True, output_clip=True, **kwargs):
+            calls.append(kwargs)
             return type("Model", (), {})(), None, None, None
 
         sd.load_checkpoint_guess_config = load_checkpoint_guess_config
         comfy.sd = sd
+        return calls
 
 
 class TestFrameMatchPlan(_NodesTestBase):

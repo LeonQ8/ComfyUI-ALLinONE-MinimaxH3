@@ -1828,7 +1828,7 @@ async def smart_mask(request):
         if not checkpoint or not os.path.isfile(checkpoint):
             raise ValueError("checkpoint not found")
         import comfy.sd
-        model, _clip, _vae, _metadata = comfy.sd.load_checkpoint_guess_config(checkpoint, output_vae=True, output_clip=True)
+        model, _clip, _vae, _metadata = comfy.sd.load_checkpoint_guess_config(checkpoint, output_vae=True, output_clip=True, disable_dynamic=True)
         mask = _smart_mask_run(model, frame, positive, negative, refine_iterations, threshold)
         mask = _despeckle_mask(mask)
         if float(mask.sum().item()) <= 0:
