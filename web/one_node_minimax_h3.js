@@ -3288,6 +3288,25 @@ function persist(){
         col.appendChild(_vcRowCap(title));
         return col;
       };
+      const _vcColsLabel=()=>{
+        const v=S.compareColumns||0;
+        return v===2?"2 columns":(v===3?"3 columns":(v===4?"4 columns":"Auto"));
+      };
+      const _vcColsVal=(label)=>{
+        if(label==="2 columns") return 2;
+        if(label==="3 columns") return 3;
+        if(label==="4 columns") return 4;
+        return 0;
+      };
+      const _vcMatchLabel=()=>{
+        const m=S.compareFrameMatch||"trim_to_shortest";
+        return m==="pad_to_longest"?"Pad to longest":(m==="per_clip"?"Per-clip trim start + end":"Auto trim to shortest");
+      };
+      const _vcMatchVal=(label)=>{
+        if(label==="Pad to longest") return "pad_to_longest";
+        if(label==="Per-clip trim start + end") return "per_clip";
+        return "trim_to_shortest";
+      };
       const vcColsCol=_vcOptCol("Layout");
       const vcColsDD=DD(["Auto","2 columns","3 columns","4 columns"],_vcColsLabel(),v=>{
         S.compareColumns=_vcColsVal(v); persist(); _vcRenderStitch();
@@ -3325,25 +3344,6 @@ function persist(){
       vcExportWrap.append(vcExport,vcExportHint);
       vcStitchBody.append(vcOptRow,vcTrimWrap,vcExportWrap);
 
-      const _vcColsLabel=()=>{
-        const v=S.compareColumns||0;
-        return v===2?"2 columns":(v===3?"3 columns":(v===4?"4 columns":"Auto"));
-      };
-      const _vcColsVal=(label)=>{
-        if(label==="2 columns") return 2;
-        if(label==="3 columns") return 3;
-        if(label==="4 columns") return 4;
-        return 0;
-      };
-      const _vcMatchLabel=()=>{
-        const m=S.compareFrameMatch||"trim_to_shortest";
-        return m==="pad_to_longest"?"Pad to longest":(m==="per_clip"?"Per-clip trim start + end":"Auto trim to shortest");
-      };
-      const _vcMatchVal=(label)=>{
-        if(label==="Pad to longest") return "pad_to_longest";
-        if(label==="Per-clip trim start + end") return "per_clip";
-        return "trim_to_shortest";
-      };
       const _vcRenderStitch=()=>{
         vcColsDD.set(_vcColsLabel());
         vcMatchDD.set(_vcMatchLabel());

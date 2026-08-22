@@ -1556,3 +1556,17 @@ test("bundle stages picked outputs through the compare route before queueing", (
   assert.ok(bundle.includes("_armFinishWatch()"), "the export must arm the finish watch for progress and gallery refresh");
   assert.ok(bundle.includes("tx(genBtnLbl,\"Stitching...\")"), "the export must label the in-flight job Stitching");
 });
+
+test("compare overlay helpers are declared before their build-time use", () => {
+  const bundle = readFileSync(bundlePath, "utf8");
+  const vcStart = bundle.indexOf("const vcOverlay=mk");
+  const vcEnd = bundle.indexOf("const _openLibraryPick=");
+  assert.ok(vcStart !== -1 && vcEnd !== -1 && vcStart < vcEnd, "the compare overlay block must exist");
+  const vcBlock = bundle.slice(vcStart, vcEnd);
+  const colsDecl = vcBlock.indexOf("const _vcColsLabel=");
+  const colsUse = vcBlock.indexOf("vcColsDD=DD(");
+  assert.ok(colsDecl !== -1 && colsUse !== -1 && colsDecl < colsUse, "vcColsDD must not call _vcColsLabel before it is declared");
+  const matchDecl = vcBlock.indexOf("const _vcMatchLabel=");
+  const matchUse = vcBlock.indexOf("vcMatchDD=DD(");
+  assert.ok(matchDecl !== -1 && matchUse !== -1 && matchDecl < matchUse, "vcMatchDD must not call _vcMatchLabel before it is declared");
+});
