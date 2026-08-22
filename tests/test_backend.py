@@ -1412,6 +1412,34 @@ class TestPaintedRegion(_NodesTestBase):
         self.assertGreater(out[0].sum().item(), 1.0, "grow must widen the painted region")
 
 
+class TestMotionRefScale(_NodesTestBase):
+    def test_caps_the_short_edge(self):
+        dims = self.nodes._motion_ref_dims(960, 544, 256)
+        self.assertEqual(min(dims["width"], dims["height"]), 256)
+        self.assertEqual(dims["width"] % 32, 0)
+        self.assertEqual(dims["height"] % 32, 0)
+
+    def test_preserves_aspect_ratio(self):
+        dims = self.nodes._motion_ref_dims(960, 544, 256)
+        self.assertAlmostEqual(dims["width"] / dims["height"], 960 / 544, delta=0.1)
+
+    def test_never_upscales_small_inputs(self):
+        dims = self.nodes._motion_ref_dims(256, 144, 256)
+        self.assertEqual(dims, {"width": 256, "height": 144})
+
+    def test_default_short_edge_is_256(self):
+        dims = self.nodes._motion_ref_dims(960, 544)
+        self.assertEqual(min(dims["width"], dims["height"]), 256)
+
+    def test_square_crop_stays_square(self):
+        dims = self.nodes._motion_ref_dims(704, 704, 256)
+        self.assertEqual(dims["width"], dims["height"])
+
+    def test_bad_input_falls_back_safely(self):
+        dims = self.nodes._motion_ref_dims(0, 0, 256)
+        self.assertEqual(dims, {"width": 256, "height": 256})
+
+
 class TestMaskPreviewProgress(_NodesTestBase):
     def test_snapshot_unknown_token_is_empty(self):
         snap = self.nodes._preview_progress_snapshot("nope")

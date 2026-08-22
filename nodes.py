@@ -2319,6 +2319,59 @@ class H3PaintedRegion:
         return (result.to(dtype=painted.dtype, device=painted.device),)
 
 
+def _motion_ref_dims(width, height, short_edge=256):
+    """Resize a motion-reference video to a small short edge.
+
+    H3 re-encodes reference videos in full and packs every frame as a token
+    that rides through every sampling step, so a full-resolution ref roughly
+    doubles the sequence length. Motion is a low-frequency signal and identity
+    already comes from the replacement <Picture N> refs, so the ref video can
+    live on a small short edge. Preserves aspect ratio, snaps to the 32 grid,
+    and never upscales."""
+    w, h = int(width), int(height)
+    if w <= 0 or h <= 0:
+        return {"width": 256, "height": 256}
+    target = max(32, int(round(short_edge / 32.0) * 32))
+    short = min(w, h)
+    if short <= target:
+        return {"width": w, "height": h}
+    scale = target / short
+    tw = max(32, int(round(w * scale / 32.0) * 32))
+    th = max(32, int(round(h * scale / 32.0) * 32))
+    return {"width": tw, "height": th}
+
+
+class H3MotionRefScale:
+    """Downscale the tracked source crop used as the H3 motion reference.
+
+    The ref video only supplies movement, never identity, so it can be small
+    without hurting the replacement. Keeping it on the 32 grid means the H3
+    node's own canvas logic leaves it at the reduced size."""
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "images": ("IMAGE",),
+                "short_edge": ("INT", {"default": 256, "min": 32, "max": 768, "step": 32}),
+            }
+        }
+
+    RETURN_TYPES = ("IMAGE",)
+    FUNCTION = "scale"
+    CATEGORY = "One Node"
+
+    def scale(self, images, short_edge=256):
+        import torch.nn.functional as F
+        b, h, w, c = images.shape
+        dims = _motion_ref_dims(w, h, short_edge)
+        if dims["width"] == w and dims["height"] == h:
+            return (images,)
+        s = images.movedim(-1, 1)
+        s = F.interpolate(s, size=(dims["height"], dims["width"]), mode="bilinear", align_corners=False)
+        return (s.movedim(1, -1),)
+
+
 class H3OneSAM3CropCheck:
     """Hands the frontend a JSON report of the crop MVEx Subject Crop plans
     around the tracked subject plus SAM3's own per-object confidence, so the
@@ -2793,5 +2846,5 @@ async def compare_workflow(request):
     })
 
 
-NODE_CLASS_MAPPINGS = {"H3OneNode": H3OneNode, "H3CacheBust": H3CacheBust, "H3MaskVideoPrepare": H3MaskVideoPrepare, "H3IdentityAnchor": H3IdentityAnchor, "H3AudioTrim": H3AudioTrim, "H3AudioJoinSmooth": H3AudioJoinSmooth, "H3OneSAM3CropCheck": H3OneSAM3CropCheck, "H3PaintedRegion": H3PaintedRegion, "H3StitchFrames": H3StitchFrames}
-NODE_DISPLAY_NAME_MAPPINGS = {"H3OneNode": "ALL in ONE MiniMaxH3", "H3CacheBust": "H3 Cache Fingerprint (internal)", "H3MaskVideoPrepare": "H3 Mask Video Prepare (internal)", "H3IdentityAnchor": "H3 Identity Anchor (internal)", "H3AudioTrim": "H3 Audio Trim (internal)", "H3AudioJoinSmooth": "H3 Audio Join Smooth (internal)", "H3OneSAM3CropCheck": "H3 Crop + Confidence Report (internal)", "H3PaintedRegion": "H3 Painted Region (internal)", "H3StitchFrames": "H3 Stitch Frames (internal)"}
+NODE_CLASS_MAPPINGS = {"H3OneNode": H3OneNode, "H3CacheBust": H3CacheBust, "H3MaskVideoPrepare": H3MaskVideoPrepare, "H3IdentityAnchor": H3IdentityAnchor, "H3AudioTrim": H3AudioTrim, "H3AudioJoinSmooth": H3AudioJoinSmooth, "H3OneSAM3CropCheck": H3OneSAM3CropCheck, "H3PaintedRegion": H3PaintedRegion, "H3StitchFrames": H3StitchFrames, "H3MotionRefScale": H3MotionRefScale}
+NODE_DISPLAY_NAME_MAPPINGS = {"H3OneNode": "ALL in ONE MiniMaxH3", "H3CacheBust": "H3 Cache Fingerprint (internal)", "H3MaskVideoPrepare": "H3 Mask Video Prepare (internal)", "H3IdentityAnchor": "H3 Identity Anchor (internal)", "H3AudioTrim": "H3 Audio Trim (internal)", "H3AudioJoinSmooth": "H3 Audio Join Smooth (internal)", "H3OneSAM3CropCheck": "H3 Crop + Confidence Report (internal)", "H3PaintedRegion": "H3 Painted Region (internal)", "H3StitchFrames": "H3 Stitch Frames (internal)", "H3MotionRefScale": "H3 Motion Ref Scale (internal)"}

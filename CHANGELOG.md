@@ -4,6 +4,8 @@ Newest first.
 
 ## Unreleased
 
+ - Mask mode now feeds the motion reference to H3 at a small short edge instead of the full crop. It only carries movement, so tracking and replacement quality are unchanged.
+
  - The SLA Draft quality preset now defaults to the reference recipe: er_sde sampler, beta scheduler and 6 steps. They are defaults, not forced: change sampler, scheduler or steps anywhere and the run uses your choice.
  - The SLA Draft turbo LoRA strength defaults to full strength (1.0) to match the reference 8-step turbo LoRA recipe. Your saved value is kept.
 
