@@ -1648,16 +1648,6 @@ test("stitch export stays in the overlay and shows progress and the result there
   );
 });
 
-test("stitch tab renders layout and frame-match examples before exporting", () => {
-  const bundle = readFileSync(bundlePath, "utf8");
-  assert.ok(bundle.includes("_vcRenderStitchPreview"), "the stitch tab must render a small example");
-  assert.ok(bundle.includes("Layout example"), "the layout option must show a mini grid diagram");
-  assert.ok(bundle.includes("Frame match example"), "the frame-match option must show a mini length diagram");
-  assert.ok(bundle.includes("Every clip is cut to the shortest clip's length"), "the example must explain trim-to-shortest");
-  assert.ok(bundle.includes("Shorter clips are padded with the chosen filler"), "the example must explain pad-to-longest");
-  assert.ok(bundle.includes("Each clip uses its own start/end trim"), "the example must explain per-clip trim");
-});
-
 test("compare library picker filters to videos and offers favorites-only", () => {
   const bundle = readFileSync(bundlePath, "utf8");
   assert.ok(bundle.includes("_libPickVideosOnly"), "pick mode must track the videos-only flag");

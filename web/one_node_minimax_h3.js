@@ -3398,14 +3398,6 @@ function persist(){
       const vcExportHint=mk("div",{fontSize:"9px",color:C.muted,lineHeight:"1.5",flex:"1",minWidth:"200px"});
       tx(vcExportHint,"Queues the side-by-side clip through ComfyUI and saves it into your Library under the compare folder. No content auto-sync: clips are force-loaded at 24 fps and frame-matched deterministically.");
       vcExportWrap.append(vcExport,vcExportHint);
-      const vcPreviewWrap=mk("div",{display:"flex",gap:"14px",flexWrap:"wrap",flexShrink:"0"});
-      const vcLayoutPrevCol=_vcOptCol("Layout example");
-      const vcLayoutPrev=mk("div",{display:"grid",gap:"3px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"6px",padding:"8px",alignContent:"center",justifyContent:"center",minHeight:"40px",minWidth:"120px"});
-      vcLayoutPrevCol.appendChild(vcLayoutPrev);
-      const vcMatchPrevCol=_vcOptCol("Frame match example");
-      const vcMatchPrev=mk("div",{display:"flex",flexDirection:"column",gap:"3px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"6px",padding:"8px",minWidth:"180px"});
-      vcMatchPrevCol.appendChild(vcMatchPrev);
-      vcPreviewWrap.append(vcLayoutPrevCol,vcMatchPrevCol);
       const vcExportStatus=mk("div",{display:"none",alignItems:"center",gap:"8px",flexShrink:"0"});
       const vcExportBarWrap=mk("div",{flex:"1",height:"6px",background:C.bg2,borderRadius:"4px",overflow:"hidden"});
       const vcExportBar=mk("div",{height:"100%",width:"0%",background:C.lime,borderRadius:"4px"});
@@ -3414,50 +3406,12 @@ function persist(){
       vcExportStatus.append(vcExportBarWrap,vcExportStatusLbl);
       const vcExportResult=mk("video",{width:"100%",maxHeight:"220px",borderRadius:"8px",background:"#000",objectFit:"contain",display:"none"},{controls:true,playsInline:true});
       vcExportResult.addEventListener("wheel",e=>e.stopPropagation(),{passive:true});
-      vcStitchBody.append(vcOptRow,vcPreviewWrap,vcTrimWrap,vcExportWrap,vcExportStatus,vcExportResult);
-
-      const _vcRenderStitchPreview=()=>{
-        const count=_vcSlots.length;
-        const cols=count>0?compareGridColumns(count,S.compareColumns||0):1;
-        const rows=compareGridRows(count,cols);
-        vcLayoutPrev.style.gridTemplateColumns=`repeat(${cols},1fr)`;
-        vcLayoutPrev.style.gridTemplateRows=`repeat(${rows},1fr)`;
-        vcLayoutPrev.innerHTML="";
-        for(let i=0;i<count;i++){
-          const has=_vcSlots[i]&&_vcSlots[i].item;
-          const cell=mk("div",{width:"22px",height:"16px",borderRadius:"3px",background:has?"rgba(var(--h3accent-rgb),.55)":C.border,flexShrink:"0"});
-          cell.title=`Clip ${i+1}`+(has?" (loaded)":" (empty)");
-          vcLayoutPrev.appendChild(cell);
-        }
-        const mode=S.compareFrameMatch||"trim_to_shortest";
-        vcMatchPrev.innerHTML="";
-        const capRow=mk("div",{fontSize:"8px",fontWeight:"700",letterSpacing:".05em",textTransform:"uppercase",color:C.muted,marginBottom:"2px"});
-        tx(capRow,mode==="per_clip"?"Per-clip trim start + end":(mode==="pad_to_longest"?"Pad to longest":"Auto trim to shortest"));
-        vcMatchPrev.appendChild(capRow);
-        const maxLen=Math.max(1,..._vcSlots.map(s=>Math.max(1,Number(s.duration)||1)));
-        _vcSlots.forEach((s,i)=>{
-          const dur=Math.max(1,Number(s.duration)||1);
-          const pctLen=Math.max(8,Math.round(dur/maxLen*100));
-          const row=mk("div",{display:"flex",alignItems:"center",gap:"4px"});
-          const lbl=mk("span",{fontSize:"8px",color:C.muted,width:"20px",flexShrink:"0"}); tx(lbl,String(i+1));
-          const barWrap=mk("div",{flex:"1",background:C.bg1,borderRadius:"3px",height:"8px",overflow:"hidden"});
-          const fill=mk("div",{background:"rgba(var(--h3accent-rgb),.7)",height:"100%",width:pctLen+"%"});
-          barWrap.appendChild(fill);
-          row.append(lbl,barWrap);
-          vcMatchPrev.appendChild(row);
-        });
-        const hint=mk("div",{fontSize:"8px",color:C.muted,lineHeight:"1.4",marginTop:"3px"});
-        if(mode==="trim_to_shortest") tx(hint,"Every clip is cut to the shortest clip's length.");
-        else if(mode==="pad_to_longest") tx(hint,"Shorter clips are padded with the chosen filler up to the longest.");
-        else tx(hint,"Each clip uses its own start/end trim; shorter windows pad up.");
-        vcMatchPrev.appendChild(hint);
-      };
+      vcStitchBody.append(vcOptRow,vcTrimWrap,vcExportWrap,vcExportStatus,vcExportResult);
       vcOverlay.append(vcHdr,vcSlotBar,vcCompareBody,vcStitchBody);
 
       const _vcRenderStitch=()=>{
         vcColsDD.set(_vcColsLabel());
         vcMatchDD.set(_vcMatchLabel());
-        _vcRenderStitchPreview();
         vcTrimWrap.innerHTML="";
         if((S.compareFrameMatch||"trim_to_shortest")==="per_clip"){
           vcTrimWrap.appendChild(_vcRowCap("Clip trim (start - end seconds)"));
