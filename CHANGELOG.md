@@ -2,10 +2,10 @@
 
 Newest first.
 
-## Unreleased
+## 0.13.0 (2026-08-22)
 
- - New SLA Draft quality preset and an SLA chip under Quality. A fast draft mode for prompt tweaks, for testing.
- - Needs the ComfyUI-PlagueKind-Nodes pack and a 4-step turbo LoRA. See COMPATIBILITY.md for the pinned pack version and requirements/REQUIREMENTS.md for the files.
+ - New SLA Draft quality preset and an SLA chip under Quality. A fast draft mode for prompt tweaks, for testing. Off by default.
+ - Needs the ComfyUI-PlagueKind-Nodes pack and a 4-step turbo LoRA. The pack's H3 AdaLN LoRA Fix is applied automatically so dense turbo LoRAs work on the pruned model. See COMPATIBILITY.md for the pinned pack version and requirements/REQUIREMENTS.md for the files.
 
 ## 0.12.0 (2026-08-21)
 

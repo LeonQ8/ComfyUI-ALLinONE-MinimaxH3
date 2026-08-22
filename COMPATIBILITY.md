@@ -32,7 +32,9 @@ These are the commit SHAs the node was developed against. You don't need to pin 
 
 ## SLA Draft preset
 
-The SLA Draft quality preset pairs H3 SLA Attention from ComfyUI-PlagueKind-Nodes with Comfy Kitchen and a 4-step turbo LoRA at reduced strength, sampled with euler/simple at 8 steps. SLA must be the last model patch, wired directly into the guider and scheduler, so the preset never combines SLA with SolAttn or SageAttention. The pack needs a recent ComfyUI core (comfy_api), and the SLA kernel falls back to dense attention on any failure. Tested on the commit `6ca3037` of the pack.
+The SLA Draft quality preset pairs H3 SLA Attention from **ComfyUI-PlagueKind-Nodes** with Comfy Kitchen and a 4-step turbo LoRA at reduced strength, sampled with euler/simple at 8 steps. SLA must be the last model patch, wired directly into the guider and scheduler, so the preset never combines SLA with SolAttn or SageAttention. The pack needs a recent ComfyUI core (comfy_api), and the SLA kernel falls back to dense attention on any failure. Tested on the commit `6ca3037` of the pack.
+
+The pack's H3 AdaLN LoRA Fix node is inserted into the SLA chain automatically. Without it, a dense turbo LoRA (like the dareties build) fails to apply on the pruned base model and spams `adaln_proj.linear.weight shape [...] is invalid for input of size [...]` errors in the terminal. If you see that error, install ComfyUI-PlagueKind-Nodes and restart ComfyUI.
 
 ## Known issues on newer ComfyUI cores
 
