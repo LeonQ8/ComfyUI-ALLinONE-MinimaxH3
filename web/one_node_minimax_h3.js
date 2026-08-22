@@ -3105,6 +3105,8 @@ function persist(){
       let _vcRaf=null;
       let _vcSharedTime=0;
       let _vcMutedSlot=0;
+      let _vcExporting=false;
+      const _vcReplayOn=()=>S.compareReplay!==false;
 
       const _vcSetCount=(n)=>{
         n=Math.max(2,Math.min(4,Math.floor(Number(n)||2)));
@@ -3172,7 +3174,17 @@ function persist(){
       tx(vcTime,"0:00.0");
       const vcCmpNote=mk("div",{fontSize:"9px",color:C.muted,lineHeight:"1.5",flex:"1",minWidth:"220px"});
       tx(vcCmpNote,"Play syncs every clip to the same timecode. Audio comes from clip 1; click a clip's speaker to switch the audio source. Videos play their original length; the slider covers the shortest clip.");
-      vcCmpCtrl.append(vcPlay,vcSeek,vcTime,vcCmpNote);
+      const vcReplay=mk("button",{background:"transparent",border:`1px solid ${_vcReplayOn()?C.lime:C.border}`,borderRadius:"7px",padding:"5px 12px",fontSize:"10px",fontWeight:"700",color:_vcReplayOn()?C.lime:C.muted,cursor:"pointer",outline:"none",flexShrink:"0"});
+      tx(vcReplay,_vcReplayOn()?"Replay on":"Replay off");
+      vcReplay.title="When on, playback loops back to the start when the shortest clip ends.";
+      vcReplay.onclick=()=>{
+        S.compareReplay=!_vcReplayOn();
+        persist();
+        vcReplay.style.borderColor=_vcReplayOn()?C.lime:C.border;
+        vcReplay.style.color=_vcReplayOn()?C.lime:C.muted;
+        tx(vcReplay,_vcReplayOn()?"Replay on":"Replay off");
+      };
+      vcCmpCtrl.append(vcReplay,vcPlay,vcSeek,vcTime,vcCmpNote);
       const vcGrid=mk("div",{flex:"1",minHeight:"0",overflowY:"auto",display:"grid",gap:"8px",alignContent:"start",scrollbarWidth:"thin",scrollbarColor:`${C.border} transparent`});
       vcGrid.addEventListener("wheel",e=>e.stopPropagation(),{passive:true});
       vcCompareBody.append(vcCmpCtrl,vcGrid);
@@ -3218,7 +3230,21 @@ function persist(){
             try{ if(r.el.buffered&&r.el.buffered.length) bufEnd=r.el.buffered.end(r.el.buffered.length-1); }catch(e){}
             if(bufEnd<=0||ti<=bufEnd+0.25){ try{ r.el.currentTime=ti; }catch(e){} }
           });
-          if(window>0&&rel>=window){ _vcPauseAll(); _vcSeekTo(window); return; }
+          if(window>0&&rel>=window){
+            if(_vcReplayOn()){
+              _vcSharedTime=0;
+              vcSeek.value="0";
+              tx(vcTime,formatTimecode(0));
+              const t0=syncTargets(0,_vcMediaRefs.map(r=>({duration:r.slot.duration,trimStart:Number(r.slot.trimStart)||0})),window);
+              _vcMediaRefs.forEach((r,i)=>{
+                if(!r.isVideo) return;
+                try{ r.el.currentTime=t0[i]||0; }catch(e){}
+                r.el.play().catch(()=>{});
+              });
+            } else {
+              _vcPauseAll(); _vcSeekTo(window); return;
+            }
+          }
         }
         _vcRaf=requestAnimationFrame(_vcSyncLoop);
       };
@@ -3284,6 +3310,13 @@ function persist(){
         });
         vcPlay.onclick=()=>{
           if(_vcPlaying){ _vcPauseAll(); return; }
+          const window=Math.max(0,_vcWindow());
+          if(window>0&&_vcSharedTime>=window){
+            _vcSharedTime=0;
+            const t0=syncTargets(0,_vcMediaRefs.map(r=>({duration:r.slot.duration,trimStart:Number(r.slot.trimStart)||0})),window);
+            _vcMediaRefs.forEach((r,i)=>{ if(!r.isVideo) return; try{ r.el.currentTime=t0[i]||0; }catch(e){} });
+            vcSeek.value="0"; tx(vcTime,formatTimecode(0));
+          }
           _vcPlaying=true;
           tx(vcPlay,"Pause");
           _vcMediaRefs.forEach((r,i)=>{
@@ -3365,12 +3398,66 @@ function persist(){
       const vcExportHint=mk("div",{fontSize:"9px",color:C.muted,lineHeight:"1.5",flex:"1",minWidth:"200px"});
       tx(vcExportHint,"Queues the side-by-side clip through ComfyUI and saves it into your Library under the compare folder. No content auto-sync: clips are force-loaded at 24 fps and frame-matched deterministically.");
       vcExportWrap.append(vcExport,vcExportHint);
-      vcStitchBody.append(vcOptRow,vcTrimWrap,vcExportWrap);
+      const vcPreviewWrap=mk("div",{display:"flex",gap:"14px",flexWrap:"wrap",flexShrink:"0"});
+      const vcLayoutPrevCol=_vcOptCol("Layout example");
+      const vcLayoutPrev=mk("div",{display:"grid",gap:"3px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"6px",padding:"8px",alignContent:"center",justifyContent:"center",minHeight:"40px",minWidth:"120px"});
+      vcLayoutPrevCol.appendChild(vcLayoutPrev);
+      const vcMatchPrevCol=_vcOptCol("Frame match example");
+      const vcMatchPrev=mk("div",{display:"flex",flexDirection:"column",gap:"3px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"6px",padding:"8px",minWidth:"180px"});
+      vcMatchPrevCol.appendChild(vcMatchPrev);
+      vcPreviewWrap.append(vcLayoutPrevCol,vcMatchPrevCol);
+      const vcExportStatus=mk("div",{display:"none",alignItems:"center",gap:"8px",flexShrink:"0"});
+      const vcExportBarWrap=mk("div",{flex:"1",height:"6px",background:C.bg2,borderRadius:"4px",overflow:"hidden"});
+      const vcExportBar=mk("div",{height:"100%",width:"0%",background:C.lime,borderRadius:"4px"});
+      vcExportBarWrap.appendChild(vcExportBar);
+      const vcExportStatusLbl=mk("span",{fontSize:"9px",color:C.muted,minWidth:"130px",flexShrink:"0"}); tx(vcExportStatusLbl,"");
+      vcExportStatus.append(vcExportBarWrap,vcExportStatusLbl);
+      const vcExportResult=mk("video",{width:"100%",maxHeight:"220px",borderRadius:"8px",background:"#000",objectFit:"contain",display:"none"},{controls:true,playsInline:true});
+      vcExportResult.addEventListener("wheel",e=>e.stopPropagation(),{passive:true});
+      vcStitchBody.append(vcOptRow,vcPreviewWrap,vcTrimWrap,vcExportWrap,vcExportStatus,vcExportResult);
+
+      const _vcRenderStitchPreview=()=>{
+        const count=_vcSlots.length;
+        const cols=count>0?compareGridColumns(count,S.compareColumns||0):1;
+        const rows=compareGridRows(count,cols);
+        vcLayoutPrev.style.gridTemplateColumns=`repeat(${cols},1fr)`;
+        vcLayoutPrev.style.gridTemplateRows=`repeat(${rows},1fr)`;
+        vcLayoutPrev.innerHTML="";
+        for(let i=0;i<count;i++){
+          const has=_vcSlots[i]&&_vcSlots[i].item;
+          const cell=mk("div",{width:"22px",height:"16px",borderRadius:"3px",background:has?"rgba(var(--h3accent-rgb),.55)":C.border,flexShrink:"0"});
+          cell.title=`Clip ${i+1}`+(has?" (loaded)":" (empty)");
+          vcLayoutPrev.appendChild(cell);
+        }
+        const mode=S.compareFrameMatch||"trim_to_shortest";
+        vcMatchPrev.innerHTML="";
+        const capRow=mk("div",{fontSize:"8px",fontWeight:"700",letterSpacing:".05em",textTransform:"uppercase",color:C.muted,marginBottom:"2px"});
+        tx(capRow,mode==="per_clip"?"Per-clip trim start + end":(mode==="pad_to_longest"?"Pad to longest":"Auto trim to shortest"));
+        vcMatchPrev.appendChild(capRow);
+        const maxLen=Math.max(1,..._vcSlots.map(s=>Math.max(1,Number(s.duration)||1)));
+        _vcSlots.forEach((s,i)=>{
+          const dur=Math.max(1,Number(s.duration)||1);
+          const pctLen=Math.max(8,Math.round(dur/maxLen*100));
+          const row=mk("div",{display:"flex",alignItems:"center",gap:"4px"});
+          const lbl=mk("span",{fontSize:"8px",color:C.muted,width:"20px",flexShrink:"0"}); tx(lbl,String(i+1));
+          const barWrap=mk("div",{flex:"1",background:C.bg1,borderRadius:"3px",height:"8px",overflow:"hidden"});
+          const fill=mk("div",{background:"rgba(var(--h3accent-rgb),.7)",height:"100%",width:pctLen+"%"});
+          barWrap.appendChild(fill);
+          row.append(lbl,barWrap);
+          vcMatchPrev.appendChild(row);
+        });
+        const hint=mk("div",{fontSize:"8px",color:C.muted,lineHeight:"1.4",marginTop:"3px"});
+        if(mode==="trim_to_shortest") tx(hint,"Every clip is cut to the shortest clip's length.");
+        else if(mode==="pad_to_longest") tx(hint,"Shorter clips are padded with the chosen filler up to the longest.");
+        else tx(hint,"Each clip uses its own start/end trim; shorter windows pad up.");
+        vcMatchPrev.appendChild(hint);
+      };
       vcOverlay.append(vcHdr,vcSlotBar,vcCompareBody,vcStitchBody);
 
       const _vcRenderStitch=()=>{
         vcColsDD.set(_vcColsLabel());
         vcMatchDD.set(_vcMatchLabel());
+        _vcRenderStitchPreview();
         vcTrimWrap.innerHTML="";
         if((S.compareFrameMatch||"trim_to_shortest")==="per_clip"){
           vcTrimWrap.appendChild(_vcRowCap("Clip trim (start - end seconds)"));
@@ -3399,12 +3486,16 @@ function persist(){
         if(filled.length<2){ showError("Pick at least 2 outputs to stitch."); return; }
         if(filled.some(s=>isImageItem(s.item))){ showError("Stitch works on video outputs. Remove still images from the clips first."); return; }
         if(S.generating||_workflowBuildBusy){ showError("A generation is already running."); return; }
-        closeOverlayFade(vcOverlay);
         _vcStopPlayback();
+        _vcExporting=true;
+        vcExport.disabled=true;
+        vcExportResult.pause();vcExportResult.removeAttribute("src");vcExportResult.load();vcExportResult.style.display="none";
+        vcExportStatus.style.display="flex";tx(vcExportStatusLbl,"Preparing...");vcExportBar.style.width="0%";
+        _vcSetTab("stitch");
         _activeNode=self;
         _activeShowOutput=showOutput;
         _activeResetBtn=resetBtn;
-        _activeShowError=showError;
+        _activeShowError=(msg)=>{ showError(msg); _vcExportFail(msg); };
         _activeSetStage=setStage;
         _activeShowTime=showTime;
         _activeShowLatest=showLatest;
@@ -3442,10 +3533,40 @@ function persist(){
           _armFinishWatch();
           setStage("Stitching clips...",8);
         }catch(e){
+          _vcExporting=false;
+          vcExport.disabled=false;
+          vcExportStatus.style.display="none";
           resetBtn();showError(fmtErr(e));
         }
       };
       vcExport.onclick=()=>{ _vcExportStitch(); };
+      const _vcExportSetStage=(l,p)=>{
+        if(!_vcExporting) return;
+        vcExportStatus.style.display="flex";
+        tx(vcExportStatusLbl,l);
+        vcExportBar.style.width=Math.max(0,Math.min(100,Number(p)||0))+"%";
+      };
+      const _vcShowExportResult=(item)=>{
+        _vcExporting=false;
+        vcExport.disabled=false;
+        vcExportStatus.style.display="flex";
+        vcExportStatusLbl.style.color=C.muted;
+        tx(vcExportStatusLbl,"Done");
+        vcExportBar.style.width="100%";
+        vcExportResult.src=api.apiURL(`/view?${viewQuery(item)}`);
+        vcExportResult.style.display="block";
+        vcExportResult.load();
+      };
+      const _vcExportFail=(msg)=>{
+        if(!_vcExporting) return;
+        _vcExporting=false;
+        vcExport.disabled=false;
+        vcExportStatus.style.display="flex";
+        tx(vcExportStatusLbl,"Failed");
+        vcExportBar.style.width="0%";
+        vcExportStatusLbl.title=String(msg||"");
+        vcExportStatusLbl.style.color=C.err;
+      };
 
       const openCompare=()=>{
         _vcRenderSlots();
@@ -5511,6 +5632,7 @@ function persist(){
       });
       const setStage=(l,p)=>{
         tx(progStage,l);progFill.style.width=p+"%";tx(progPct,Math.round(p)+"%");
+        if(_vcExporting&&_vcExportSetStage) _vcExportSetStage(l,p);
       };
       const timeBar=mk("div",{display:"none",alignItems:"center",justifyContent:"center",gap:"7px",background:C.bg1,border:`1px solid ${C.border}`,borderRadius:"8px",padding:"5px 10px"});
       const timeIco=mk("span",{fontSize:"10px",opacity:".7"});tx(timeIco,"⏱");
@@ -6047,6 +6169,7 @@ function persist(){
           _upResult={filename:item.filename,subfolder:item.subfolder||"",type:item.type||"output",media_key:_soKey};
         }
         _showVideo(item,true);
+        if(_vcExporting&&_vcShowExportResult) _vcShowExportResult(item);
         if(_upResult&&_upResult.media_key===_soKey){
           cmpBtn.style.display="block";
         }
