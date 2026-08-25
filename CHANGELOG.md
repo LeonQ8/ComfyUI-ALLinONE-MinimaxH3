@@ -2,6 +2,12 @@
 
 Newest first.
 
+## 0.16.0 (2026-08-25)
+
+ - The node now grows to show the whole menu at once, so nothing is hidden behind a scrollbar anymore. Grab the node corner to make it bigger or smaller as you like, and use the Fit button (or right click and pick Reset node size) to fit it to the content again.
+
+ - Input videos now show their length right on the slot, and while you hover the slot the timer counts the playback live. A button in the corner of each video slot opens it in a fullscreen player.
+
 ## 0.15.1 (2026-08-22)
 
  - The Smart mask tool loads SAM 3 without ComfyUI's dynamic VRAM streaming, which avoids a crash on some setups when the model is called the first time.

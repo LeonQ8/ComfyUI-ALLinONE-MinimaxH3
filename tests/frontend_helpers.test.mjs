@@ -1708,3 +1708,19 @@ test("outputs strip uses compact icon-only actions on one line", () => {
   assert.ok(!bundle.includes('margin-left:5px;">Refresh</span>'), "the refresh button must drop its text label");
   assert.ok(bundle.includes('galleryRefresh.title="Refresh outputs"'), "the refresh icon must carry a tooltip");
 });
+
+test("node has a Fit button that refits the node to its content", () => {
+  const bundle = readFileSync(bundlePath, "utf8");
+  assert.ok(bundle.includes("const fitBtn="), "a Fit button must exist");
+  assert.ok(bundle.includes("Fit node to content"), "the Fit button must carry a tooltip");
+  assert.ok(bundle.includes("()=>_fitToContent()"), "the Fit button must trigger fit to content");
+  assert.ok(bundle.includes('content:"Reset node size"'), "the context menu must keep a reset entry");
+});
+
+test("input video slots show a live elapsed timer while hovering", () => {
+  const bundle = readFileSync(bundlePath, "utf8");
+  assert.ok(bundle.includes("durBadge"), "video slots must have a duration badge");
+  assert.ok(bundle.includes('addEventListener("timeupdate"'), "the badge must update while the preview plays");
+  assert.ok(bundle.includes("b._set="), "the badge must expose a setter for elapsed/total");
+  assert.ok(bundle.includes("_set(0,durBadge._total"), "the badge must reset to the total when hover ends");
+});
