@@ -3750,9 +3750,13 @@ function persist(){
       const _fitToContent=()=>{
         if(_inFullscreen) return;
         const slotH=(typeof LiteGraph!=="undefined"&&LiteGraph.NODE_SLOT_HEIGHT)||20;
+        const titleH=(typeof LiteGraph!=="undefined"&&LiteGraph.NODE_TITLE_HEIGHT)||30;
         const h=_measureNaturalHeight();
         self._h3_naturalH=h;
-        try{ self.setSize([NODE_W,h+slotH*3]); }catch(e){}
+        const full=h+slotH*3;
+        const vh=window.innerHeight||900;
+        const cap=Math.max(220,Math.floor(vh*0.92)-titleH);
+        try{ self.setSize([NODE_W,Math.min(full,cap)]); }catch(e){}
       };
       self._h3_fitToContent=_fitToContent;
 

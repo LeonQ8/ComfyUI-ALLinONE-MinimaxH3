@@ -4,7 +4,7 @@ Newest first.
 
 ## 0.16.0 (2026-08-25)
 
- - The node now grows to show the whole menu at once, so nothing is hidden behind a scrollbar anymore. Grab the node corner to make it bigger or smaller as you like, and use the Fit button (or right click and pick Reset node size) to fit it to the content again. When you shrink the node, the preview shrinks with it instead of being clipped away.
+ - The node can now be resized by dragging its corner. Use the Fit button to make it fit your screen again.
 
  - Input videos now show their length right on the slot, and while you hover the slot the timer counts the playback live. A button in the corner of each video slot opens it in a fullscreen player.
 

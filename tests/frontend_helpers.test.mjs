@@ -1715,6 +1715,8 @@ test("node has a Fit button that refits the node to its content", () => {
   assert.ok(bundle.includes("Fit node to content"), "the Fit button must carry a tooltip");
   assert.ok(bundle.includes("()=>_fitToContent()"), "the Fit button must trigger fit to content");
   assert.ok(bundle.includes('content:"Reset node size"'), "the context menu must keep a reset entry");
+  assert.ok(bundle.includes("window.innerHeight"), "fit must cap the node to the screen height");
+  assert.ok(bundle.includes("Math.min(full,cap)"), "fit must never make the node taller than the screen");
 });
 
 test("input video slots show a live elapsed timer while hovering", () => {
