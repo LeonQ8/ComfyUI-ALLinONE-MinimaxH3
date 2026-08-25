@@ -1724,3 +1724,12 @@ test("input video slots show a live elapsed timer while hovering", () => {
   assert.ok(bundle.includes("b._set="), "the badge must expose a setter for elapsed/total");
   assert.ok(bundle.includes("_set(0,durBadge._total"), "the badge must reset to the total when hover ends");
 });
+
+test("node layout is fluid so resizing shrinks the preview instead of clipping it", () => {
+  const bundle = readFileSync(bundlePath, "utf8");
+  assert.ok(bundle.includes('width:"100%",height:"100%"})'), "pad must fill the node height");
+  assert.ok(bundle.includes('flex:"1",minHeight:"0"'), "mainRow must flex to fill");
+  assert.ok(bundle.includes('overflowY:"auto",minHeight:"0"'), "the left panel must scroll internally when shrunk");
+  assert.ok(bundle.includes('minHeight:"90px"'), "the preview must be allowed to shrink with the node");
+  assert.ok(bundle.includes('flexShrink:"0"'), "nav/gen/queue rows must stay visible when shrinking");
+});

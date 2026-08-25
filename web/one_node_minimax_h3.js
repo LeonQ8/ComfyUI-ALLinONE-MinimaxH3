@@ -2351,7 +2351,7 @@ function persist(){
       const scrollEl=mk("div",{width:"100%",height:"100%",overflowY:"auto",overflowX:"hidden",boxSizing:"border-box",scrollbarWidth:"thin",scrollbarColor:`${C.border} transparent`});
       scrollEl.addEventListener("wheel",e=>{ if(document.activeElement&&(document.activeElement.tagName==="TEXTAREA"||document.activeElement.tagName==="INPUT")) return; e.stopPropagation(); },{passive:true});
 
-      const pad=mk("div",{padding:"12px",display:"flex",flexDirection:"column",gap:"10px",boxSizing:"border-box",width:"100%"});
+      const pad=mk("div",{padding:"12px",display:"flex",flexDirection:"column",gap:"10px",boxSizing:"border-box",width:"100%",height:"100%"});
 
       const openOverlay=(el)=>{ el.style.display="flex";el.offsetHeight;el.style.opacity="1";el.style.transform="translateY(0)"; };
       const closeOverlayFade=(el)=>{ el.style.opacity="0";el.style.transform="translateY(6px)";setTimeout(()=>el.style.display="none",220); };
@@ -2387,7 +2387,7 @@ function persist(){
         b.onclick=()=>{ _switchMode(m.key); };
         modeEls[m.key]=b;modesWrap.appendChild(b);
       });
-      const navRow=mk("div",{}, {className:"h3-nav"});
+      const navRow=mk("div",{flexShrink:"0"}, {className:"h3-nav"});
       navRow.append(modesWrap,topRight);
       const mkTopBtn=(svgPath,label,cb)=>{
         const b=mk("button",{}, {type:"button",className:"h3-topbtn",title:label,"aria-label":label});
@@ -3738,10 +3738,13 @@ function persist(){
       // scrolling; dragging the corner shrinks or grows it, and the right click
       // "Reset node size" returns it to fit. -----------------------------------
       const _measureNaturalHeight=()=>{
-        const saved=scrollEl.style.height;
+        const savedSh=scrollEl.style.height;
+        const savedPh=pad.style.height;
         scrollEl.style.height="auto";
+        pad.style.height="auto";
         const h=scrollEl.offsetHeight;
-        scrollEl.style.height=saved;
+        scrollEl.style.height=savedSh;
+        pad.style.height=savedPh;
         return h;
       };
       const _fitToContent=()=>{
@@ -5467,7 +5470,7 @@ function persist(){
       // -- RIGHT: preview + gallery ------------------------------------------
       const rightPanel=mk("div",{flex:"1",minWidth:"0",display:"flex",flexDirection:"column",gap:"8px",overflow:"hidden"});
       const previewBox=mk("div",{
-        width:"100%",flex:"1",minHeight:"180px",background:"#000",
+        width:"100%",flex:"1",minHeight:"90px",background:"#000",
         borderRadius:"10px",border:`1px solid ${C.border}`,
         position:"relative",overflow:"hidden",
       });
@@ -6154,7 +6157,7 @@ function persist(){
       };
 
       // -- GENERATE ROW ------------------------------------------------------
-      const genRow=mk("div",{display:"flex",gap:"0",alignItems:"stretch",width:"100%",boxSizing:"border-box"});
+      const genRow=mk("div",{display:"flex",gap:"0",alignItems:"stretch",width:"100%",boxSizing:"border-box",flexShrink:"0"});
       const genBtn=mk("button",{
         background:"linear-gradient(120deg,var(--h3accent),#e8d5c0)",color:"#141414",border:"none",borderRadius:"10px",
         padding:"0",height:"42px",fontSize:"13px",fontWeight:"800",
@@ -6259,7 +6262,7 @@ function persist(){
         maxWidth:"220px",overflow:"hidden",textOverflow:"ellipsis",
       });
       _activeQueueBadge=queueBadge;
-      const queueRow=mk("div",{display:"flex",alignItems:"center",gap:"6px",width:"100%",boxSizing:"border-box"});
+      const queueRow=mk("div",{display:"flex",alignItems:"center",gap:"6px",width:"100%",boxSizing:"border-box",flexShrink:"0"});
       queueRow.append(queueBtn,queueBadge);
       _renderQueueBadge();
 
@@ -7280,8 +7283,8 @@ function persist(){
       _loadGallery();
 
       // -- Assemble ----------------------------------------------------------
-      const mainRow=mk("div",{display:"flex",gap:"12px",alignItems:"stretch"});
-      const leftPanel=mk("div",{display:"flex",flexDirection:"column",gap:"9px",width:"460px",flexShrink:"0",paddingRight:"4px",boxSizing:"border-box"});
+      const mainRow=mk("div",{display:"flex",gap:"12px",alignItems:"stretch",flex:"1",minHeight:"0"});
+      const leftPanel=mk("div",{display:"flex",flexDirection:"column",gap:"9px",width:"460px",flexShrink:"0",overflowY:"auto",minHeight:"0",paddingRight:"4px",boxSizing:"border-box",scrollbarWidth:"thin",scrollbarColor:`${C.border} transparent`});
       modeArea.append(i2vArea,refArea,kfArea,adArea,exArea,chainArea,maskArea,imgArea);
       // -- Card assembly -----------------------------------------------------
       const promptCard=mk("div",{}, {className:"h3-card"});
