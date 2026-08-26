@@ -2,7 +2,7 @@
 
 Newest first.
 
-## Unreleased
+## 0.17.0 (2026-08-27)
 
  - New Character Sheet mode. Reference images of one character become a stitched turnaround sheet (6-panel full orbit, or a faster 4-panel version for lower-VRAM GPUs). It needs 25 steps.
 
