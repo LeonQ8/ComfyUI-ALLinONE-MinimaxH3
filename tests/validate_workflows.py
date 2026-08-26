@@ -27,6 +27,8 @@ EXPECTED = {
     "upscale.json",
     "upscale_rtx.json",
     "video_extend.json",
+    "charsheet.json",
+    "charsheet4.json",
 }
 
 PLACEHOLDERS = {
@@ -136,7 +138,63 @@ def validate(name, data):
         for (node_id, input_name), expected in latent_links.items():
             if data[node_id]["inputs"].get(input_name) != expected:
                 raise ValueError(f"{name}: node {node_id} {input_name} breaks the Mask latent path")
+    if name in ("charsheet.json", "charsheet4.json"):
+        _validate_charsheet(name, data)
     return node_count, link_count
+
+
+def _validate_charsheet(name, data):
+    """Character Sheet templates must stay faithful to the reference graphs:
+    one ref2va generation feeding a fixed frame-extraction + stitch chain, with
+    the orbit prompt concatenated onto the user prompt. No extra model nodes."""
+    class_types = [node["class_type"] for node in data.values()]
+    if "MiniMaxH3SigmaShift" in class_types:
+        raise ValueError(f"{name}: character sheet must keep the reference topology (no SigmaShift)")
+    if data["6"]["class_type"] != "MiniMaxH3ReferenceToVideo":
+        raise ValueError(f"{name}: conditioning must be MiniMaxH3ReferenceToVideo")
+    if data["2"]["inputs"].get("unet_name") != "minimax_h3_ref2va_pruned_int8_convrot.safetensors":
+        raise ValueError(f"{name}: must use the ref2va model")
+    if data["7"]["inputs"].get("model") != ["2", 0]:
+        raise ValueError(f"{name}: guider must take the model straight from the loader, like the reference")
+    if data["9"]["inputs"].get("model") != ["2", 0]:
+        raise ValueError(f"{name}: scheduler must take the model straight from the loader, like the reference")
+    if data["6"]["inputs"].get("prompt") != ["17", 0]:
+        raise ValueError(f"{name}: conditioning prompt must come from the string concat")
+    if data["17"]["class_type"] != "StringConcatenate":
+        raise ValueError(f"{name}: node 17 must be the prompt concatenator")
+    if data["17"]["inputs"].get("string_b") != ["16", 0]:
+        raise ValueError(f"{name}: concat must default to the reference-style orbit prompt")
+    for nid in ("16", "32"):
+        if data[nid]["class_type"] != "PrimitiveStringMultiline":
+            raise ValueError(f"{name}: node {nid} must be an orbit prompt")
+        if "[STYLE]" not in data[nid]["inputs"].get("value", ""):
+            raise ValueError(f"{name}: orbit prompt {nid} must carry the [STYLE] staging block")
+    if data["6"]["inputs"].get("length") != 124:
+        raise ValueError(f"{name}: sheet generation must be locked to 124 frames")
+    batches = sorted(
+        (int(nid), node["inputs"]["batch_index"])
+        for nid, node in data.items()
+        if node["class_type"] == "ImageFromBatch"
+    )
+    stitches = sorted(
+        (int(nid), node["inputs"]["direction"])
+        for nid, node in data.items()
+        if node["class_type"] == "ImageStitch"
+    )
+    sheets = [
+        node for node in data.values()
+        if node["class_type"] == "SaveImage" and "charsheet/SHEET" in node["inputs"].get("filename_prefix", "")
+    ]
+    expected = 4 if name == "charsheet4.json" else 6
+    if len(batches) != expected:
+        raise ValueError(f"{name}: expected {expected} ImageFromBatch nodes, found {len(batches)}")
+    if len(stitches) != (expected - 1):
+        raise ValueError(f"{name}: expected {expected - 1} ImageStitch nodes, found {len(stitches)}")
+    if not sheets:
+        raise ValueError(f"{name}: must save the assembled sheet to a charsheet/SHEET prefix")
+    for nid, idx in batches:
+        if not 0 <= idx < 124:
+            raise ValueError(f"{name}: ImageFromBatch {nid} index {idx} escapes the 124-frame window")
 
 
 def main():

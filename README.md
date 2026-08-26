@@ -14,6 +14,7 @@ No node graph to build, no wires to connect, no hunting through twelve custom no
 | **T2V** | Text to video with native audio (fl2va model) |
 | **I2V** | Animate a start frame, optionally morph to an end frame |
 | **R2V** | Reference images / videos / audio drive the clip (ref2va model) |
+| **Character Sheet** | Turn up to 9 reference images of one character into a stitched turnaround sheet (6-panel full orbit or a faster 4-panel version) |
 | **Audio Drive** | Your audio track is the soundtrack, and it drives mouth movement (lip sync) |
 | **Keyframes** | Pin still images at arbitrary frame positions |
 | **Extend** | Continue an existing video seamlessly |
@@ -86,6 +87,7 @@ Before opening a pull request, please read [CONTRIBUTING.md](CONTRIBUTING.md).
 - Turbo preset: ComfyUI-MiniMax-H3-Turbo pack
 - Image mode: [ComfyUI-MiniMax-H3-Studio](https://github.com/thaakeno/ComfyUI-MiniMax-H3-Studio) by thaakeno
 - Mask mode crop and latent-mask nodes: [MaskVidExperiments](https://github.com/drozbay/MaskVidExperiments) by drozbay
+- Character Sheet mode: [H3 Character Sheet Generator](https://huggingface.co/PoopMan333/H3_Character_Sheet_Generator) by PoopMan333
 
 ## Support
 

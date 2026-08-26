@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { aspect, sizeOf, sameSize, mapMaskPoint, orientRes, fitResolutionToAspect, planMaskCrop, maskTrackingPlan, resolveFitPrimary, imgProfileShort, imgAspectName, viewQuery, thumbQuery, isImageItem, inputFileExists, h3SamCheckpoints, clampImageMP, planImageCanvas, planImageCanvasForRatio, planUpscaleTarget, IMG_MAX_MP, IMG_MIN_MP, IMG_ASPECT_RATIOS, resolveQualityFlags, matchQualityPreset, QUALITY_PRESET_FLAGS, planExtend, queuePromptPayload, settleQueuedOutput, maskSpeechSyncPrompt, cropFrameIndex, cropBoxAt, cropReportText, lumaToAlpha, maskDetectionHint, maskRunErrorHint, clampTimecode, compareGridColumns, compareGridRows, compareWindow, syncTargets, formatTimecode, makeCompareSlots } from "../web/h3_helpers.mjs";
+import { aspect, sizeOf, sameSize, mapMaskPoint, orientRes, fitResolutionToAspect, planMaskCrop, maskTrackingPlan, resolveFitPrimary, imgProfileShort, imgAspectName, viewQuery, thumbQuery, isImageItem, inputFileExists, h3SamCheckpoints, clampImageMP, planImageCanvas, planImageCanvasForRatio, planUpscaleTarget, IMG_MAX_MP, IMG_MIN_MP, IMG_ASPECT_RATIOS, resolveQualityFlags, matchQualityPreset, QUALITY_PRESET_FLAGS, planExtend, queuePromptPayload, settleQueuedOutput, maskSpeechSyncPrompt, cropFrameIndex, cropBoxAt, cropReportText, lumaToAlpha, maskDetectionHint, maskRunErrorHint, clampTimecode, compareGridColumns, compareGridRows, compareWindow, syncTargets, formatTimecode, makeCompareSlots, charsheetPanelIndices, CHARSHEET_LENGTH } from "../web/h3_helpers.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, "..");
@@ -864,7 +864,7 @@ test("bundle wires the Mask mode, brush editor, and runtime preflight", () => {
     "regenerate must rewrite the soundscape line on the final prompt",
   );
   assert.ok(
-    bundle.includes("modeArea.append(i2vArea,refArea,kfArea,adArea,exArea,chainArea,maskArea,imgArea)"),
+    bundle.includes("modeArea.append(i2vArea,refArea,kfArea,adArea,exArea,chainArea,maskArea,imgArea,chsArea)"),
     "the Mask card must be mounted in the mode area",
   );
   assert.ok(
@@ -1734,4 +1734,28 @@ test("node layout is fluid so resizing shrinks the preview instead of clipping i
   assert.ok(bundle.includes('overflowY:"auto",minHeight:"0"'), "the left panel must scroll internally when shrunk");
   assert.ok(bundle.includes('minHeight:"90px"'), "the preview must be allowed to shrink with the node");
   assert.ok(bundle.includes('flexShrink:"0"'), "nav/gen/queue rows must stay visible when shrinking");
+});
+
+test("character sheet panels stay inside the locked 124-frame generation", () => {
+  assert.equal(CHARSHEET_LENGTH, 124, "the sheet generation must be 5 + 17*7 frames");
+  for (const n of [6, 4]) {
+    const idx = charsheetPanelIndices(n);
+    assert.equal(idx.length, n, `${n}-panel sheet must extract ${n} frames`);
+    for (const i of idx) {
+      assert.ok(Number.isInteger(i) && i >= 0 && i < CHARSHEET_LENGTH,
+        `${n}-panel index ${i} must be inside the 124-frame window`);
+    }
+  }
+  assert.deepEqual(charsheetPanelIndices(6), [2, 21, 42, 63, 84, 113]);
+  assert.deepEqual(charsheetPanelIndices(4), [2, 24, 45, 68]);
+  assert.deepEqual(charsheetPanelIndices("4"), [2, 24, 45, 68], "a numeric string must still map to 4 panels");
+  assert.deepEqual(charsheetPanelIndices(9), [2, 21, 42, 63, 84, 113], "unknown values fall back to the 6-panel set");
+});
+
+test("bundle mirrors the character sheet helpers", () => {
+  const bundle = readFileSync(bundlePath, "utf8");
+  assert.ok(bundle.includes("const CHARSHEET_LENGTH = 124"), "bundle must define the sheet length");
+  assert.ok(bundle.includes("function charsheetPanelIndices(panels)"), "bundle must mirror charsheetPanelIndices");
+  assert.ok(bundle.includes("[2,24,45,68]"), "bundle must carry the 4-panel indices");
+  assert.ok(bundle.includes("[2,21,42,63,84,113]"), "bundle must carry the 6-panel indices");
 });

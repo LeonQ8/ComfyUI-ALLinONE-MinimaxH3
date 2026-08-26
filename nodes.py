@@ -99,8 +99,10 @@ _IMAGE_EXTS = (".png", ".jpg", ".jpeg", ".webp", ".bmp")
 _ALLOWED_TEMPLATES = (
     "t2v.json", "i2v.json", "r2v.json", "audio_drive.json",
     "keyframes.json", "video_extend.json", "chain_section.json", "mask.json", "upscale.json",
-    "upscale_rtx.json", "image.json",
+    "upscale_rtx.json", "image.json", "charsheet.json", "charsheet4.json",
 )
+
+_VALID_MODES = ("t2v", "i2v", "r2v", "audio_drive", "keyframes", "extend", "chain", "mask", "image", "charsheet")
 
 
 # ---------------------------------------------------------------------------
@@ -696,7 +698,6 @@ async def save_config_route(request):
 async def save_preset(request):
     """Upsert a custom prompt preset for a mode. Stored in the user config
     (survives reinstalls); merged with the built-in presets at read time."""
-    _VALID_MODES = ("t2v", "i2v", "r2v", "audio_drive", "keyframes", "extend", "chain", "mask", "image")
     try:
         data = await request.json()
         mode = str(data.get("mode", "")).strip()
@@ -726,7 +727,6 @@ async def save_preset(request):
 
 @PromptServer.instance.routes.delete("/h3one/presets")
 async def delete_preset(request):
-    _VALID_MODES = ("t2v", "i2v", "r2v", "audio_drive", "keyframes", "extend", "chain", "mask", "image")
     try:
         data = await request.json()
         mode = str(data.get("mode", "")).strip()

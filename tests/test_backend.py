@@ -2149,5 +2149,14 @@ class TestCompareWorkflowRoute(_NodesTestBase):
         self.assertTrue((input_dir / staged).is_file(), "the output must be staged into the input folder")
 
 
+class TestModesAndTemplates(_NodesTestBase):
+    def test_valid_modes_include_charsheet(self):
+        self.assertIn("charsheet", self.nodes._VALID_MODES)
+
+    def test_allowed_templates_include_charsheet(self):
+        self.assertIn("charsheet.json", self.nodes._ALLOWED_TEMPLATES)
+        self.assertIn("charsheet4.json", self.nodes._ALLOWED_TEMPLATES)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -2,6 +2,16 @@
 
 Newest first.
 
+## Unreleased
+
+ - New Character Sheet mode. Reference images of one character become a stitched turnaround sheet (6-panel full orbit, or a faster 4-panel version for lower-VRAM GPUs). It needs 25 steps.
+
+ - Character Sheet mode recommends the ref2v turbo 4-step LoRA at 0.75 strength. Download: minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors (https://huggingface.co/lightx2v/Minimax-h3-Turbo/blob/main/minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors)
+
+ - SLA Draft settings were removed from Settings (LoRA strength, shift video, shift audio). They are fixed defaults now.
+
+ - LoRA strength now steps by 0.05.
+
 ## 0.16.0 (2026-08-25)
 
  - The node can now be resized by dragging its corner. Use the Fit button to make it fit your screen again.

@@ -44,6 +44,7 @@ const MODES = [
   { key:"t2v",         label:"T2V" },
   { key:"i2v",         label:"I2V" },
   { key:"r2v",         label:"R2V" },
+  { key:"charsheet",   label:"Char Sheet" },
   { key:"audio_drive", label:"Audio Drive" },
   { key:"keyframes",   label:"Keyframes" },
   { key:"extend",      label:"Extend" },
@@ -56,6 +57,7 @@ const MODE_HINTS = {
   t2v:"Text to Video - generate a video from a text prompt only. No images or audio needed.",
   i2v:"Image to Video - animate from a first frame, converge to a last frame, or morph between both.",
   r2v:"Reference to Video - reference image = identity, reference video = motion, reference audio = final soundtrack.",
+  charsheet:"Create a character sheet for your character. Reference images become one stitched turnaround sheet (6 panels, or 4 for lower-VRAM GPUs).",
   audio_drive:"Audio Drive - the audio track drives the mouth movements and timing. Add a photo of the speaker for identity.",
   keyframes:"Custom Keyframes - pin still images at chosen frames; the video morphs through them in order.",
   extend:"Extend - continue a source video seamlessly beyond its ending, keeping its look and sound.",
@@ -68,6 +70,7 @@ const MODE_DESC = {
   t2v:"Generate a video from a text prompt only.",
   i2v:"Animate from a first frame, converge to a last frame, or morph between both.",
   r2v:"Image = identity, video = motion, audio = final soundtrack.",
+  charsheet:"Reference images become one coherent character, shown in a stitched turnaround sheet.",
   audio_drive:"The audio track drives the mouth. Add a photo of the speaker for identity.",
   keyframes:"Pin still images at chosen frames; the video morphs through them in order.",
   extend:"Continue a source video seamlessly beyond its ending.",
@@ -79,7 +82,7 @@ const MODE_DESC = {
 const TEMPLATES = {
   t2v:"t2v.json", i2v:"i2v.json", r2v:"r2v.json", audio_drive:"audio_drive.json",
   keyframes:"keyframes.json", extend:"video_extend.json", chain:"chain_section.json",
-  mask:"mask.json", image:"image.json",
+  mask:"mask.json", image:"image.json", charsheet:"charsheet.json",
 };
 
 const DEFAULT_MODELS = {
@@ -110,6 +113,15 @@ const _fileMatches=(file,exts)=>{
 function snapFrames(seconds, fps=24){
   const base = Math.max(5, Math.round(seconds * fps));
   return base + ((5 - (base % 17)) + 17) % 17;
+}
+
+// Character Sheet timing: one locked 5 s / 124-frame generation (5 + 17 * 7)
+// where the camera orbits a frozen character. Frames are pulled at fixed
+// indices and stitched into the sheet grid. 6 panels = full 360 orbit + two
+// face beats; 4 panels = cheaper 180 orbit + one face beat.
+const CHARSHEET_LENGTH = 124;
+function charsheetPanelIndices(panels){
+  return Number(panels)===4 ? [2,24,45,68] : [2,21,42,63,84,113];
 }
 
 // Plan the target latent length and AV context window for Extend mode. Output
@@ -763,7 +775,7 @@ function DD(items,selected,onChange){
         color:isSel?C.lime:C.text,background:isSel?C.bg2:"transparent",
         whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",transition:"background .1s"});
       tx(r,lbl);
-      r.title=lbl;
+      r.title=(item&&typeof item==="object"&&item.title)?item.title:lbl;
       r.onmouseenter=()=>r.style.background=C.bg3;
       r.onmouseleave=()=>r.style.background=isSel?C.bg2:"transparent";
       r.onclick=()=>{val=item;tx(trigTxt,lbl);trigTxt.style.color=lbl?C.lime:C.muted;_setTitle(item);close();onChange(_valOf(item));};
@@ -809,7 +821,7 @@ function DD(items,selected,onChange){
   render("");
   return{
     el:wrap,get value(){return val;},
-    set(v){val=v;tx(trigTxt,v);trigTxt.style.color=v?C.lime:C.muted;_setTitle(v);render("");},
+    set(v){val=v;const l=_lblOf(v);tx(trigTxt,l);trigTxt.style.color=l?C.lime:C.muted;_setTitle(v);render("");},
     updateItems(ni){items=ni;if(!ni.some(i=>_norm(i)===_norm(val))){val=ni[0]||val;tx(trigTxt,val);trigTxt.style.color=val?C.lime:C.muted;_setTitle(val);onChange(val);}render(srch.value||"");},
     open(anchorRect){open(anchorRect);},
   };
@@ -864,17 +876,6 @@ function mkRmBtn(){
 }
 
 function ImgSlot(optional,onFile,onDimensions,fixed){
-  const PREVIEW_LONG=192;
-  const resetSize=()=>{wrap.style.width="72px";wrap.style.height="72px";};
-  const fitSize=(width,height)=>{
-    if(fixed) return;
-    if(!width||!height) return;
-    const ratio=Number(width)/Number(height);
-    if(!Number.isFinite(ratio)||ratio<=0) return;
-    const w=ratio>=1?PREVIEW_LONG:Math.max(72,Math.round(PREVIEW_LONG*ratio));
-    const h=ratio>=1?Math.max(72,Math.round(PREVIEW_LONG/ratio)):PREVIEW_LONG;
-    wrap.style.width=`${w}px`;wrap.style.height=`${h}px`;
-  };
   let _pendingSize=null;
   const wrap=mk("div",{
     width:"72px",height:"72px",borderRadius:"12px",
@@ -926,13 +927,12 @@ function ImgSlot(optional,onFile,onDimensions,fixed){
   let _objUrl=null;
   const _showLoaded=(src,fname)=>{
     prevEl.onload=()=>{
-      const _sz=sizeOf(prevEl);
-      _pendingSize=_sz;
-      fitSize(prevEl.naturalWidth,prevEl.naturalHeight);
+      _pendingSize=sizeOf(prevEl);
     };
     prevEl.src=src;prevEl.style.display="block";
     icoWrap.style.display="none";rm.style.display="flex";
     wrap.style.borderColor=C.lime;
+    wrap.title=fname||"";
   };
   const _load=async(file)=>{
     if(!_fileMatches(file,IMAGE_FILE_EXTS)){if(_h3ShowError)_h3ShowError("Unsupported image format. Use PNG, JPG, WEBP, or BMP.");return;}
@@ -970,9 +970,9 @@ function ImgSlot(optional,onFile,onDimensions,fixed){
     if(_objUrl){URL.revokeObjectURL(_objUrl);_objUrl=null;}
     prevEl.src="";prevEl.style.display="none";
     rm.style.display="none";icoWrap.style.display="flex";
-    resetSize();
     wrap.style.borderColor=C.border;inp.value="";_currentName=null;onFile(null);
     _pendingSize=null;
+    wrap.title="";
     if(onDimensions) onDimensions(null,null);
   };
   const _restorePreview=(name)=>{
@@ -992,16 +992,6 @@ function ImgSlot(optional,onFile,onDimensions,fixed){
 }
 
 function MediaSlot(type,onFile,onDimensions){
-  const PREVIEW_LONG=192;
-  const resetSize=()=>{wrap.style.width="72px";wrap.style.height="72px";};
-  const fitSize=(width,height)=>{
-    if(!width||!height) return;
-    const ratio=Number(width)/Number(height);
-    if(!Number.isFinite(ratio)||ratio<=0) return;
-    const w=ratio>=1?PREVIEW_LONG:Math.max(72,Math.round(PREVIEW_LONG*ratio));
-    const h=ratio>=1?Math.max(72,Math.round(PREVIEW_LONG/ratio)):PREVIEW_LONG;
-    wrap.style.width=`${w}px`;wrap.style.height=`${h}px`;
-  };
   const typeExts=type==="video"?VIDEO_FILE_EXTS:AUDIO_FILE_EXTS;
   const acceptMap={video:VIDEO_FILE_EXTS.join(","),audio:AUDIO_FILE_EXTS.join(",")};
   const icons={
@@ -1048,7 +1038,6 @@ function MediaSlot(type,onFile,onDimensions){
   }) : null;
   if(videoThumb){ videoThumb.muted=_videoMuted; videoThumb.preload="metadata"; }
   if(videoThumb) videoThumb.onloadedmetadata=()=>{
-    fitSize(videoThumb.videoWidth,videoThumb.videoHeight);
     if(onDimensions) onDimensions(wrap._filename,sizeOf(videoThumb));
     if(durBadge){
       if(_durLabel(videoThumb.duration)){ durBadge._set(0,videoThumb.duration); durBadge.style.display="block"; }
@@ -1196,7 +1185,6 @@ function MediaSlot(type,onFile,onDimensions){
     _loadToken++;
     icoWrap.style.display="flex";loadedName.style.display="none";rm.style.display="none";
     wrap.style.borderColor=C.border;wrap.style.background=C.bg2;
-    resetSize();
     wrap._hasFile=false;wrap._filename=null;
     if(videoThumb){videoThumb.style.display="none";videoThumb.src="";}
     if(audioGlow) audioGlow.style.display="none";
@@ -1765,7 +1753,7 @@ const _finishRun=async(pid=null,failed=false)=>{
 // -- Queued-job counter: shows how many + Queue jobs are still waiting and in
 // which modes. Tracked per prompt_id; reconciled against GET /queue so external
 // clears (ComfyUI's own queue panel) are reflected instead of leaking.
-const _QUEUE_MODE_SHORT={t2v:"T2V",i2v:"I2V",r2v:"R2V",audio_drive:"Audio",keyframes:"KF",extend:"Ext",chain:"Chain",mask:"Mask",image:"Img"};
+const _QUEUE_MODE_SHORT={t2v:"T2V",i2v:"I2V",r2v:"R2V",audio_drive:"Audio",keyframes:"KF",extend:"Ext",chain:"Chain",mask:"Mask",image:"Img",charsheet:"Sheet"};
 const _mediaItemFromOutput=(out)=>{
   if(!out) return null;
   const vids=out.videos||out.gifs||null;
@@ -2001,6 +1989,9 @@ app.registerExtension({
           imgEditSrc:      typeof saved.imgEditSrc==="string"?saved.imgEditSrc:((saved.imgSub==="edit"&&saved.imgRefs&&saved.imgRefs[0])||null),
           imgRefsSize:     (saved.imgRefsSize&&typeof saved.imgRefsSize==="object"&&!Array.isArray(saved.imgRefsSize))?saved.imgRefsSize:{},
           resOrientation:  ["auto","landscape","portrait"].includes(saved.resOrientation)?saved.resOrientation:"auto",
+          chsPanels:       saved.chsPanels===4?4:6,
+          chsStyle:        saved.chsStyle==="real"?"real":"ref",
+          chsSavePanels:   saved.chsSavePanels===true,
         };
       }
       const S=self._h3_S;
@@ -2069,6 +2060,7 @@ function persist(){
           livePreviewMode:S.livePreviewMode,
           imgSub:S.imgSub,imgAspect:S.imgAspect,imgMP:S.imgMP,imgW:S.imgW,imgH:S.imgH,
           imgProfile:S.imgProfile,imgRefs:S.imgRefs,imgEditSrc:S.imgEditSrc,imgRefsSize:S.imgRefsSize,
+          chsPanels:S.chsPanels,chsStyle:S.chsStyle,chsSavePanels:S.chsSavePanels,
           resOrientation:S.resOrientation,
         });
         if(_syncFitRowFn){ try{ _syncFitRowFn(); }catch(e){} }
@@ -2150,6 +2142,7 @@ function persist(){
       const _effectiveResOrientation=(state=S)=>{
         if(state.resOrientation!=="auto") return state.resOrientation;
         if(state.mode==="mask") return "landscape";
+        if(state.mode==="charsheet") return "portrait";
         const src=_fitSourceSize(state);
         if(!src) return "landscape";
         return aspect(src.width,src.height)||"landscape";
@@ -2368,8 +2361,9 @@ function persist(){
         chain:'<path d="M10.5 13.5a4 4 0 005.7 0l2.8-2.8a4 4 0 00-5.7-5.7l-1.4 1.4"/><path d="M13.5 10.5a4 4 0 00-5.7 0L5 13.3a4 4 0 005.7 5.7l1.4-1.4"/>',
         mask:'<path d="M4 4h16v16H4z"/><path d="M8 15c2-5 5-7 9-8M7 17l3-1-2-2-1 3z"/>',
         image:'<rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="8.5" cy="10" r="1.5"/><path d="M6 17l4-4 3 3 2-2 3 3"/>',
+        charsheet:'<rect x="4" y="4" width="7" height="7" rx="1.2"/><rect x="13" y="4" width="7" height="7" rx="1.2"/><rect x="4" y="13" width="7" height="7" rx="1.2"/><rect x="13" y="13" width="7" height="7" rx="1.2"/>',
       };
-      const MODE_SHORT={t2v:"T2V",i2v:"I2V",r2v:"R2V",audio_drive:"Audio",keyframes:"Keys",extend:"Extend",chain:"Chain",mask:"Mask",image:"Image"};
+      const MODE_SHORT={t2v:"T2V",i2v:"I2V",r2v:"R2V",audio_drive:"Audio",keyframes:"Keys",extend:"Extend",chain:"Chain",mask:"Mask",image:"Image",charsheet:"Sheet"};
       const modesWrap=mk("div",{}, {className:"h3-modes"});
       const modeEls={};
       const _updateTabs=()=>{
@@ -2456,23 +2450,8 @@ function persist(){
       const speedLoraDD=DD(["none"],S.speedLora,v=>{S.speedLora=v==="none"?"":v;persist();});
       speedLoraWrap.appendChild(speedLoraDD.el);
       const speedLoraHint=mk("div",{fontSize:"9px",color:C.muted,marginTop:"4px",lineHeight:"1.4"});
-      tx(speedLoraHint,"Used by the Turbo quality preset and the SLA Draft preset. The reference workflow for the draft recipe uses the 8-step turbo LoRA (minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors) at full strength; a 4-step LoRA also works.");
+      tx(speedLoraHint,"Used by the Turbo quality preset. Character Sheet mode pre-selects the ref2v 4-step turbo LoRA, the one the reference workflow wires in.");
       speedLoraWrap.appendChild(speedLoraHint);
-      const slaWrap=mk("div",{marginBottom:"12px"});
-      slaWrap.appendChild(cap("SLA Draft"));
-      const slaHint=mk("div",{fontSize:"9px",color:C.muted,marginTop:"4px",lineHeight:"1.4"});
-      tx(slaHint,"Settings for the SLA Draft quality preset and any SLA chip combo. Needs ComfyUI-PlagueKind-Nodes and a Speed LoRA above. Sampler, scheduler and steps are defaults, not forced: change them anywhere and the run uses your choice.");
-      slaWrap.appendChild(slaHint);
-      const _slaField=(labelTxt,ni,width="110px")=>{
-        const row=mk("div",{display:"flex",alignItems:"center",gap:"8px",marginTop:"6px"});
-        const lbl=mk("div",{fontSize:"10px",color:C.text,width,flexShrink:"0"});tx(lbl,labelTxt);
-        row.append(lbl,ni);
-        return row;
-      };
-      const slaLoraNI=NI("",S.speedLoraStrength,0.1,1.5,0.05,v=>{S.speedLoraStrength=Math.round(v*100)/100;persist();},"60px");
-      const shiftVNI=NI("",S.shiftVideo,1,20,1,v=>{S.shiftVideo=Math.round(v);persist();},"60px");
-      const shiftANI=NI("",S.shiftAudio,0,10,1,v=>{S.shiftAudio=Math.round(v);persist();},"60px");
-      slaWrap.append(_slaField("Turbo/SLA LoRA strength",slaLoraNI),_slaField("Shift video",shiftVNI),_slaField("Shift audio",shiftANI));
       const audioToggle=Toggle("Generate native audio",S.audioOn,v=>{S.audioOn=v;persist();},"Audio Drive and R2V (with audio refs) always use the audio you provide - this toggle only controls the model's own generated soundtrack in T2V / I2V / Keyframes. You do not need to turn it off for audio modes.");
       const soundToggle=Toggle("Notification sound on complete",S.soundEnabled,v=>{S.soundEnabled=v;persist();});
       const playOnFinishToggle=Toggle("Play video on finish",S.playOnFinish,v=>{S.playOnFinish=v;persist();});
@@ -2510,7 +2489,7 @@ function persist(){
       tx(supBtn,"Buy me a coffee");
       supBtn.onclick=()=>window.open(SUPPORT_URL,"_blank");
       supWrap.append(supCap,supBtn);
-      settingsOverlay.append(settHdr,unetT2VRow,unetR2VRow,clipRow,vaeVRow,vaeARow,sam3Row,taeRow,upMethodWrap,upDitRow,upVaeRow,upHint,speedLoraWrap,slaWrap,audioToggle.el,soundToggle.el,playOnFinishToggle.el,sndWrap,accWrap,supWrap);
+      settingsOverlay.append(settHdr,unetT2VRow,unetR2VRow,clipRow,vaeVRow,vaeARow,sam3Row,taeRow,upMethodWrap,upDitRow,upVaeRow,upHint,speedLoraWrap,audioToggle.el,soundToggle.el,playOnFinishToggle.el,sndWrap,accWrap,supWrap);
 
       // -- HISTORY OVERLAY ---------------------------------------------------
       const historyOverlay=mk("div",{
@@ -2549,7 +2528,8 @@ function persist(){
       let _histItems=[];
       let _histOpenId=null;
       // History row mode metadata: per-mode icon+color, upscale methods, turbo
-      const _HIST_MODE_COLORS={t2v:"#c0a996",i2v:"#5aa8ff",r2v:"#5fd08c",audio_drive:"#c07fff",keyframes:"#ffc266",extend:"#7ed491",chain:"#4dd0e1",mask:"#ff7f6e",image:"#f0a0c0"};
+      const _HIST_MODE_COLORS={t2v:"#c0a996",i2v:"#5aa8ff",r2v:"#5fd08c",audio_drive:"#c07fff",keyframes:"#ffc266",extend:"#7ed491",chain:"#4dd0e1",mask:"#ff7f6e",image:"#f0a0c0",charsheet:"#6fd3c7"};
+      const _MODE_LABEL={charsheet:"Character Sheet"};
       const _HIST_UP_COLORS={rtx:"#5aa8ff",seedvr:"#c07fff"};
       const _histModeMeta=(mode)=>{
         const m=String(mode||"");
@@ -2560,7 +2540,7 @@ function persist(){
             icon:'<path d="M12 19V5"/><path d="M5 12l7-7 7 7"/>'};
         }
         const c=_HIST_MODE_COLORS[m]||"#c0a996";
-        return {kind:"mode",label:m||"t2v",color:c,icon:MODE_ICONS[m]||MODE_ICONS.t2v};
+        return {kind:"mode",label:_MODE_LABEL[m]||m||"t2v",color:c,icon:MODE_ICONS[m]||MODE_ICONS.t2v};
       };
       const _mkHistIcon=(meta,size)=>{
         const chip=mk("span",{width:size+"px",height:size+"px",borderRadius:"7px",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:"0",border:`1px solid rgba(${_hexToRgb(meta.color)},.45)`,background:`rgba(${_hexToRgb(meta.color)},.09)`,color:meta.color});
@@ -2577,7 +2557,7 @@ function persist(){
         }
         const meta=mk("div",{display:"flex",alignItems:"center",gap:"8px",flexShrink:"0",flexWrap:"wrap"});
         const mBadge=mk("span",{fontSize:"9px",fontWeight:"700",letterSpacing:".06em",color:C.lime,border:`1px solid rgba(var(--h3accent-rgb),.4)`,borderRadius:"5px",padding:"2px 8px",background:"rgba(var(--h3accent-rgb),.08)"});
-        tx(mBadge,it.mode||"");
+        tx(mBadge,_MODE_LABEL[it.mode]||it.mode||"");
         const mTime=mk("span",{fontSize:"10px",color:C.muted});tx(mTime,_fmtTime(it.timestamp));
         const mInfo=mk("span",{fontSize:"9px",color:C.muted});
         tx(mInfo,`${it.resolution||""}${it.duration?(" - "+it.duration+"s"):""} - seed ${it.seed??"?"}`);
@@ -3909,7 +3889,7 @@ function persist(){
 
         // -- custom presets (all modes, labeled) --
         const allCustom=[];
-        const MODE_LABELS={t2v:"T2V",i2v:"I2V",r2v:"R2V",audio_drive:"Audio Drive",keyframes:"Keyframes",extend:"Extend",chain:"Chain",mask:"Mask"};
+        const MODE_LABELS={t2v:"T2V",i2v:"I2V",r2v:"R2V",audio_drive:"Audio Drive",keyframes:"Keyframes",extend:"Extend",chain:"Chain",mask:"Mask",charsheet:"Character Sheet"};
         Object.keys(_discCustom||{}).forEach(mode=>{
           (Array.isArray(_discCustom[mode])?_discCustom[mode]:[]).forEach(pr=>{
             allCustom.push({name:pr.name,prompt:pr.prompt,mode});
@@ -3988,9 +3968,10 @@ function persist(){
       const exArea=mk("div",{display:"flex",flexDirection:"column",gap:"6px"});
       const maskArea=mk("div",{display:"flex",flexDirection:"column",gap:"8px"});
       const imgArea=mk("div",{display:"flex",flexDirection:"column",gap:"8px"});
+      const chsArea=mk("div",{display:"flex",flexDirection:"column",gap:"8px"});
 
       const _clearSections=()=>{
-        [i2vArea,kfArea,refArea,chainArea,adArea,exArea,maskArea,imgArea].forEach(a=>a.style.display="none");
+        [i2vArea,kfArea,refArea,chainArea,adArea,exArea,maskArea,imgArea,chsArea].forEach(a=>a.style.display="none");
       };
 
       // -- Image mode (H3 Studio still images) --------------------------------
@@ -4197,7 +4178,14 @@ function persist(){
           const slot=ImgSlot(false,n=>{const current=S.refImages.indexOf(name);if(current<0)return;if(n===null)S.refImages.splice(current,1);else S.refImages[current]=n;persist();_renderRefs();},(nm,size)=>{if(nm&&size){S.refImageSizes[nm]=size;persist();}});
           const card=mk("div",{display:"flex",flexDirection:"column",gap:"3px",alignItems:"center"});
           card.appendChild(slot.el);
-          card.appendChild(_mkFitChip(`ref:${idx}`,`Reference ${idx+1}`));
+          if(S.mode==="charsheet"){
+            const tag=mk("div",{fontSize:"7px",fontWeight:"700",color:C.lime,border:`1px solid rgba(var(--h3accent-rgb),.4)`,borderRadius:"4px",padding:"1px 6px",letterSpacing:".03em",whiteSpace:"nowrap"});
+            tx(tag,`Picture ${idx+1}`);
+            tag.title=`Reference image ${idx+1}. Refer to it as <Picture ${idx+1}> in your prompt.`;
+            card.appendChild(tag);
+          } else {
+            card.appendChild(_mkFitChip(`ref:${idx}`,`Reference ${idx+1}`));
+          }
           imgRow.appendChild(card);
           if(name) slot._restorePreview(name);
         });
@@ -4208,7 +4196,7 @@ function persist(){
         imgRow.append(addImg,upImg);
         refArea.appendChild(imgRow);
         const imgHint=mk("div",{fontSize:"8px",color:C.muted,lineHeight:"1.5",marginTop:"2px"});
-        tx(imgHint,"The video starts from the first image. The other images guide the subject's identity and style, they do not appear as scenes in the video.");
+        tx(imgHint,S.mode==="charsheet"?"These references define one character: the first image sets the style, the others contribute identity details (face, hair, outfit, props). Describe in your prompt what to keep and what to ignore.":"The video starts from the first image. The other images guide the subject's identity and style, they do not appear as scenes in the video.");
         refArea.appendChild(imgHint);
         addImg.onclick=async()=>{
           if(_refImageUploadsPending||S.refImages.length>=9) return;
@@ -4238,6 +4226,7 @@ function persist(){
           upImg.click();
         };
         // simple remove: click slot preview removes? keep manual via re-render not needed; images removable via "clear" button row
+        if(S.mode==="charsheet") return;
         const isAudioDrive=S.mode==="audio_drive";
         if(isAudioDrive){
           const note=mk("div",{fontSize:"8px",color:C.muted,lineHeight:"1.5",marginTop:"2px"});
@@ -4978,15 +4967,66 @@ function persist(){
       };
       chainArea._render=_renderChain;
 
+      // -- Character Sheet mode -----------------------------------------------
+      const CHS_PANEL_LABELS=["6 panels (full turnaround)","4 panels (faster)"];
+      const CHS_STYLE_LABELS=[
+        {label:"Reference style",value:"ref",title:"Keep the art style of your first reference image"},
+        {label:"Photoreal",value:"real",title:"Render a photoreal live-action look, ignoring the reference art style"},
+      ];
+      const CHS_LORA_URL="https://huggingface.co/lightx2v/Minimax-h3-Turbo/blob/main/minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors";
+      const chsPanelsDD=DD(CHS_PANEL_LABELS,S.chsPanels===4?CHS_PANEL_LABELS[1]:CHS_PANEL_LABELS[0],v=>{S.chsPanels=(v||"").startsWith("4")?4:6;persist();});
+      const chsStyleDD=DD(CHS_STYLE_LABELS,S.chsStyle==="real"?CHS_STYLE_LABELS[1]:CHS_STYLE_LABELS[0],v=>{S.chsStyle=v==="real"?"real":"ref";persist();});
+      const chsRow1=mk("div",{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"8px"});
+      const chsPanelsCell=mk("div",{display:"flex",flexDirection:"column",gap:"3px"});
+      const chsPanelsCap=mk("div",{fontSize:"10px",color:C.text});tx(chsPanelsCap,"Panels");
+      chsPanelsCell.append(chsPanelsCap,chsPanelsDD.el);
+      const chsStyleCell=mk("div",{display:"flex",flexDirection:"column",gap:"3px"});
+      const chsStyleCap=mk("div",{fontSize:"10px",color:C.text});tx(chsStyleCap,"Style");
+      chsStyleCell.append(chsStyleCap,chsStyleDD.el);
+      chsRow1.append(chsPanelsCell,chsStyleCell);
+      const chsHint=mk("div",{fontSize:"8px",color:C.muted,lineHeight:"1.5"});
+      tx(chsHint,"One 5 second generation orbits a frozen character, then frames are pulled from it and stitched into the sheet. 6 panels is the full 360 degree turnaround; 4 panels is the faster 180 degree version for lower-VRAM GPUs. Duration is locked at 5 s because the panels are timed to it.");
+      const chsSaveRow=mk("div",{display:"flex",alignItems:"center",gap:"6px",cursor:"pointer",padding:"2px 4px",borderRadius:"5px",border:`1px solid ${S.chsSavePanels?C.lime:C.border}`,background:S.chsSavePanels?"rgba(var(--h3accent-rgb),.10)":"transparent",alignSelf:"flex-start",transition:"border-color .15s, background .15s"});
+      const chsSaveBox=mk("div",{width:"10px",height:"10px",borderRadius:"3px",border:`1px solid ${C.borderH}`,background:S.chsSavePanels?C.lime:C.bg2,transition:"background .15s",flexShrink:"0"});
+      const chsSaveLbl=mk("div",{fontSize:"8px",color:S.chsSavePanels?C.lime:C.muted,fontWeight:"700",letterSpacing:".02em",whiteSpace:"nowrap"});
+      tx(chsSaveLbl,"Save individual panels");
+      chsSaveRow.append(chsSaveBox,chsSaveLbl);
+      chsSaveRow.title="Also save each panel as its own PNG under one-node-minimax-h3/charsheet/panels. Off by default.";
+      const _syncChsSave=()=>{
+        chsSaveBox.style.background=S.chsSavePanels?C.lime:C.bg2;
+        chsSaveRow.style.borderColor=S.chsSavePanels?C.lime:C.border;
+        chsSaveLbl.style.color=S.chsSavePanels?C.lime:C.muted;
+      };
+      chsSaveRow.onclick=()=>{ S.chsSavePanels=!S.chsSavePanels; _syncChsSave(); persist(); };
+      const chsLoraWrap=mk("div",{fontSize:"8px",color:C.muted,lineHeight:"1.6"});
+      const chsLoraLead=mk("span",{fontWeight:"700",color:C.text});tx(chsLoraLead,"Recommended speed LoRA: ");
+      const chsLoraA=mk("a",{color:C.lime,fontWeight:"700",textDecoration:"none",borderBottom:`1px dashed rgba(var(--h3accent-rgb),.5)`,cursor:"pointer"},{href:CHS_LORA_URL,target:"_blank",rel:"noopener noreferrer"});
+      tx(chsLoraA,"ref2v turbo 4-step");
+      chsLoraA.onmouseenter=()=>{chsLoraA.style.color="#fff";};
+      chsLoraA.onmouseleave=()=>{chsLoraA.style.color=C.lime;};
+      const chsLoraTail=mk("span",{});tx(chsLoraTail," - add it as a LoRA at 0.75 strength.");
+      chsLoraWrap.append(chsLoraLead,chsLoraA,chsLoraTail);
+      chsArea.append(chsRow1,chsLoraWrap,chsSaveRow,chsHint);
+      const _renderChs=()=>{
+        chsPanelsDD.set(S.chsPanels===4?CHS_PANEL_LABELS[1]:CHS_PANEL_LABELS[0]);
+        chsStyleDD.set(S.chsStyle==="real"?CHS_STYLE_LABELS[1]:CHS_STYLE_LABELS[0]);
+        _syncChsSave();
+      };
+
       const _updateModeSections=()=>{
         _clearSections();
         modeCard.style.display=S.mode==="t2v"?"none":"";
         promptCard.style.display=S.mode==="chain"?"none":"";
+        const chsLock=S.mode==="charsheet";
         if(S.mode==="chain"||S.mode==="image"){
           durHalf.style.display="none";
           dfSep.style.display="none";
           framesLbl.style.display="none";
+        } else if(chsLock){
+          durFpsCell.style.display="none";
+          S.duration=5; durNI.setVal(5); S.fps=24;
         } else {
+          durFpsCell.style.display="flex";
           durHalf.style.display="flex";
           dfSep.style.display="";
           framesLbl.style.display="";
@@ -5010,7 +5050,8 @@ function persist(){
         else if(S.mode==="extend"){ modeHdr.style.display="flex"; modeTitle.textContent="Extend Video"; exArea.style.display="flex"; }
         else if(S.mode==="chain"){ modeHdr.style.display="flex"; modeTitle.textContent="Motion Context Chain"; _renderChain(); chainArea.style.display="flex"; }
         else if(S.mode==="mask"){ modeHdr.style.display="flex"; modeTitle.textContent="Mask Inpaint"; _renderMask(); maskArea.style.display="flex"; }
-        else if(S.mode==="image"){ modeHdr.style.display="flex"; modeTitle.textContent="Image (H3 Studio)"; _renderImgRefs(); imgArea.style.display="flex"; if(_syncImgAdvRef) _syncImgAdvRef(); }
+        else if(S.mode=="image"){ modeHdr.style.display="flex"; modeTitle.textContent="Image (H3 Studio)"; _renderImgRefs(); imgArea.style.display="flex"; if(_syncImgAdvRef) _syncImgAdvRef(); }
+        else if(S.mode==="charsheet"){ modeHdr.style.display="flex"; modeTitle.textContent="Character Sheet"; _renderRefs(); refArea.style.display="flex"; _renderChs(); chsArea.style.display="flex"; }
         else { modeHdr.style.display="none"; modeTitle.textContent="Text to Video"; }
         if(typeof _syncLiveToggle==="function") _syncLiveToggle();
         if(_syncFitRowFn) _syncFitRowFn();
@@ -5340,6 +5381,23 @@ function persist(){
         const targetState=S.modeSettings[m];
         S.mode=m;
         if(!targetState){S.refImages=[];S.refVideos=[];S.refAudios=[];}
+        if(m==="charsheet"&&!targetState){
+          S.duration=5;
+          S.samplerName="euler";
+          S.schedulerName="linear_quadratic";
+          S.steps=25;
+          S.fps=24;
+          S.resolution="864x480 (0.4MP Speed)";
+          S.quality="native";
+          S.optSol=false;S.optSage=false;S.optKitchen=false;S.optSla=false;
+          if(samplerDD) samplerDD.set("euler");
+          if(schedDD) schedDD.set("linear_quadratic");
+          if(stepsNI) stepsNI._inp.value="25";
+          if(resDD) resDD.set("864x480 (0.4MP Speed)");
+          if(qualDD) qualDD.set("Native");
+          if(_syncOptChips) _syncOptChips();
+          _prefillCharSheetLora();
+        }
         _restoreModeState();
         persist();
         _updateTabs();
@@ -5397,7 +5455,7 @@ function persist(){
             persist();
             _renderLoras();
           });
-          const stNI=NI("",lr.strength,-3,3,0.1,v=>{lr.strength=Math.round(v*100)/100;persist();},"52px");
+          const stNI=NI("",lr.strength,-3,3,0.05,v=>{lr.strength=Math.round(v*100)/100;persist();},"52px");
           const tgl=MiniToggle(lr.enabled!==false,v=>{
             lr.enabled=v;persist();
             _renderLoras();
@@ -6413,7 +6471,7 @@ function persist(){
           }
         }
         let final;
-        if(text.includes("integrated_multimodal_description")||text.includes("summary:")||text.includes("detailed_description:")){
+        if(text.includes("integrated_multimodal_description")||text.includes("summary:")||text.includes("detailed_description:")||text.includes("subject_definitions:")){
           if(S.mode==="r2v"&&S.refAudios.length&&!text.includes("<Audio")){
             text=text.replace(/(retention_analysis:\s*)/i, "$1<Audio 1>: fully_copy - reused 1:1 as the target video's complete final audio track.\n");
             if(!/<Audio/.test(text.split("overall_soundscape:")[1]||"")){
@@ -6485,6 +6543,10 @@ function persist(){
         let modelSrc=["2",0];
         let nextId=100;
         const newId=()=>String(nextId++);
+        // Character Sheet templates mirror the reference graphs and have no
+        // SigmaShift node; the patched model feeds the guider and scheduler
+        // directly there. Every other mode patches through node 5.
+        const hasShift=!!(wf["5"]&&wf["5"].class_type==="MiniMaxH3SigmaShift");
         const actives=S.loras.filter(l=>l.name&&l.enabled!==false);
         actives.forEach(lr=>{
           const id=newId();
@@ -6542,7 +6604,12 @@ function persist(){
           }
           wf["9"].inputs.steps=S.steps;
         }
-        wf["5"].inputs.model=modelSrc;
+        if(hasShift){
+          wf["5"].inputs.model=modelSrc;
+        } else {
+          wf["7"].inputs.model=modelSrc;
+          wf["9"].inputs.model=modelSrc;
+        }
         if(useSla){
           // SLA Draft chain: pre-patches -> SigmaShift -> turbo LoRA -> AdaLN
           // LoRA Fix -> SLA, with SLA's output wired straight into the guider
@@ -6551,10 +6618,13 @@ function persist(){
           // turbo LoRA actually applies. SLA needs a recent ComfyUI core
           // (comfy_api) and falls back to dense attention on kernel failure.
           if(!S.speedLora) throw new Error("SLA Draft needs a Turbo LoRA - set one in Settings (Speed LoRA) or pick another quality.");
-          wf["5"].inputs.shift_video=(typeof S.shiftVideo==="number")?S.shiftVideo:8;
-          wf["5"].inputs.shift_audio=(typeof S.shiftAudio==="number")?S.shiftAudio:3;
+          const shiftModel=hasShift?["5",0]:modelSrc;
+          if(hasShift){
+            wf["5"].inputs.shift_video=(typeof S.shiftVideo==="number")?S.shiftVideo:8;
+            wf["5"].inputs.shift_audio=(typeof S.shiftAudio==="number")?S.shiftAudio:3;
+          }
           const tl=newId();
-          wf[tl]={class_type:"MiniMaxH3TurboLoRA",inputs:{model:["5",0],lora_name:S.speedLora,strength:(typeof S.speedLoraStrength==="number")?S.speedLoraStrength:1.0,low_vram:false},_meta:{title:"Turbo LoRA (SLA)"}};
+          wf[tl]={class_type:"MiniMaxH3TurboLoRA",inputs:{model:shiftModel,lora_name:S.speedLora,strength:(typeof S.speedLoraStrength==="number")?S.speedLoraStrength:1.0,low_vram:false},_meta:{title:"Turbo LoRA (SLA)"}};
           const fix=newId();
           wf[fix]={class_type:"H3AdaLNLoRAFix",inputs:{model:[tl,0],mode:"port"},_meta:{title:"AdaLN LoRA Fix"}};
           const sla=newId();
@@ -6604,10 +6674,12 @@ function persist(){
       };
 
       const _patchCommon=(wf)=>{
+        const isCharSheet=S.mode==="charsheet";
+        const hasShift=!!(wf["5"]&&wf["5"].class_type==="MiniMaxH3SigmaShift");
         wf["1"].inputs.clip_name=S.models.clip;
         const condNode=wf["6"];
         const isR2V=condNode&&condNode.class_type==="MiniMaxH3ReferenceToVideo";
-        wf["2"].inputs.unet_name= isR2V&&["r2v","audio_drive","mask"].includes(S.mode)? S.models.unetR2V : S.models.unetT2V;
+        wf["2"].inputs.unet_name= isR2V&&["r2v","audio_drive","mask","charsheet"].includes(S.mode)? S.models.unetR2V : S.models.unetT2V;
         wf["3"].inputs.vae_name=S.models.vaeVideo;
         wf["4"].inputs.vae_name=S.models.vaeAudio;
         const res=_resolveRes();
@@ -6619,7 +6691,12 @@ function persist(){
             wf["18"].inputs.context_length=plan.contextLength;
           }
         }
-        condNode.inputs.prompt=_finalPrompt(S.prompt);
+        if(isCharSheet) frames=CHARSHEET_LENGTH;
+        if(isCharSheet){
+          if(wf["17"]&&wf["17"].inputs) wf["17"].inputs.string_a=_finalPrompt(S.prompt);
+        } else {
+          condNode.inputs.prompt=_finalPrompt(S.prompt);
+        }
         condNode.inputs.width=res.width;
         condNode.inputs.height=res.height;
         condNode.inputs.length=frames;
@@ -6633,8 +6710,9 @@ function persist(){
         _insertModelPatches(wf);
         if(S.livePreview){
           const lpSet=(S.livePreviewMode&&LP_PRESETS[S.livePreviewMode])?LP_PRESETS[S.livePreviewMode]:LP_PRESETS.balanced;
+          const lpModel=hasShift?wf["5"].inputs.model:(wf["7"]&&wf["7"].inputs.model)||["2",0];
           wf["lp"]={class_type:"ModelPreviewOverrideKJ",inputs:{
-            model:wf["5"].inputs.model,
+            model:lpModel,
             max_resolution:lpSet.res,
             jpeg_quality:80,
             suppress_default_preview:true,
@@ -6642,7 +6720,12 @@ function persist(){
             preview_fps:12,
             tiny_vae:S.models.tae||"taeh3.safetensors",
           },_meta:{title:"Live Preview (Model Preview Override)"}};
-          wf["5"].inputs.model=["lp",0];
+          if(hasShift){
+            wf["5"].inputs.model=["lp",0];
+          } else {
+            wf["7"].inputs.model=["lp",0];
+            wf["9"].inputs.model=["lp",0];
+          }
         }
         _applyAutoSave(wf);
         _insertCacheBust(wf);
@@ -6757,10 +6840,35 @@ function persist(){
         if(!exists) throw new Error("Mask mode needs a SAM 3.1 multiplex checkpoint. Install sam3.1_multiplex_fp16.safetensors in a ComfyUI checkpoints model folder, restart ComfyUI, then pick it under Settings.");
       };
 
+      const _buildCharSheet=async()=>{
+        if(!S.refImages.length) throw new Error("Character Sheet needs at least one reference image. Drop images of your character into the slots, or switch to another mode.");
+        await _checkInputFiles("image",S.refImages,"reference image");
+        const panels=S.chsPanels===4?4:6;
+        const wf=await _fetchTpl(panels===4?"charsheet4.json":"charsheet.json");
+        _patchCommon(wf);
+        const dir=wf["6"].inputs;
+        if(S.chsStyle==="real"&&wf["17"]&&wf["17"].inputs) wf["17"].inputs.string_b=["32",0];
+        let nextId=200;
+        const newId=()=>String(nextId++);
+        S.refImages.forEach((name,idx)=>{
+          const id=newId();
+          wf[id]={class_type:"LoadImage",inputs:{image:name},_meta:{title:`Ref Image ${idx+1}`}};
+          dir[`ref_images.ref_image_${idx}`]=[id,0];
+        });
+        if(S.chsSavePanels){
+          const ids=charsheetPanelIndices(panels);
+          ids.forEach((_bi,i)=>{
+            wf[String(700+i)]={class_type:"SaveImage",inputs:{images:[String(18+i),0],filename_prefix:"one-node-minimax-h3/charsheet/panels/panel_"+(i+1)},_meta:{title:`Save Panel ${i+1}`}};
+          });
+        }
+        return wf;
+      };
+
       const _buildWorkflow=async()=>{
         const mode=S.mode;
         if(mode==="chain") return _buildChain();
         if(mode==="image") return _buildImage();
+        if(mode==="charsheet") return _buildCharSheet();
         const wf=await _fetchTpl(TEMPLATES[mode]);
         _patchCommon(wf);
         let nextId=200;
@@ -7262,6 +7370,15 @@ function persist(){
           _updUpBtnTitle();
         }catch(e){console.warn("[H3One] load models:",e);}
       };
+      const _prefillCharSheetLora=async()=>{
+        if(S.speedLora) return;
+        if(!_M.loras||!_M.loras.length){
+          try{ const r=await fetch("/h3one/models"); const d=await r.json(); _M.loras=d.loras||[]; }catch(e){ return; }
+        }
+        const target="minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors";
+        const found=(_M.loras||[]).find(n=>String(n).replace(/\\/g,"/").split("/").pop()===target);
+        if(found){ S.speedLora=found; persist(); if(speedLoraDD) speedLoraDD.set(found); }
+      };
       const _loadConfig=async()=>{
         try{
           const r=await fetch("/h3one/config");
@@ -7289,7 +7406,7 @@ function persist(){
       // -- Assemble ----------------------------------------------------------
       const mainRow=mk("div",{display:"flex",gap:"12px",alignItems:"stretch",flex:"1",minHeight:"0"});
       const leftPanel=mk("div",{display:"flex",flexDirection:"column",gap:"9px",width:"460px",flexShrink:"0",overflowY:"auto",minHeight:"0",paddingRight:"4px",boxSizing:"border-box",scrollbarWidth:"thin",scrollbarColor:`${C.border} transparent`});
-      modeArea.append(i2vArea,refArea,kfArea,adArea,exArea,chainArea,maskArea,imgArea);
+      modeArea.append(i2vArea,refArea,kfArea,adArea,exArea,chainArea,maskArea,imgArea,chsArea);
       // -- Card assembly -----------------------------------------------------
       const promptCard=mk("div",{}, {className:"h3-card"});
       promptCard.append(promptHdr,promptWrap);
@@ -7337,6 +7454,19 @@ function persist(){
             :planImageCanvas({mode:"ratio",aspect:S.imgAspect,megapixels:S.imgMP});
           chip("Aspect",`${_imgChipPlan.width}×${_imgChipPlan.height}${_imgChipPlan.capped?" · capped":""}`,(r)=>imgAspectDD.open(r),true);
           chip("Profile",imgProfileShort(S.imgProfile),(r)=>imgProfDD.open(r),true);
+          chip("Seed",S.randomizeSeed?"random":String(S.seed||0),editSeed);
+          chip("Batch",`×${S.batch||1}`,()=>editField(batchNI));
+          return;
+        }
+        if(S.mode==="charsheet"){
+          const _cr=_resolveRes();
+          chip("Res",`${_cr.width}×${_cr.height}`,(rect)=>resDD.open(rect),true);
+          chip("Panels",S.chsPanels===4?"4 · faster":"6",(rect)=>chsPanelsDD.open(rect),true);
+          chip("Style",S.chsStyle==="real"?"Photoreal":"Reference",(rect)=>chsStyleDD.open(rect),true);
+          chip("Steps",String(S.steps),()=>editField(stepsNI));
+          chip("Quality",_q,(rect)=>qualDD.open(rect),true);
+          chip("Sampler",S.samplerName||"res_multistep",(rect)=>samplerDD.open(rect),true);
+          chip("Sched",S.schedulerName||"simple",(rect)=>schedDD.open(rect),true);
           chip("Seed",S.randomizeSeed?"random":String(S.seed||0),editSeed);
           chip("Batch",`×${S.batch||1}`,()=>editField(batchNI));
           return;

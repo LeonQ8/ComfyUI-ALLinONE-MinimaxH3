@@ -669,3 +669,17 @@ export function makeCompareSlots(count) {
     trimEnd: 0,
   }));
 }
+
+// Character Sheet panel timing.
+//
+// The sheet is one locked 5 s / 124-frame H3 generation (5 + 17 * 7) where the
+// camera orbits a frozen character. Frames are pulled out of the video at fixed
+// indices and stitched into a grid, so every index must stay inside the 124
+// frame window. 6 panels is the full 360 orbit plus two face beats; 4 panels is
+// the cheaper 180 orbit plus one face beat for lower-VRAM machines.
+export const CHARSHEET_LENGTH = 124;
+
+export function charsheetPanelIndices(panels) {
+  if (Number(panels) === 4) return [2, 24, 45, 68];
+  return [2, 21, 42, 63, 84, 113];
+}

@@ -141,6 +141,16 @@
           "prompt": "summary:\n[reference generation] Combine the provided references into one image: [DESCRIBE THE RESULT].\n\ndetailed_description:\n@Image1 provides [ROLE: identity, pose, style, composition...]. @Image2 provides [ROLE]. [DESCRIBE THE FINAL IMAGE: SETTING, LIGHTING, CAMERA]."
         }
       ]
+    },
+    "charsheet": {
+      "name": "Character Sheet",
+      "wrap": "subject_definitions:\n<Picture 1> = {USER}\n\nretention_analysis:\nThe character keeps the exact face, hair and the outfit you described in every panel. Ignore the background and anything you did not name. No shadows, no props, no weapons unless you list them.",
+      "presets": [
+        {
+          "name": "Character sheet starter",
+          "prompt": "subject_definitions:\n<Picture 1> = [CHARACTER NAME] is a [RACE / SPECIES] [ROLE / CLASS] with [HAIR + COLOR], [EYE COLOR] and [DISTINCTIVE FEATURES]. He or she wears [OUTFIT OR ARMOR IN DETAIL: fabrics, colors, layers].\n<Picture 2> = [SAME NAME] standing in [RESTATE THE FULL OUTFIT SO NOTHING IS LOST].\n\nretention_analysis:\n[NAME] keeps the face, the hair and the outfit you described in every panel. Ignore the background and anything you did not name. No weapons, no props, no accessories unless you list them."
+        }
+      ]
     }
   },
   "model_defaults": {
