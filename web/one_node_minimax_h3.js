@@ -349,6 +349,31 @@ function matchQualityPreset(flags,table,order){
   return "custom";
 }
 
+// Spectrum Apply MiniMax H3 input values. Mirrored in h3_helpers.mjs
+// (spectrumNodeInputs, kept in sync). Standalone accelerator, not part of the
+// quality-preset flag table; upstream defaults from ComfyUI-Spectrum-MiniMax-H3.
+function spectrumNodeInputs(overrides){
+  return {
+    enabled:true,
+    blend_weight:0.5,
+    degree:1,
+    ridge_lambda:0.1,
+    window_size:2.0,
+    flex_window:0.75,
+    warmup_steps:1,
+    tail_actual_steps:1,
+    max_history:8,
+    debug:false,
+    history_storage:"system_ram",
+    bootstrap_first_forecast:true,
+    offline_smoothing_replay:true,
+    audio_blend_weight:0.0,
+    offline_archive_storage:"system_ram",
+    model_aware_mode:"off",
+    ...(overrides||{}),
+  };
+}
+
 function imgProfileShort(key){
   if(!key||key==="custom") return "Custom";
   const k=String(key);
@@ -1971,6 +1996,7 @@ app.registerExtension({
           optSage:         (saved.quality==="custom")?(saved.optSage!==undefined?saved.optSage:false):_qf.sage,
           optKitchen:      (saved.quality==="custom")?(saved.optKitchen!==undefined?saved.optKitchen:false):_qf.kitchen,
           optSla:          (saved.quality==="custom")?(saved.optSla!==undefined?saved.optSla:false):_qf.sla,
+          optSpectrum:     saved.optSpectrum===true,
           samplerName:     saved.samplerName||"res_multistep",
           schedulerName:   saved.schedulerName||"simple",
           seed:            (typeof saved.seed==="number")?Math.max(0,Math.min(H3_SEED_MAX,Math.round(saved.seed))):0,
@@ -2079,11 +2105,11 @@ function persist(){
         // quality/resolution/loras survive workflow-tab switches (they used to be
         // captured only when switching mode tabs, so a stale snapshot overwrote
         // the just-changed value on rebuild).
-        S.modeSettings[S.mode]={prompt:S.prompt,steps:S.steps,quality:S.quality,resolution:S.resolution,duration:S.duration,loras:JSON.parse(JSON.stringify(S.loras||[])),optSol:S.optSol,optSage:S.optSage,optKitchen:S.optKitchen,optSla:S.optSla,samplerName:S.samplerName,schedulerName:S.schedulerName};
+        S.modeSettings[S.mode]={prompt:S.prompt,steps:S.steps,quality:S.quality,resolution:S.resolution,duration:S.duration,loras:JSON.parse(JSON.stringify(S.loras||[])),optSol:S.optSol,optSage:S.optSage,optKitchen:S.optKitchen,optSla:S.optSla,optSpectrum:S.optSpectrum,samplerName:S.samplerName,schedulerName:S.schedulerName};
         if(_updRecipeFn){ try{ _updRecipeFn(); }catch(e){} }
         saveState({
           mode:S.mode,prompt:S.prompt,resolution:S.resolution,duration:S.duration,
-          steps:S.steps,quality:S.quality,optSol:S.optSol,optSage:S.optSage,optKitchen:S.optKitchen,optSla:S.optSla,samplerName:S.samplerName,schedulerName:S.schedulerName,randomizeSeed:S.randomizeSeed,seed:S.seed,batch:S.batch,
+          steps:S.steps,quality:S.quality,optSol:S.optSol,optSage:S.optSage,optKitchen:S.optKitchen,optSla:S.optSla,optSpectrum:S.optSpectrum,samplerName:S.samplerName,schedulerName:S.schedulerName,randomizeSeed:S.randomizeSeed,seed:S.seed,batch:S.batch,
           loras:S.loras,chainClips:S.chainClips.map(c=>({prompt:c.prompt,duration:c.duration})),
           firstFrame:S.firstFrame,lastFrame:S.lastFrame,
           firstFrameSize:S.firstFrameSize,lastFrameSize:S.lastFrameSize,
@@ -5269,7 +5295,7 @@ function persist(){
       const qualRow=mk("div",{display:"flex",flexDirection:"column",gap:"3px"});
       const qualCapRow=mk("div",{display:"flex",alignItems:"center",gap:"4px"});
       const qualCap=mk("div",{fontSize:"10px",color:C.text});tx(qualCap,"Quality");
-      qualCapRow.append(qualCap,infoIcon("The sampling pipeline, not the pixel size. Use the chips below to switch each accelerator on or off - Quality follows, and any manual mix shows as Custom.\nTurbo: Turbo LoRA + 6-step distilled sampler. Fastest, visibly lower quality - needs the Turbo LoRA set in Settings.\nSpeed: SolAttn sparse attention only. Fastest normal pipeline, tiny quality tradeoff.\nBalanced: SolAttn sparse attention only.\nHigh Quality: full SageAttention only - slowest, maximum fidelity.\nKitchen: ComfyUI's built-in Comfy Kitchen attention (pip install comfy-kitchen) - can run alone or with SolAttn, never with SageAttention.\nSLA Draft: H3 SLA Attention (ComfyUI-PlagueKind-Nodes) + Kitchen + a turbo LoRA, defaults to er_sde/beta at 6 steps. Fastest for prompt-tweak drafts, weaker prompt adherence - drafts only, not final quality. Sampler, scheduler and steps are only defaults: you can change them freely and the run uses your choice.\nNative: core ComfyUI H3 pipeline, no accelerators - needs no extra packs."));
+      qualCapRow.append(qualCap,infoIcon("The sampling pipeline, not the pixel size. Use the chips below to switch each accelerator on or off - Quality follows, and any manual mix shows as Custom.\nTurbo: Turbo LoRA + 6-step distilled sampler. Fastest, visibly lower quality - needs the Turbo LoRA set in Settings.\nSpeed: SolAttn sparse attention only. Fastest normal pipeline, tiny quality tradeoff.\nBalanced: SolAttn sparse attention only.\nHigh Quality: full SageAttention only - slowest, maximum fidelity.\nKitchen: ComfyUI's built-in Comfy Kitchen attention (pip install comfy-kitchen) - can run alone or with SolAttn, never with SageAttention.\nSLA Draft: H3 SLA Attention (ComfyUI-PlagueKind-Nodes) + Kitchen + a turbo LoRA, defaults to er_sde/beta at 6 steps. Fastest for prompt-tweak drafts, weaker prompt adherence - drafts only, not final quality. Sampler, scheduler and steps are only defaults: you can change them freely and the run uses your choice.\nSpectrum: step-skipping acceleration (ComfyUI-Spectrum-MiniMax-H3). Approximate, stacks with every chip above and with Turbo. Best with res_multistep, er_sde, euler or the turbo sampler; other samplers fall back to native automatically. Compare same seed on/off.\nNative: core ComfyUI H3 pipeline, no accelerators - needs no extra packs."));
       const qualDD=DD(["Turbo (Speed LoRA)","Speed","Balanced","High Quality","Native","SLA Draft","Custom"],_QL[S.quality]||"Custom",v=>{
         const key=Object.keys(_QL).find(k=>_QL[k]===v)||"custom";
         if(key!=="custom"){
@@ -5341,6 +5367,16 @@ function persist(){
         _syncOptChips();
       };
       _checkSlaAvail();
+      let _spectrumAvail=null;
+      const _checkSpectrumAvail=async()=>{
+        try{
+          const r=await fetch("/h3one/spectrum_status");
+          const d=await r.json();
+          _spectrumAvail=!!(d&&d.found);
+        }catch(e){ _spectrumAvail=false; }
+        _syncOptChips();
+      };
+      _checkSpectrumAvail();
       optRow.append(
         _mkOptChip("optSol","SolAttn",{excl:["optSla"]}),
         _mkOptChip("optSage","SageAttn",{excl:["optKitchen","optSla"]}),
@@ -5353,6 +5389,10 @@ function persist(){
           excl:["optSol","optSage"],
           disabled:()=>_slaAvail===false,
           disabledTip:"H3 SLA Attention is not available - install ComfyUI-PlagueKind-Nodes and restart ComfyUI.",
+        }),
+        _mkOptChip("optSpectrum","Spectrum",{
+          disabled:()=>_spectrumAvail===false,
+          disabledTip:"Spectrum is not available - install ComfyUI-Spectrum-MiniMax-H3 and restart ComfyUI.",
         })
       );
       const SAMPLERS=["euler","euler_cfg_pp","euler_ancestral","euler_ancestral_cfg_pp","heun","heunpp2","exp_heun_2_x0","exp_heun_2_x0_sde","dpm_2","dpm_2_ancestral","lms","dpm_fast","dpm_adaptive","dpmpp_2s_ancestral","dpmpp_2s_ancestral_cfg_pp","dpmpp_sde","dpmpp_sde_gpu","dpmpp_2m","dpmpp_2m_cfg_pp","dpmpp_2m_sde","dpmpp_2m_sde_gpu","dpmpp_2m_sde_heun","dpmpp_2m_sde_heun_gpu","dpmpp_3m_sde","dpmpp_3m_sde_gpu","ddpm","lcm","ipndm","ipndm_v","deis","res_multistep","res_multistep_cfg_pp","res_multistep_ancestral","res_multistep_ancestral_cfg_pp","gradient_estimation","gradient_estimation_cfg_pp","er_sde","seeds_2","seeds_3","sa_solver","sa_solver_pece","ddim","uni_pc","uni_pc_bh2","legacy_rk","rk","rk_beta","deis_3m_ode","deis_2m_ode","deis_3m","deis_2m","res_6s_ode","res_5s_ode","res_3s_ode","res_2s_ode","res_3m_ode","res_2m_ode","res_6s","res_5s","res_3s","res_2s","res_3m","res_2m"];
@@ -5396,7 +5436,7 @@ function persist(){
         S.modeSettings[S.mode]={
           prompt:S.prompt,steps:S.steps,quality:S.quality,resolution:S.resolution,duration:S.duration,
           loras:JSON.parse(JSON.stringify(S.loras)),
-          optSol:S.optSol,optSage:S.optSage,optKitchen:S.optKitchen,optSla:S.optSla,
+          optSol:S.optSol,optSage:S.optSage,optKitchen:S.optKitchen,optSla:S.optSla,optSpectrum:S.optSpectrum,
           samplerName:S.samplerName,schedulerName:S.schedulerName,
         };
       };
@@ -5421,6 +5461,7 @@ function persist(){
           _syncOptChips();
           qualDD.set(_QL[ms.quality]||"Custom");
         }
+        if(ms.optSpectrum!==undefined) S.optSpectrum=ms.optSpectrum;
         if(typeof _syncLiveToggle==="function") _syncLiveToggle();
         if(ms.resolution!==undefined){ S.resolution=ms.resolution; resDD.set(ms.resolution); _updResCustom(); }
         if(ms.duration!==undefined){ S.duration=S.mode==="mask"?Math.min(15,ms.duration):ms.duration; durNI._inp.value=String(S.duration); _updateFramesLabel(); }
@@ -5457,7 +5498,7 @@ function persist(){
           S.fps=24;
           S.resolution="864x480 (0.4MP Speed)";
           S.quality="native";
-          S.optSol=false;S.optSage=false;S.optKitchen=false;S.optSla=false;
+          S.optSol=false;S.optSage=false;S.optKitchen=false;S.optSla=false;S.optSpectrum=false;
           if(samplerDD) samplerDD.set("euler");
           if(schedDD) schedDD.set("linear_quadratic");
           if(stepsNI) stepsNI._inp.value="25";
@@ -6795,6 +6836,14 @@ function persist(){
             wf["9"].inputs.model=["lp",0];
           }
         }
+        if(S.optSpectrum&&wf["7"]&&Array.isArray(wf["7"].inputs.model)){
+          let spId=600;
+          while(wf[String(spId)]) spId++;
+          const sp=String(spId);
+          wf[sp]={class_type:"SpectrumApplyMiniMaxH3",inputs:{model:wf["7"].inputs.model,...spectrumNodeInputs()},_meta:{title:"Spectrum"}};
+          wf["7"].inputs.model=[sp,0];
+          if(wf["9"]&&Array.isArray(wf["9"].inputs.model)) wf["9"].inputs.model=[sp,0];
+        }
         _applyAutoSave(wf);
         _insertCacheBust(wf);
         patchOutputVideo(wf,S.fps);
@@ -7262,6 +7311,18 @@ function persist(){
             const sched=wf["c"+idx+":sched"];
             if(guider) guider.inputs.model=[sla,0];
             if(sched) sched.inputs.model=[sla,0];
+          });
+        }
+        if(S.optSpectrum){
+          const firstGuider=wf["c0:guider"];
+          const spSrc=(firstGuider&&Array.isArray(firstGuider.inputs.model))?firstGuider.inputs.model:["s:5",0];
+          const sp=newId();
+          wf[sp]={class_type:"SpectrumApplyMiniMaxH3",inputs:{model:spSrc,...spectrumNodeInputs()},_meta:{title:"Spectrum"}};
+          clips.forEach((_cl,idx)=>{
+            const guider=wf["c"+idx+":guider"];
+            const sched=wf["c"+idx+":sched"];
+            if(guider) guider.inputs.model=[sp,0];
+            if(sched) sched.inputs.model=[sp,0];
           });
         }
         wf["s:1"].inputs.clip_name=S.models.clip;
