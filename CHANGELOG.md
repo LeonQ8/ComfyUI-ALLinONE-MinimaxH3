@@ -2,6 +2,12 @@
 
 Newest first.
 
+## 0.17.1 (2026-08-30)
+
+ - The prompt input socket now works. Wire any text node into it and the prompt box fills with that text after the source node runs, so prompts can come from other nodes in the graph (for example an LLM). It is two-pass: the box fills after the source runs, then you generate.
+
+ - Sampler and scheduler are now remembered per mode. Changing them in one mode no longer changes them in the others, and untouched modes keep the standard H3 defaults.
+
 ## 0.17.0 (2026-08-27)
 
  - New Character Sheet mode. Reference images of one character become a stitched turnaround sheet (6-panel full orbit, or a faster 4-panel version for lower-VRAM GPUs). It needs 25 steps.
