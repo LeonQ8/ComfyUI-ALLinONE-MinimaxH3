@@ -2,6 +2,10 @@
 
 Newest first.
 
+## 0.18.0 (2026-08-30)
+
+ - New Spectrum accelerator. A chip in the Quality row turns on Spectrum Apply MiniMax H3 from ComfyUI-Spectrum-MiniMax-H3 (https://github.com/xmarre/ComfyUI-Spectrum-MiniMax-H3). Needs the pack installed.
+
 ## 0.17.1 (2026-08-30)
 
  - The prompt input socket now works. Wire any text node into it and the prompt box fills with that text after the source node runs, so prompts can come from other nodes in the graph (for example an LLM). It is two-pass: the box fills after the source runs, then you generate.
