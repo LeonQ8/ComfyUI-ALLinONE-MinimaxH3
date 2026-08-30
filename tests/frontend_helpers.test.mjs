@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { aspect, sizeOf, sameSize, mapMaskPoint, orientRes, fitResolutionToAspect, planMaskCrop, maskTrackingPlan, resolveFitPrimary, imgProfileShort, imgAspectName, viewQuery, thumbQuery, isImageItem, inputFileExists, h3SamCheckpoints, clampImageMP, planImageCanvas, planImageCanvasForRatio, planUpscaleTarget, IMG_MAX_MP, IMG_MIN_MP, IMG_ASPECT_RATIOS, resolveQualityFlags, matchQualityPreset, QUALITY_PRESET_FLAGS, planExtend, queuePromptPayload, settleQueuedOutput, maskSpeechSyncPrompt, cropFrameIndex, cropBoxAt, cropReportText, lumaToAlpha, maskDetectionHint, maskRunErrorHint, clampTimecode, compareGridColumns, compareGridRows, compareWindow, syncTargets, formatTimecode, makeCompareSlots, charsheetPanelIndices, CHARSHEET_LENGTH } from "../web/h3_helpers.mjs";
+import { aspect, sizeOf, sameSize, mapMaskPoint, orientRes, fitResolutionToAspect, planMaskCrop, maskTrackingPlan, resolveFitPrimary, imgProfileShort, imgAspectName, viewQuery, thumbQuery, isImageItem, inputFileExists, h3SamCheckpoints, clampImageMP, planImageCanvas, planImageCanvasForRatio, planUpscaleTarget, IMG_MAX_MP, IMG_MIN_MP, IMG_ASPECT_RATIOS, resolveQualityFlags, matchQualityPreset, QUALITY_PRESET_FLAGS, planExtend, queuePromptPayload, settleQueuedOutput, maskSpeechSyncPrompt, cropFrameIndex, cropBoxAt, cropReportText, lumaToAlpha, maskDetectionHint, maskRunErrorHint, clampTimecode, compareGridColumns, compareGridRows, compareWindow, syncTargets, formatTimecode, makeCompareSlots, charsheetPanelIndices, CHARSHEET_LENGTH, promptTextFromOutput, promptLinkAncestors, modeSamplerScheduler } from "../web/h3_helpers.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, "..");
@@ -1758,4 +1758,102 @@ test("bundle mirrors the character sheet helpers", () => {
   assert.ok(bundle.includes("function charsheetPanelIndices(panels)"), "bundle must mirror charsheetPanelIndices");
   assert.ok(bundle.includes("[2,24,45,68]"), "bundle must carry the 4-panel indices");
   assert.ok(bundle.includes("[2,21,42,63,84,113]"), "bundle must carry the 6-panel indices");
+});
+
+// -- Prompt socket adoption ---------------------------------------------------
+
+test("promptTextFromOutput: text arrays join and trim", () => {
+  assert.equal(promptTextFromOutput({ text: ["hello ", "world"] }), "hello world");
+  assert.equal(promptTextFromOutput({ text: ["   "] }), null);
+  assert.equal(promptTextFromOutput({ text: [] }), null);
+});
+
+test("promptTextFromOutput: string field is used when text is missing", () => {
+  assert.equal(promptTextFromOutput({ string: "driven prompt" }), "driven prompt");
+  assert.equal(promptTextFromOutput({ string: "  " }), null);
+});
+
+test("promptTextFromOutput: output without text returns null", () => {
+  assert.equal(promptTextFromOutput(null), null);
+  assert.equal(promptTextFromOutput({}), null);
+  assert.equal(promptTextFromOutput({ images: [{ filename: "a.png" }] }), null);
+  assert.equal(promptTextFromOutput({ text: 42 }), null);
+});
+
+test("promptLinkAncestors: collects the direct origin and everything upstream", () => {
+  const links = [
+    { id: 1, origin_id: 1, target_id: 2 },
+    { id: 2, origin_id: 2, target_id: 3 },
+  ];
+  const ids = promptLinkAncestors(links, 2);
+  assert.ok(ids.has("2"), "the direct origin must be an ancestor");
+  assert.ok(ids.has("1"), "the origin's own upstream must be an ancestor");
+  assert.equal(ids.size, 2);
+});
+
+test("promptLinkAncestors: handles pass-through chains and ignores siblings", () => {
+  const links = [
+    { id: 1, origin_id: 1, target_id: 2 },
+    { id: 2, origin_id: 2, target_id: 3 },
+    { id: 9, origin_id: 9, target_id: 10 },
+  ];
+  const ids = promptLinkAncestors(links, 2);
+  assert.ok(ids.has("1") && ids.has("2"));
+  assert.ok(!ids.has("9") && !ids.has("10"), "nodes outside the socket's upstream must never qualify");
+});
+
+test("promptLinkAncestors: a plain return node between source and socket still qualifies", () => {
+  const links = [
+    { id: 7, origin_id: 7, target_id: 8 },
+    { id: 8, origin_id: 8, target_id: 4 },
+    { id: 4, origin_id: 4, target_id: 5 },
+  ];
+  assert.ok(promptLinkAncestors(links, 4).has("7"), "the source two hops back must qualify");
+  assert.ok(promptLinkAncestors(links, 4).has("8"));
+});
+
+test("promptLinkAncestors: missing or null links yield an empty set", () => {
+  assert.equal(promptLinkAncestors(null, 1).size, 0);
+  assert.equal(promptLinkAncestors(undefined, 1).size, 0);
+  assert.equal(promptLinkAncestors([], 1).size, 0);
+  assert.equal(promptLinkAncestors([{ id: 1, origin_id: 1, target_id: 2 }], null).size, 0);
+  assert.equal(promptLinkAncestors([{ id: 1, origin_id: 1, target_id: 2 }], 99).size, 0);
+});
+
+test("bundle wires the prompt socket adoption listener", () => {
+  const bundle = readFileSync(bundlePath, "utf8");
+  assert.ok(bundle.includes("__promptLinkHooked"), "the listener must register once per node instance");
+  assert.ok(bundle.includes("i&&i.name===\"prompt\""), "the listener must gate on the prompt socket being wired");
+  assert.ok(bundle.includes("promptLinkAncestors(links,inp.link)"), "the listener must only adopt text from upstream nodes");
+  assert.ok(bundle.includes("promptTextFromOutput(d.output)"), "the listener must extract text from the executed output");
+  assert.ok(bundle.includes("_setPrompt(t)"), "adopted text must route through _setPrompt so S.prompt stays in sync");
+});
+
+// -- Per-mode sampler / scheduler --------------------------------------------
+
+test("modeSamplerScheduler: untouched modes get the H3-native defaults", () => {
+  assert.deepEqual(modeSamplerScheduler("t2v", undefined), ["res_multistep", "simple"]);
+  assert.deepEqual(modeSamplerScheduler("image", {}), ["res_multistep", "simple"]);
+  assert.deepEqual(modeSamplerScheduler("mask", null), ["res_multistep", "simple"]);
+});
+
+test("modeSamplerScheduler: charsheet defaults to euler / linear_quadratic", () => {
+  assert.deepEqual(modeSamplerScheduler("charsheet", undefined), ["euler", "linear_quadratic"]);
+  assert.deepEqual(modeSamplerScheduler("charsheet", { steps: 25 }), ["euler", "linear_quadratic"]);
+});
+
+test("modeSamplerScheduler: a stored choice wins over the default", () => {
+  assert.deepEqual(modeSamplerScheduler("t2v", { samplerName: "dpmpp_2m", schedulerName: "karras" }), ["dpmpp_2m", "karras"]);
+  assert.deepEqual(modeSamplerScheduler("charsheet", { samplerName: "res_multistep" }), ["res_multistep", "linear_quadratic"]);
+  assert.deepEqual(modeSamplerScheduler("t2v", { schedulerName: "beta" }), ["res_multistep", "beta"]);
+});
+
+test("bundle isolates sampler and scheduler per mode", () => {
+  const bundle = readFileSync(bundlePath, "utf8");
+  assert.ok(bundle.includes("samplerName:S.samplerName,schedulerName:S.schedulerName"), "persist must snapshot the current mode's sampler and scheduler");
+  assert.ok(bundle.includes("samplerName:S.samplerName,schedulerName:S.schedulerName,"), "the mode-switch save must capture sampler and scheduler");
+  assert.ok(bundle.includes("modeSamplerScheduler(S.mode,ms)"), "the mode switch must restore the target mode's own sampler and scheduler");
+  assert.ok(bundle.includes("samplerDD.set(S.samplerName)"), "the restored sampler must refresh the visible dropdown");
+  assert.ok(bundle.includes("schedDD.set(S.schedulerName)"), "the restored scheduler must refresh the visible dropdown");
+  assert.ok(bundle.includes(':["res_multistep","simple"]'), "untouched modes must default to the H3-native pipeline");
 });

@@ -683,3 +683,56 @@ export function charsheetPanelIndices(panels) {
   if (Number(panels) === 4) return [2, 24, 45, 68];
   return [2, 21, 42, 63, 84, 113];
 }
+
+// Prompt socket adoption. The optional prompt forceInput socket cannot feed the
+// panel in the same queue pass, so the browser adopts text reported by upstream
+// nodes after they run. Mirrored in web/one_node_minimax_h3.js (kept in sync).
+
+export function promptTextFromOutput(out) {
+  if (!out) return null;
+  let t = out.text !== undefined ? out.text : out.string;
+  if (Array.isArray(t)) t = t.join("");
+  if (typeof t !== "string") return null;
+  const s = t.trim();
+  return s ? s : null;
+}
+
+export function promptLinkAncestors(links, socketLinkId) {
+  const ids = new Set();
+  if (!links || socketLinkId == null) return ids;
+  const intoNode = new Map();
+  for (const l of Object.values(links)) {
+    if (!l || l.target_id == null) continue;
+    const t = String(l.target_id);
+    if (!intoNode.has(t)) intoNode.set(t, []);
+    intoNode.get(t).push(l);
+  }
+  let start = null;
+  for (const l of Object.values(links)) {
+    if (l && String(l.id) === String(socketLinkId)) { start = l; break; }
+  }
+  if (!start && links[socketLinkId]) start = links[socketLinkId];
+  if (!start || start.origin_id == null) return ids;
+  const stack = [String(start.origin_id)];
+  while (stack.length) {
+    const nid = stack.pop();
+    if (ids.has(nid)) continue;
+    ids.add(nid);
+    for (const l of intoNode.get(nid) || []) {
+      if (l.origin_id != null) stack.push(String(l.origin_id));
+    }
+  }
+  return ids;
+}
+
+// Per-mode sampler/scheduler defaults. Every mode owns its own sampler and
+// scheduler: a mode without a stored choice falls back to the documented H3
+// pipeline (res_multistep/simple), except Character Sheet which uses euler /
+// linear_quadratic. Mirrored in web/one_node_minimax_h3.js (kept in sync).
+export function modeSamplerScheduler(mode, stored) {
+  const def = mode === "charsheet" ? ["euler", "linear_quadratic"] : ["res_multistep", "simple"];
+  return [
+    stored && stored.samplerName !== undefined ? stored.samplerName : def[0],
+    stored && stored.schedulerName !== undefined ? stored.schedulerName : def[1],
+  ];
+}

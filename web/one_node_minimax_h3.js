@@ -658,6 +658,53 @@ function fmtDur(ms){
 // POST body for /prompt when queueing a job. Mirrored in h3_helpers.mjs (kept in sync).
 const queuePromptPayload=(wf,clientId)=>({prompt:wf,client_id:clientId,extra_data:{enable_previews:true}});
 
+// Prompt socket adoption. The optional prompt forceInput socket cannot feed the
+// panel in the same queue pass, so the browser adopts text reported by upstream
+// nodes after they run. Mirrored in h3_helpers.mjs (kept in sync).
+function promptTextFromOutput(out){
+  if(!out) return null;
+  let t=out.text!==undefined?out.text:out.string;
+  if(Array.isArray(t)) t=t.join("");
+  if(typeof t!=="string") return null;
+  const s=t.trim();
+  return s?s:null;
+}
+function promptLinkAncestors(links,socketLinkId){
+  const ids=new Set();
+  if(!links||socketLinkId==null) return ids;
+  const intoNode=new Map();
+  for(const l of Object.values(links)){
+    if(!l||l.target_id==null) continue;
+    const t=String(l.target_id);
+    if(!intoNode.has(t)) intoNode.set(t,[]);
+    intoNode.get(t).push(l);
+  }
+  let start=null;
+  for(const l of Object.values(links)){
+    if(l&&String(l.id)===String(socketLinkId)){start=l;break;}
+  }
+  if(!start&&links[socketLinkId]) start=links[socketLinkId];
+  if(!start||start.origin_id==null) return ids;
+  const stack=[String(start.origin_id)];
+  while(stack.length){
+    const nid=stack.pop();
+    if(ids.has(nid)) continue;
+    ids.add(nid);
+    for(const l of intoNode.get(nid)||[]){
+      if(l.origin_id!=null) stack.push(String(l.origin_id));
+    }
+  }
+  return ids;
+}
+// Per-mode sampler/scheduler. Mirrored in h3_helpers.mjs (kept in sync).
+function modeSamplerScheduler(mode,stored){
+  const def=(mode==="charsheet")?["euler","linear_quadratic"]:["res_multistep","simple"];
+  return [
+    (stored&&stored.samplerName!==undefined)?stored.samplerName:def[0],
+    (stored&&stored.schedulerName!==undefined)?stored.schedulerName:def[1],
+  ];
+}
+
 let _dim=null;
 const showDimmer=()=>{ if(!_dim){_dim=mk("div",{position:"fixed",inset:"0",background:"rgba(0,0,0,.7)",zIndex:"999990",display:"none",pointerEvents:"none"});document.body.appendChild(_dim);} _dim.style.display="block"; };
 const hideDimmer=()=>{ if(_dim)_dim.style.display="none"; };
@@ -2032,7 +2079,7 @@ function persist(){
         // quality/resolution/loras survive workflow-tab switches (they used to be
         // captured only when switching mode tabs, so a stale snapshot overwrote
         // the just-changed value on rebuild).
-        S.modeSettings[S.mode]={prompt:S.prompt,steps:S.steps,quality:S.quality,resolution:S.resolution,duration:S.duration,loras:JSON.parse(JSON.stringify(S.loras||[])),optSol:S.optSol,optSage:S.optSage,optKitchen:S.optKitchen,optSla:S.optSla};
+        S.modeSettings[S.mode]={prompt:S.prompt,steps:S.steps,quality:S.quality,resolution:S.resolution,duration:S.duration,loras:JSON.parse(JSON.stringify(S.loras||[])),optSol:S.optSol,optSage:S.optSage,optKitchen:S.optKitchen,optSla:S.optSla,samplerName:S.samplerName,schedulerName:S.schedulerName};
         if(_updRecipeFn){ try{ _updRecipeFn(); }catch(e){} }
         saveState({
           mode:S.mode,prompt:S.prompt,resolution:S.resolution,duration:S.duration,
@@ -3772,6 +3819,19 @@ function persist(){
       const _updChars=()=>{ tx(pCharsEl, `${promptTA.value.length} chars`); };
       promptTA.oninput=()=>{S.prompt=promptTA.value;persist();_updChars();};
       const _setPrompt=(t)=>{ S.prompt=t; promptTA.value=t; persist(); _updChars(); if(S.mode==="chain"&&S.chainClips.length){ S.chainClips[0].prompt=t; chainArea._render(); } };
+      if(!self.__promptLinkHooked){
+        self.__promptLinkHooked=true;
+        api.addEventListener("executed",(evt)=>{
+          const d=evt&&evt.detail;
+          if(!d||!d.output) return;
+          const inp=(self.inputs||[]).find(i=>i&&i.name==="prompt");
+          if(!inp||inp.link==null) return;
+          const links=app&&app.graph&&app.graph.links;
+          if(!promptLinkAncestors(links,inp.link).has(String(d.node))) return;
+          const t=promptTextFromOutput(d.output);
+          if(t) _setPrompt(t);
+        });
+      }
       promptTA.addEventListener("wheel",e=>{ if(document.activeElement===promptTA) e.stopPropagation(); },{passive:true});
       promptWrap.appendChild(promptTA);
       promptWrap.appendChild(pCharsEl);
@@ -5337,6 +5397,7 @@ function persist(){
           prompt:S.prompt,steps:S.steps,quality:S.quality,resolution:S.resolution,duration:S.duration,
           loras:JSON.parse(JSON.stringify(S.loras)),
           optSol:S.optSol,optSage:S.optSage,optKitchen:S.optKitchen,optSla:S.optSla,
+          samplerName:S.samplerName,schedulerName:S.schedulerName,
         };
       };
       const _restoreModeState=()=>{
@@ -5367,6 +5428,13 @@ function persist(){
         if(Array.isArray(ms.refImages)) S.refImages=ms.refImages.slice();
         if(Array.isArray(ms.refVideos)) S.refVideos=ms.refVideos.map(v=>(typeof v==="string")?{name:v,useAudio:false}:{name:(v&&v.name)||"",useAudio:!!(v&&v.useAudio)});
         if(Array.isArray(ms.refAudios)) S.refAudios=ms.refAudios.slice();
+        const _samp=modeSamplerScheduler(S.mode,ms);
+        S.samplerName=_samp[0];
+        S.schedulerName=_samp[1];
+        if(samplerDD) samplerDD.set(S.samplerName);
+        if(schedDD) schedDD.set(S.schedulerName);
+        if(imgAdvSampler) imgAdvSampler.set(S.samplerName);
+        if(imgAdvSched) imgAdvSched.set(S.schedulerName);
       };
       const _switchMode=(m)=>{
         if(S.mode===m) return;
