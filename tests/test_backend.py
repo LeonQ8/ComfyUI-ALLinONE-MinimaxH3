@@ -628,6 +628,50 @@ class TestSlaStatus(_NodesTestBase):
         self.assertTrue(resp.kwargs["data"]["found"])
 
 
+class TestSpectrumStatus(_NodesTestBase):
+    """The Spectrum availability check must be safe without
+    ComfyUI-Spectrum-MiniMax-H3 and reflect the pack once it registers
+    SpectrumApplyMiniMaxH3."""
+
+    def _fake_nodes_module(self, mappings):
+        import sys
+
+        nodes = types.ModuleType("nodes")
+        nodes.NODE_CLASS_MAPPINGS = mappings
+        sys.modules["nodes"] = nodes
+        self._added_nodes_module = True
+
+    def tearDown(self):
+        super().tearDown()
+        if getattr(self, "_added_nodes_module", False):
+            import sys
+
+            sys.modules.pop("nodes", None)
+
+    def test_reports_false_when_pack_absent(self):
+        self.assertFalse(self.nodes._spectrum_installed())
+
+    def test_reports_false_when_class_not_registered(self):
+        self._fake_nodes_module({"SomeOtherNode": object})
+        self.assertFalse(self.nodes._spectrum_installed())
+
+    def test_reports_true_when_registered(self):
+        self._fake_nodes_module({"SpectrumApplyMiniMaxH3": object, "SomeOtherNode": object})
+        self.assertTrue(self.nodes._spectrum_installed())
+
+    def test_route_returns_found_flag(self):
+        resp = _run(self.nodes.get_spectrum_status(_FakeRequest({})))
+        data = resp.kwargs["data"]
+        self.assertTrue(data["ok"])
+        self.assertIn("found", data)
+        self.assertFalse(data["found"])
+
+    def test_route_reflects_registered_class(self):
+        self._fake_nodes_module({"SpectrumApplyMiniMaxH3": object})
+        resp = _run(self.nodes.get_spectrum_status(_FakeRequest({})))
+        self.assertTrue(resp.kwargs["data"]["found"])
+
+
 class TestGalleryMigration(_NodesTestBase):
     def _make_output(self, *files):
         out_root = Path(self.nodes._get_output_dir())

@@ -736,3 +736,31 @@ export function modeSamplerScheduler(mode, stored) {
     stored && stored.schedulerName !== undefined ? stored.schedulerName : def[1],
   ];
 }
+
+// Spectrum Apply MiniMax H3 input values. The node is an approximate
+// step-skipping model patch (forecasts the post-transformer hidden state and
+// skips H3 transformer blocks), so it stacks with every attention chip and is
+// a standalone toggle, not part of the quality-preset flag table. Values are
+// the upstream node defaults from ComfyUI-Spectrum-MiniMax-H3; overrides let
+// callers tune without duplicating the whole schema.
+export function spectrumNodeInputs(overrides) {
+  return {
+    enabled: true,
+    blend_weight: 0.5,
+    degree: 1,
+    ridge_lambda: 0.1,
+    window_size: 2.0,
+    flex_window: 0.75,
+    warmup_steps: 1,
+    tail_actual_steps: 1,
+    max_history: 8,
+    debug: false,
+    history_storage: "system_ram",
+    bootstrap_first_forecast: true,
+    offline_smoothing_replay: true,
+    audio_blend_weight: 0.0,
+    offline_archive_storage: "system_ram",
+    model_aware_mode: "off",
+    ...(overrides || {}),
+  };
+}

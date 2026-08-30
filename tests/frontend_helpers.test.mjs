@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { aspect, sizeOf, sameSize, mapMaskPoint, orientRes, fitResolutionToAspect, planMaskCrop, maskTrackingPlan, resolveFitPrimary, imgProfileShort, imgAspectName, viewQuery, thumbQuery, isImageItem, inputFileExists, h3SamCheckpoints, clampImageMP, planImageCanvas, planImageCanvasForRatio, planUpscaleTarget, IMG_MAX_MP, IMG_MIN_MP, IMG_ASPECT_RATIOS, resolveQualityFlags, matchQualityPreset, QUALITY_PRESET_FLAGS, planExtend, queuePromptPayload, settleQueuedOutput, maskSpeechSyncPrompt, cropFrameIndex, cropBoxAt, cropReportText, lumaToAlpha, maskDetectionHint, maskRunErrorHint, clampTimecode, compareGridColumns, compareGridRows, compareWindow, syncTargets, formatTimecode, makeCompareSlots, charsheetPanelIndices, CHARSHEET_LENGTH, promptTextFromOutput, promptLinkAncestors, modeSamplerScheduler } from "../web/h3_helpers.mjs";
+import { aspect, sizeOf, sameSize, mapMaskPoint, orientRes, fitResolutionToAspect, planMaskCrop, maskTrackingPlan, resolveFitPrimary, imgProfileShort, imgAspectName, viewQuery, thumbQuery, isImageItem, inputFileExists, h3SamCheckpoints, clampImageMP, planImageCanvas, planImageCanvasForRatio, planUpscaleTarget, IMG_MAX_MP, IMG_MIN_MP, IMG_ASPECT_RATIOS, resolveQualityFlags, matchQualityPreset, QUALITY_PRESET_FLAGS, planExtend, queuePromptPayload, settleQueuedOutput, maskSpeechSyncPrompt, cropFrameIndex, cropBoxAt, cropReportText, lumaToAlpha, maskDetectionHint, maskRunErrorHint, clampTimecode, compareGridColumns, compareGridRows, compareWindow, syncTargets, formatTimecode, makeCompareSlots, charsheetPanelIndices, CHARSHEET_LENGTH, promptTextFromOutput, promptLinkAncestors, modeSamplerScheduler, spectrumNodeInputs } from "../web/h3_helpers.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, "..");
@@ -708,6 +708,46 @@ test("bundle wires the SLA chip, availability probe, and SLA Draft chain", () =>
   assert.ok(!/wf\["9"\]\.inputs\.scheduler="simple"/.test(bundle), "the draft preset must never force the scheduler at build time");
   assert.ok(!/sampler_name="euler"/.test(bundle), "the draft preset must never force the sampler at build time");
   assert.ok(bundle.includes('_QL={balanced:"Balanced"'), "the quality label map must carry the draft label");
+});
+
+test("spectrumNodeInputs ships the upstream defaults", () => {
+  const n = spectrumNodeInputs();
+  assert.equal(n.enabled, true);
+  assert.equal(n.blend_weight, 0.5);
+  assert.equal(n.degree, 1);
+  assert.equal(n.ridge_lambda, 0.1);
+  assert.equal(n.window_size, 2.0);
+  assert.equal(n.flex_window, 0.75);
+  assert.equal(n.warmup_steps, 1);
+  assert.equal(n.tail_actual_steps, 1);
+  assert.equal(n.max_history, 8);
+  assert.equal(n.history_storage, "system_ram");
+  assert.equal(n.bootstrap_first_forecast, true);
+  assert.equal(n.offline_smoothing_replay, true);
+  assert.equal(n.audio_blend_weight, 0.0);
+  assert.equal(n.offline_archive_storage, "system_ram");
+  assert.equal(n.model_aware_mode, "off");
+});
+
+test("spectrumNodeInputs merges overrides without losing defaults", () => {
+  const n = spectrumNodeInputs({ blend_weight: 0.75, flex_window: 3.0, model_aware_mode: "full" });
+  assert.equal(n.blend_weight, 0.75);
+  assert.equal(n.flex_window, 3.0);
+  assert.equal(n.model_aware_mode, "full");
+  assert.equal(n.degree, 1);
+  assert.equal(n.offline_smoothing_replay, true);
+});
+
+test("bundle wires the Spectrum chip, availability probe, and node insertion", () => {
+  const bundle = readFileSync(bundlePath, "utf8");
+  assert.ok(bundle.includes('_mkOptChip("optSpectrum","Spectrum"'), "the quality row must expose a Spectrum chip");
+  assert.ok(bundle.includes("_checkSpectrumAvail"), "the Spectrum chip must probe availability on load");
+  assert.ok(bundle.includes("/h3one/spectrum_status"), "the Spectrum availability probe must call the backend route");
+  assert.ok(bundle.includes("Spectrum is not available"), "the Spectrum chip must explain a missing pack");
+  assert.ok(bundle.includes('class_type:"SpectrumApplyMiniMaxH3"'), "the video build must insert the Spectrum node");
+  assert.ok(bundle.includes("optSpectrum:S.optSpectrum"), "the Spectrum toggle must persist with the mode state");
+  assert.ok(bundle.includes("saved.optSpectrum===true"), "the Spectrum toggle must load from saved state");
+  assert.ok(bundle.includes("spectrumNodeInputs"), "the Spectrum node must be built from the shared input helper");
 });
 
 function guardOffenders(bundle) {

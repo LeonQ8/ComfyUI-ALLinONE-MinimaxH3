@@ -676,6 +676,28 @@ async def get_sla_status(request):
     return web.json_response({"ok": True, "found": _sla_installed()})
 
 
+def _spectrum_installed():
+    """True when ComfyUI-Spectrum-MiniMax-H3 is loaded and registered the
+    SpectrumApplyMiniMaxH3 node.
+
+    Mirrors _sla_installed: the pack's nodes are registered in ComfyUI's global
+    NODE_CLASS_MAPPINGS when the pack imports, and the import is guarded so a
+    missing pack reports False instead of crashing. Used by the Spectrum chip
+    so users without the pack see a hint instead of a failed queue."""
+    try:
+        from nodes import NODE_CLASS_MAPPINGS
+        return bool(NODE_CLASS_MAPPINGS) and "SpectrumApplyMiniMaxH3" in NODE_CLASS_MAPPINGS
+    except Exception:
+        return False
+
+
+@PromptServer.instance.routes.get("/h3one/spectrum_status")
+async def get_spectrum_status(request):
+    """Reports whether the SpectrumApplyMiniMaxH3 node from
+    ComfyUI-Spectrum-MiniMax-H3 is registered (the Spectrum chip depends on it)."""
+    return web.json_response({"ok": True, "found": _spectrum_installed()})
+
+
 @PromptServer.instance.routes.get("/h3one/config")
 async def get_config(request):
     return web.json_response(_load_config())
