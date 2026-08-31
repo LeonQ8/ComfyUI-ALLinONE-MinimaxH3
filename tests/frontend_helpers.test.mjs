@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { aspect, sizeOf, sameSize, mapMaskPoint, orientRes, fitResolutionToAspect, planMaskCrop, maskTrackingPlan, resolveFitPrimary, imgProfileShort, imgAspectName, viewQuery, thumbQuery, isImageItem, inputFileExists, h3SamCheckpoints, clampImageMP, planImageCanvas, planImageCanvasForRatio, planUpscaleTarget, IMG_MAX_MP, IMG_MIN_MP, IMG_ASPECT_RATIOS, resolveQualityFlags, matchQualityPreset, QUALITY_PRESET_FLAGS, planExtend, queuePromptPayload, settleQueuedOutput, maskSpeechSyncPrompt, cropFrameIndex, cropBoxAt, cropReportText, lumaToAlpha, maskDetectionHint, maskRunErrorHint, clampTimecode, compareGridColumns, compareGridRows, compareWindow, syncTargets, formatTimecode, makeCompareSlots, charsheetPanelIndices, CHARSHEET_LENGTH, promptTextFromOutput, promptLinkAncestors, modeSamplerScheduler, spectrumNodeInputs } from "../web/h3_helpers.mjs";
+import { aspect, sizeOf, sameSize, mapMaskPoint, orientRes, fitResolutionToAspect, planMaskCrop, maskTrackingPlan, resolveFitPrimary, imgProfileShort, imgAspectName, viewQuery, thumbQuery, isImageItem, inputFileExists, h3SamCheckpoints, clampImageMP, planImageCanvas, planImageCanvasForRatio, planUpscaleTarget, IMG_MAX_MP, IMG_MIN_MP, IMG_ASPECT_RATIOS, resolveQualityFlags, matchQualityPreset, QUALITY_PRESET_FLAGS, planExtend, queuePromptPayload, settleQueuedOutput, maskSpeechSyncPrompt, cropFrameIndex, cropBoxAt, cropReportText, lumaToAlpha, maskDetectionHint, maskRunErrorHint, clampTimecode, compareGridColumns, compareGridRows, compareWindow, syncTargets, formatTimecode, makeCompareSlots, charsheetPanelIndices, CHARSHEET_LENGTH, promptTextFromOutput, promptLinkAncestors, modeSamplerScheduler, spectrumNodeInputs, raylightTransform, normalizeRaylight } from "../web/h3_helpers.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, "..");
@@ -1896,4 +1896,223 @@ test("bundle isolates sampler and scheduler per mode", () => {
   assert.ok(bundle.includes("samplerDD.set(S.samplerName)"), "the restored sampler must refresh the visible dropdown");
   assert.ok(bundle.includes("schedDD.set(S.schedulerName)"), "the restored scheduler must refresh the visible dropdown");
   assert.ok(bundle.includes(':["res_multistep","simple"]'), "untouched modes must default to the H3-native pipeline");
+});
+
+// -- Raylight (multi-GPU) transform ------------------------------------------
+
+const RAY_T2V = {
+  "1": { class_type: "CLIPLoader", inputs: { clip_name: "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors", type: "minimax", device: "default" }, _meta: { title: "Load CLIP" } },
+  "2": { class_type: "UNETLoader", inputs: { unet_name: "minimax_h3_fl2va_pruned_int8_convrot.safetensors", weight_dtype: "default" }, _meta: { title: "Load Diffusion Model" } },
+  "3": { class_type: "VAELoader", inputs: { vae_name: "minimax_h3_video_vae_fp16.safetensors" }, _meta: { title: "Load Video VAE" } },
+  "5": { class_type: "MiniMaxH3SigmaShift", inputs: { model: ["2", 0], shift_video: 12, shift_audio: 3 }, _meta: { title: "Sigma Shift" } },
+  "6": { class_type: "MiniMaxH3ReferenceToVideo", inputs: { clip: ["1", 0], vae: ["3", 0], prompt: "test", width: 960, height: 544, length: 124 }, _meta: { title: "H3 Conditioning" } },
+  "7": { class_type: "BasicGuider", inputs: { model: ["5", 0], conditioning: ["6", 0] }, _meta: { title: "Basic Guider" } },
+  "8": { class_type: "RandomNoise", inputs: { noise_seed: 42 }, _meta: { title: "Noise" } },
+  "9": { class_type: "BasicScheduler", inputs: { model: ["5", 0], scheduler: "simple", steps: 30, denoise: 1 }, _meta: { title: "Scheduler" } },
+  "10": { class_type: "KSamplerSelect", inputs: { sampler_name: "res_multistep" }, _meta: { title: "Sampler" } },
+  "11": { class_type: "SamplerCustomAdvanced", inputs: { noise: ["8", 0], guider: ["7", 0], sampler: ["10", 0], sigmas: ["9", 0], latent_image: ["6", 1] }, _meta: { title: "Sampler Custom Advanced" } },
+  "12": { class_type: "VAEDecode", inputs: { samples: ["11", 0], vae: ["3", 0] }, _meta: { title: "VAE Decode" } },
+  "14": { class_type: "CreateVideo", inputs: { images: ["12", 0], fps: 24 }, _meta: { title: "Create Video" } },
+  "15": { class_type: "SaveVideo", inputs: { video: ["14", 0], filename_prefix: "one-node-minimax-h3/h3" }, _meta: { title: "Save Video" } },
+};
+
+function rayRefs(wf) {
+  const dangling = [];
+  for (const [id, node] of Object.entries(wf)) {
+    if (!node || !node.inputs) continue;
+    for (const [k, v] of Object.entries(node.inputs)) {
+      if (Array.isArray(v) && v.length === 2 && typeof v[0] === "string" && !wf[v[0]]) {
+        dangling.push(`${id}.${k} -> ${v[0]}`);
+      }
+    }
+  }
+  return dangling;
+}
+
+test("raylightTransform rewrites the standard sampler chain to Ray nodes", () => {
+  const out = raylightTransform(RAY_T2V, { gpu: 2, ulysses: 2, seed: 7 });
+  assert.equal(out["2"].class_type, "RayUNETLoader");
+  assert.equal(out["5"].class_type, "RayMiniMaxH3SigmaShift");
+  assert.equal(out["7"].class_type, "RayBasicGuider");
+  assert.equal(out["9"].class_type, "RayBasicScheduler");
+  assert.equal(out["11"].class_type, "XFuserSamplerCustomAdvanced");
+  assert.equal(out["ray:init"].class_type, "RayInitializer");
+  assert.equal(out["10"].class_type, "KSamplerSelect", "KSamplerSelect must be untouched");
+  assert.equal(out["12"].class_type, "VAEDecode", "decode must stay");
+  assert.equal(out["15"].class_type, "SaveVideo", "save must stay");
+});
+
+test("raylightTransform wires the Ray chain end to end", () => {
+  const out = raylightTransform(RAY_T2V, { gpu: 2, ulysses: 2, seed: 7 });
+  assert.deepEqual(out["2"].inputs.ray_actors_init, ["ray:init", 0], "loader must take the initializer");
+  assert.deepEqual(out["5"].inputs.ray_actors, ["2", 0], "sigma shift must take the loader's ray_actors");
+  assert.deepEqual(out["7"].inputs.ray_actors, ["5", 0], "guider must take the shifted ray_actors");
+  assert.deepEqual(out["9"].inputs.ray_actors, ["5", 0], "scheduler must take the shifted ray_actors");
+  assert.equal(out["5"].inputs.shift_video, 12, "shift values must be preserved from the node");
+  assert.equal(out["5"].inputs.shift_audio, 3);
+  assert.deepEqual(out["11"].inputs.guider, ["7", 0], "sampler must keep its guider link");
+  assert.deepEqual(out["11"].inputs.sampler, ["10", 0]);
+  assert.deepEqual(out["11"].inputs.sigmas, ["9", 0]);
+  assert.deepEqual(out["11"].inputs.latent_image, ["6", 1]);
+  assert.equal(out["11"].inputs.add_noise, true, "the XFuser sampler must add noise internally");
+  assert.equal(out["11"].inputs.noise_seed, 42, "the seed must be adopted from the dropped RandomNoise node");
+  assert.equal(out["8"], undefined, "RandomNoise must be removed");
+  assert.deepEqual(out["12"].inputs.samples, ["11", 0], "decode must still read the sampler output");
+  assert.deepEqual(rayRefs(out), [], "every remaining link must resolve");
+});
+
+test("raylightTransform: no sigma shift means the guider reads the loader directly", () => {
+  const wf = JSON.parse(JSON.stringify(RAY_T2V));
+  delete wf["5"];
+  wf["7"].inputs.model = ["2", 0];
+  wf["9"].inputs.model = ["2", 0];
+  const out = raylightTransform(wf, {});
+  assert.equal(out["5"], undefined);
+  assert.deepEqual(out["7"].inputs.ray_actors, ["2", 0]);
+  assert.deepEqual(out["9"].inputs.ray_actors, ["2", 0]);
+  assert.deepEqual(rayRefs(out), []);
+});
+
+test("raylightTransform rebuilds LoRAs through RayLoraLoader into the loader", () => {
+  const out = raylightTransform(RAY_T2V, { loras: [{ name: "a.safetensors", strength: 0.8 }, { name: "b.safetensors", strength: 1 }] });
+  assert.equal(out["ray:lora0"].class_type, "RayLoraLoader");
+  assert.equal(out["ray:lora1"].class_type, "RayLoraLoader");
+  assert.deepEqual(out["ray:lora1"].inputs.prev_ray_lora, ["ray:lora0", 0], "LoRAs must chain");
+  assert.deepEqual(out["2"].inputs.lora, ["ray:lora1", 0], "the last LoRA must feed the loader");
+  assert.equal(out["ray:lora0"].inputs.lora_name, "a.safetensors");
+  assert.equal(out["ray:lora0"].inputs.strength_model, 0.8);
+  assert.deepEqual(rayRefs(out), []);
+});
+
+test("raylightTransform handles a chain-style multi-section graph with one initializer", () => {
+  const wf = {
+    "s:1": { class_type: "CLIPLoader", inputs: { clip_name: "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors", type: "minimax" }, _meta: {} },
+    "s:2": { class_type: "UNETLoader", inputs: { unet_name: "minimax_h3_fl2va_pruned_int8_convrot.safetensors", weight_dtype: "default" }, _meta: {} },
+    "s:5": { class_type: "MiniMaxH3SigmaShift", inputs: { model: ["s:2", 0], shift_video: 12, shift_audio: 3 }, _meta: {} },
+    "c0:cond": { class_type: "MiniMaxH3MotionContext", inputs: { clip: ["s:1", 0], prompt: "a" }, _meta: {} },
+    "c1:cond": { class_type: "MiniMaxH3MotionContext", inputs: { clip: ["s:1", 0], prompt: "b" }, _meta: {} },
+    "c0:guider": { class_type: "BasicGuider", inputs: { model: ["s:5", 0], conditioning: ["c0:cond", 0] }, _meta: {} },
+    "c1:guider": { class_type: "BasicGuider", inputs: { model: ["s:5", 0], conditioning: ["c1:cond", 0] }, _meta: {} },
+    "c0:noise": { class_type: "RandomNoise", inputs: { noise_seed: 11 }, _meta: {} },
+    "c1:noise": { class_type: "RandomNoise", inputs: { noise_seed: 11 }, _meta: {} },
+    "c0:sched": { class_type: "BasicScheduler", inputs: { model: ["s:5", 0], scheduler: "simple", steps: 30, denoise: 1 }, _meta: {} },
+    "c1:sched": { class_type: "BasicScheduler", inputs: { model: ["s:5", 0], scheduler: "simple", steps: 30, denoise: 1 }, _meta: {} },
+    "c0:ksel": { class_type: "KSamplerSelect", inputs: { sampler_name: "res_multistep" }, _meta: {} },
+    "c1:ksel": { class_type: "KSamplerSelect", inputs: { sampler_name: "res_multistep" }, _meta: {} },
+    "c0:sampler": { class_type: "SamplerCustomAdvanced", inputs: { noise: ["c0:noise", 0], guider: ["c0:guider", 0], sampler: ["c0:ksel", 0], sigmas: ["c0:sched", 0], latent_image: ["c0:cond", 1] }, _meta: {} },
+    "c1:sampler": { class_type: "SamplerCustomAdvanced", inputs: { noise: ["c1:noise", 0], guider: ["c1:guider", 0], sampler: ["c1:ksel", 0], sigmas: ["c1:sched", 0], latent_image: ["c1:cond", 1] }, _meta: {} },
+  };
+  const out = raylightTransform(wf, {});
+  assert.equal(out["s:2"].class_type, "RayUNETLoader");
+  assert.equal(out["s:5"].class_type, "RayMiniMaxH3SigmaShift");
+  assert.equal(Object.keys(out).filter((id) => out[id].class_type === "RayInitializer").length, 1, "chain must share one initializer");
+  for (const idx of ["c0", "c1"]) {
+    assert.equal(out[`${idx}:guider`].class_type, "RayBasicGuider", `${idx} guider must be Ray`);
+    assert.equal(out[`${idx}:sched`].class_type, "RayBasicScheduler");
+    assert.equal(out[`${idx}:sampler`].class_type, "XFuserSamplerCustomAdvanced");
+    assert.deepEqual(out[`${idx}:guider`].inputs.ray_actors, ["s:5", 0]);
+    assert.deepEqual(out[`${idx}:sched`].inputs.ray_actors, ["s:5", 0]);
+    assert.equal(out[`${idx}:sampler`].inputs.noise_seed, 11, "each section sampler must adopt its own noise seed");
+    assert.equal(out[`${idx}:noise`], undefined);
+  }
+  assert.deepEqual(rayRefs(out), []);
+});
+
+test("raylightTransform drops host-side MODEL patches and cleans their references", () => {
+  const wf = JSON.parse(JSON.stringify(RAY_T2V));
+  wf["100"] = { class_type: "LoraLoaderModelOnly", inputs: { model: ["2", 0], lora_name: "x.safetensors", strength_model: 1 }, _meta: {} };
+  wf["5"].inputs.model = ["100", 0];
+  wf["101"] = { class_type: "SolAttnPatch", inputs: { model: ["5", 0] }, _meta: {} };
+  wf["7"].inputs.model = ["101", 0];
+  wf["9"].inputs.model = ["101", 0];
+  wf["102"] = { class_type: "ModelPreviewOverrideKJ", inputs: { model: ["101", 0] }, _meta: {} };
+  const out = raylightTransform(wf, { loras: [{ name: "y.safetensors", strength: 1 }] });
+  for (const id of ["100", "101", "102"]) assert.equal(out[id], undefined, `${id} must be dropped`);
+  assert.equal(out["5"].inputs.ray_actors[0], "2", "shift must read the loader, not the dropped patch chain");
+  assert.deepEqual(out["2"].inputs.lora, ["ray:lora0", 0], "the real LoRA must still wire in");
+  assert.deepEqual(rayRefs(out), [], "no reference may point at a dropped node");
+});
+
+test("raylightTransform throws when the graph has no UNETLoader", () => {
+  const wf = JSON.parse(JSON.stringify(RAY_T2V));
+  delete wf["2"];
+  assert.throws(() => raylightTransform(wf, {}), /no UNETLoader/);
+});
+
+test("raylightTransform throws on the Turbo sampler", () => {
+  const wf = JSON.parse(JSON.stringify(RAY_T2V));
+  wf["10"] = { class_type: "MiniMaxH3TurboSampler", inputs: {}, _meta: {} };
+  assert.throws(() => raylightTransform(wf, {}), /Turbo/);
+});
+
+test("raylightTransform picks the Advanced initializer when GPU_SELECT is given", () => {
+  const out = raylightTransform(RAY_T2V, { gpuSelect: "0,1" });
+  assert.equal(out["ray:init"].class_type, "RayInitializerAdvanced");
+  assert.equal(out["ray:init"].inputs.GPU_SELECT, "0,1");
+  assert.equal(out["ray:init"].inputs.GPU, 2);
+});
+
+test("raylightTransform clamps initializer numbers and defaults attention", () => {
+  const out = raylightTransform(RAY_T2V, { gpu: 999, ulysses: -3, ring: "x", attention: "" });
+  assert.equal(out["ray:init"].inputs.GPU, 64);
+  assert.equal(out["ray:init"].inputs.ulysses_degree, 0);
+  assert.equal(out["ray:init"].inputs.ring_degree, 1);
+  assert.equal(out["ray:init"].inputs.XFuser_attention, "TORCH_FLASH");
+});
+
+test("raylightTransform leaves the input workflow unmodified", () => {
+  const before = JSON.stringify(RAY_T2V);
+  raylightTransform(RAY_T2V, {});
+  assert.equal(JSON.stringify(RAY_T2V), before, "the transform must not mutate its input");
+});
+
+test("normalizeRaylight fills safe defaults", () => {
+  const r = normalizeRaylight(undefined);
+  assert.equal(r.enabled, false);
+  assert.equal(r.gpu, 2);
+  assert.equal(r.ulysses, 2);
+  assert.equal(r.ring, 1);
+  assert.equal(r.cfgDegree, 1);
+  assert.equal(r.dpDegree, 1);
+  assert.equal(r.attention, "TORCH_FLASH");
+  assert.equal(r.gpuSelect, "");
+  assert.equal(r.fsdp, false);
+});
+
+test("normalizeRaylight preserves and clamps stored values", () => {
+  const r = normalizeRaylight({ enabled: true, gpu: 8, ulysses: 4, attention: "SAGE", gpuSelect: "0,1,2", fsdp: true, skipCommTest: true });
+  assert.equal(r.enabled, true);
+  assert.equal(r.gpu, 8);
+  assert.equal(r.ulysses, 4);
+  assert.equal(r.attention, "SAGE");
+  assert.equal(r.gpuSelect, "0,1,2");
+  assert.equal(r.fsdp, true);
+  assert.equal(r.skipCommTest, true);
+  assert.equal(normalizeRaylight({ gpu: 0, ulysses: 100 }).gpu, 1);
+  assert.equal(normalizeRaylight({ gpu: 0, ulysses: 100 }).ulysses, 64);
+});
+
+test("bundle wires the Raylight toggle, status probe, and transform", () => {
+  const bundle = readFileSync(bundlePath, "utf8");
+  assert.ok(bundle.includes("function raylightTransform(wf,cfg)"), "bundle must mirror raylightTransform");
+  assert.ok(bundle.includes("function normalizeRaylight(r)"), "bundle must mirror normalizeRaylight");
+  assert.ok(bundle.includes("/h3one/raylight_status"), "the settings must probe the backend route");
+  assert.ok(bundle.includes("Raylight (multi-GPU)"), "the settings must label the multi-GPU section");
+  assert.ok(bundle.includes("_raylightApply(wf)"), "the build must wrap completed workflows");
+  assert.ok(bundle.includes('_raylightApply(await _buildChain())'), "chain mode must run through the transform");
+  assert.ok(bundle.includes('_raylightApply(await _buildCharSheet())'), "char sheet mode must run through the transform");
+  assert.ok(bundle.includes("raylightTransform(wf,{"), "the transform must be fed the ray config");
+  assert.ok(bundle.includes('class_type:"RayInitializer"'), "the transform must build the initializer");
+  assert.ok(bundle.includes('class_type:"RayUNETLoader"'), "the transform must swap the loader");
+  assert.ok(bundle.includes('class_type:"RayBasicGuider"'), "the transform must swap the guider");
+  assert.ok(bundle.includes('class_type:"RayBasicScheduler"'), "the transform must swap the scheduler");
+  assert.ok(bundle.includes('class_type:"XFuserSamplerCustomAdvanced"'), "the transform must swap the sampler");
+  assert.ok(bundle.includes('class_type:"RayLoraLoader"'), "the transform must rebuild LoRAs");
+  assert.ok(bundle.includes('class_type:"RayMiniMaxH3SigmaShift"'), "the transform must swap the sigma shift");
+  assert.ok(bundle.includes("_rayOn"), "the bundle must track the raylight-on state");
+  assert.ok(bundle.includes("Raylight is on - the attention accelerators cannot ride Ray workers"), "the quality chips must explain why they are disabled");
+  assert.ok(bundle.includes("Live Preview is not available with Raylight on"), "live preview must be blocked while raylight is on");
+  assert.ok(bundle.includes("normalizeRaylight(saved.raylight)"), "the state must load stored raylight settings");
+  assert.ok(bundle.includes("Raylight cannot run the Turbo or SLA Draft quality presets"), "the build must guard turbo and draft quality");
+  assert.ok(bundle.includes("Raylight is enabled but the Raylight pack is not installed"), "the build must fail clearly when the pack is missing");
 });

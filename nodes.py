@@ -676,6 +676,27 @@ async def get_sla_status(request):
     return web.json_response({"ok": True, "found": _sla_installed()})
 
 
+def _raylight_installed():
+    """True when the Raylight pack registered its sampler chain.
+
+    Raylight mode rebuilds the workflow with Raylight class_types, so the
+    feature needs the pack loaded in ComfyUI. Checked against the same global
+    NODE_CLASS_MAPPINGS the SLA chip uses; a missing pack reports False instead
+    of crashing the availability probe."""
+    try:
+        from nodes import NODE_CLASS_MAPPINGS
+        return bool(NODE_CLASS_MAPPINGS) and "XFuserSamplerCustomAdvanced" in NODE_CLASS_MAPPINGS
+    except Exception:
+        return False
+
+
+@PromptServer.instance.routes.get("/h3one/raylight_status")
+async def get_raylight_status(request):
+    """Reports whether the Raylight pack is registered (the multi-GPU mode
+    toggle depends on it)."""
+    return web.json_response({"ok": True, "found": _raylight_installed()})
+
+
 def _spectrum_installed():
     """True when ComfyUI-Spectrum-MiniMax-H3 is loaded and registered the
     SpectrumApplyMiniMaxH3 node.

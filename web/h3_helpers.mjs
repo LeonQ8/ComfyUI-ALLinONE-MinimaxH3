@@ -764,3 +764,189 @@ export function spectrumNodeInputs(overrides) {
     ...(overrides || {}),
   };
 }
+
+// ---------------------------------------------------------------------------
+// Raylight (komikndr/raylight) multi-GPU transform
+// ---------------------------------------------------------------------------
+// Every video mode builds the same standard external sampler chain (BasicGuider
+// / RandomNoise / BasicScheduler / KSamplerSelect / SamplerCustomAdvanced) fed
+// by a MODEL from UNETLoader + MiniMaxH3SigmaShift. Raylight replaces that
+// chain with Ray worker nodes:
+//
+//   RayInitializer -> RayUNETLoader -> [RayLoraLoader]
+//     -> RayMiniMaxH3SigmaShift -> RayBasicGuider / RayBasicScheduler
+//     -> XFuserSamplerCustomAdvanced
+//
+// The workers own the MODEL, so host-side MODEL patches (SolAttn, Sage,
+// Kitchen, SLA, Spectrum, Turbo LoRA, live preview) cannot ride them and are
+// dropped. LoRAs are rebuilt through RayLoraLoader. The transform walks the
+// finished workflow generically (no hardcoded node ids), so every mode that
+// uses the standard chain shares one path; chain mode reuses one initializer
+// and loader across all of its sections.
+const RAYLIGHT_DROPPED = new Set([
+  "LoraLoaderModelOnly",
+  "SolAttnPatch",
+  "MiniMaxH3MemoryEfficientSageAttentionPatch",
+  "ModelAttentionBackend",
+  "H3SLAAttention",
+  "MiniMaxH3TurboLoRA",
+  "H3AdaLNLoRAFix",
+  "ModelPreviewOverrideKJ",
+  "SpectrumApplyMiniMaxH3",
+  "RandomNoise",
+]);
+
+function _rlInt(value, min, max, dflt) {
+  const n = Math.round(Number(value));
+  return Number.isFinite(n) ? Math.max(min, Math.min(max, n)) : dflt;
+}
+
+function _rlNum(value, dflt) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : dflt;
+}
+
+export function normalizeRaylight(r) {
+  const src = r && typeof r === "object" ? r : {};
+  return {
+    enabled: src.enabled === true,
+    gpu: _rlInt(src.gpu, 1, 64, 2),
+    ulysses: _rlInt(src.ulysses, 0, 64, 2),
+    ring: _rlInt(src.ring, 0, 64, 1),
+    cfgDegree: _rlInt(src.cfgDegree, 0, 2, 1),
+    dpDegree: _rlInt(src.dpDegree, 0, 64, 1),
+    syncUlysses: src.syncUlysses === true,
+    clearVram: src.clearVram === true,
+    fsdp: src.fsdp === true,
+    fsdpCpuOffload: src.fsdpCpuOffload === true,
+    attention: typeof src.attention === "string" && src.attention ? src.attention : "TORCH_FLASH",
+    gpuSelect: typeof src.gpuSelect === "string" ? src.gpuSelect : "",
+    skipCommTest: src.skipCommTest === true,
+    useMmap: src.useMmap === true,
+  };
+}
+
+export function raylightTransform(wf, cfg) {
+  const c = cfg || {};
+  const out = {};
+  for (const id of Object.keys(wf || {})) {
+    const n = wf[id];
+    out[id] = { ...n, inputs: { ...(n.inputs || {}) } };
+  }
+  const ids = Object.keys(out);
+  const classIds = (cls) => ids.filter((id) => out[id] && out[id].class_type === cls);
+  const unetIds = classIds("UNETLoader");
+  const shiftIds = classIds("MiniMaxH3SigmaShift");
+  const guiderIds = classIds("BasicGuider");
+  const schedIds = classIds("BasicScheduler");
+  const samplerIds = classIds("SamplerCustomAdvanced");
+  const noiseIds = classIds("RandomNoise");
+
+  if (!unetIds.length) {
+    throw new Error("Raylight needs a standard H3 sampler chain. This mode has no UNETLoader, so it cannot run with Raylight.");
+  }
+  if (classIds("MiniMaxH3TurboSampler").length) {
+    throw new Error("Raylight cannot run the Turbo preset. Pick a non-Turbo quality preset first.");
+  }
+
+  const seed = noiseIds.length
+    ? _rlNum(out[noiseIds[0]].inputs.noise_seed, _rlNum(c.seed, 0))
+    : _rlNum(c.seed, 0);
+
+  const initId = "ray:init";
+  const initInputs = {
+    ray_cluster_address: "local",
+    ray_cluster_namespace: "default",
+    GPU: _rlInt(c.gpu, 1, 64, 2),
+    ulysses_degree: _rlInt(c.ulysses, 0, 64, 2),
+    ring_degree: _rlInt(c.ring, 0, 64, 1),
+    cfg_degree: _rlInt(c.cfgDegree, 0, 2, 1),
+    dp_degree: _rlInt(c.dpDegree, 0, 64, 1),
+    sync_ulysses: !!c.syncUlysses,
+    clear_vram_after_sampling: !!c.clearVram,
+    FSDP: !!c.fsdp,
+    FSDP_CPU_OFFLOAD: !!c.fsdpCpuOffload,
+    XFuser_attention: typeof c.attention === "string" && c.attention ? c.attention : "TORCH_FLASH",
+    skip_comm_test: !!c.skipCommTest,
+    use_mmap: !!c.useMmap,
+  };
+  const gpuSelect = typeof c.gpuSelect === "string" ? c.gpuSelect.trim() : "";
+  out[initId] = gpuSelect
+    ? { class_type: "RayInitializerAdvanced", inputs: { ...initInputs, GPU_SELECT: gpuSelect }, _meta: { title: "Raylight Initializer (Advanced)" } }
+    : { class_type: "RayInitializer", inputs: initInputs, _meta: { title: "Raylight Initializer" } };
+
+  unetIds.forEach((id) => {
+    const n = out[id];
+    out[id] = {
+      class_type: "RayUNETLoader",
+      inputs: {
+        unet_name: n.inputs.unet_name || "",
+        weight_dtype: n.inputs.weight_dtype || "default",
+        ray_actors_init: [initId, 0],
+      },
+      _meta: { ...(n._meta || {}), title: (n._meta && n._meta.title) || "Load Diffusion Model (Ray)" },
+    };
+  });
+  const unetOutId = unetIds[0];
+  let raySrc = [unetOutId, 0];
+
+  const loras = Array.isArray(c.loras) ? c.loras.filter((l) => l && l.name) : [];
+  let prevLora = null;
+  loras.forEach((l, i) => {
+    const id = "ray:lora" + i;
+    const inputs = { lora_name: l.name, strength_model: _rlNum(l.strength, 1.0) };
+    if (prevLora) inputs.prev_ray_lora = [prevLora, 0];
+    out[id] = { class_type: "RayLoraLoader", inputs, _meta: { title: "LoRA (Ray) " + (i + 1) } };
+    prevLora = id;
+  });
+  if (prevLora) out[unetOutId].inputs.lora = [prevLora, 0];
+
+  if (shiftIds.length) {
+    shiftIds.forEach((id) => {
+      const n = out[id];
+      out[id] = {
+        class_type: "RayMiniMaxH3SigmaShift",
+        inputs: {
+          ray_actors: [unetOutId, 0],
+          shift_video: _rlNum(n.inputs.shift_video, 12),
+          shift_audio: _rlNum(n.inputs.shift_audio, 3),
+        },
+        _meta: { ...(n._meta || {}), title: (n._meta && n._meta.title) || "H3 Sigma Shift (Ray)" },
+      };
+    });
+    raySrc = [shiftIds[0], 0];
+  }
+
+  for (const id of ids) {
+    if (out[id] && RAYLIGHT_DROPPED.has(out[id].class_type)) delete out[id];
+  }
+
+  guiderIds.forEach((id) => {
+    const n = out[id];
+    const inputs = { ray_actors: raySrc };
+    if (n.inputs.conditioning !== undefined) inputs.conditioning = n.inputs.conditioning;
+    out[id] = { class_type: "RayBasicGuider", inputs, _meta: { ...(n._meta || {}), title: (n._meta && n._meta.title) || "Basic Guider (Ray)" } };
+  });
+  schedIds.forEach((id) => {
+    const n = out[id];
+    const inputs = { ray_actors: raySrc };
+    for (const k of ["scheduler", "steps", "denoise"]) if (n.inputs[k] !== undefined) inputs[k] = n.inputs[k];
+    out[id] = { class_type: "RayBasicScheduler", inputs, _meta: { ...(n._meta || {}), title: (n._meta && n._meta.title) || "Scheduler (Ray)" } };
+  });
+  samplerIds.forEach((id) => {
+    const n = out[id];
+    const inputs = { add_noise: true, noise_seed: seed };
+    for (const k of ["guider", "sampler", "sigmas", "latent_image"]) if (n.inputs[k] !== undefined) inputs[k] = n.inputs[k];
+    out[id] = { class_type: "XFuserSamplerCustomAdvanced", inputs, _meta: { ...(n._meta || {}), title: (n._meta && n._meta.title) || "XFuser Sampler Custom Advanced" } };
+  });
+
+  for (const id of Object.keys(out)) {
+    const n = out[id];
+    if (!n || !n.inputs) continue;
+    for (const k of Object.keys(n.inputs)) {
+      const v = n.inputs[k];
+      if (Array.isArray(v) && v.length === 2 && typeof v[0] === "string" && !out[v[0]]) delete n.inputs[k];
+    }
+  }
+  return out;
+}
