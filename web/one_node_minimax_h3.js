@@ -2024,7 +2024,7 @@ app.registerExtension({
           maskThreshold:   Number.isFinite(Number(saved.maskThreshold))?Number(saved.maskThreshold):0.5,
           maskCropScale:   Number.isFinite(Number(saved.maskCropScale))?Number(saved.maskCropScale):1.5,
           maskAudioMode: ["preserve","preserve_no_lipsync","regenerate"].includes(saved.maskAudioMode)?saved.maskAudioMode:(saved.maskRegenerateAudio===true?"regenerate":"preserve"),
-          maskMotionRef: [192,256,320].includes(Number(saved.maskMotionRef))?Number(saved.maskMotionRef):256,
+          maskMotionType: ["source","silhouette","chroma"].includes(saved.maskMotionType)?saved.maskMotionType:"chroma",
           kf:              (Array.isArray(saved.kf)&&saved.kf.length)?saved.kf.map(k=>({img:k.img||null,pos:k.pos||0,width:(k&&Number(k.width))||null,height:(k&&Number(k.height))||null})):[{img:null,pos:1,width:null,height:null},{img:null,pos:62,width:null,height:null},{img:null,pos:124,width:null,height:null}],
           chainClips:      Array.isArray(saved.chainClips)&&saved.chainClips.length? saved.chainClips : [{prompt:"",duration:5},{prompt:"",duration:5}],
           models:          Object.assign({}, DEFAULT_MODELS, saved.models||{}),
@@ -2120,7 +2120,7 @@ function persist(){
           maskVideo:S.maskVideo,maskVideoSize:S.maskVideoSize,maskSeed:S.maskSeed,
           maskStartTime:S.maskStartTime,maskTarget:S.maskTarget,maskThreshold:S.maskThreshold,maskCropScale:S.maskCropScale,
           maskAudioMode:S.maskAudioMode,
-          maskMotionRef:S.maskMotionRef,
+          maskMotionType:S.maskMotionType,
           kf:(S.kf||[]).map(k=>({img:k.img||null,pos:k.pos||0,width:k.width||null,height:k.height||null})),
           models:S.models,speedLora:S.speedLora,speedLoraStrength:S.speedLoraStrength,shiftVideo:S.shiftVideo,shiftAudio:S.shiftAudio,audioOn:S.audioOn,fps:S.fps,
           soundEnabled:S.soundEnabled,sound:S.sound,accent:S.accent,mcLength:S.mcLength,
@@ -4866,13 +4866,14 @@ function persist(){
       const AUDIO_KEY={"Preserve + lip-sync":"preserve","Preserve (no lip-sync)":"preserve_no_lipsync","Regenerate":"regenerate"};
       const AUDIO_LABEL={preserve:"Preserve + lip-sync",preserve_no_lipsync:"Preserve (no lip-sync)",regenerate:"Regenerate"};
       const maskAudioDD=DD(AUDIO_MODES,AUDIO_LABEL[S.maskAudioMode]||"Preserve + lip-sync",v=>{S.maskAudioMode=AUDIO_KEY[v]||"preserve";persist();});
-      const MOTION_REFS=[{label:"Fast 192",v:192},{label:"Balanced 256",v:256},{label:"Sharp 320",v:320}];
-      const motionRefDD=DD(MOTION_REFS.map(m=>m.label),MOTION_REFS.find(m=>m.v===S.maskMotionRef)?.label||"Balanced 256",v=>{S.maskMotionRef=MOTION_REFS.find(m=>m.label===v)?.v||256;persist();});
+      const MOTION_LABEL={chroma:"Chroma noise",silhouette:"Silhouette",source:"Source clip"};
+      const MOTION_KEY={"Chroma noise":"chroma","Silhouette":"silhouette","Source clip":"source"};
+      const maskMotionTypeDD=DD(["Chroma noise","Silhouette","Source clip"],MOTION_LABEL[S.maskMotionType]||"Chroma noise",v=>{S.maskMotionType=MOTION_KEY[v]||"chroma";persist();});
       maskOpts.append(
         maskField("Detection",maskThresholdNI,"SAM 3 text-detection threshold. Lower finds more candidates; higher is stricter."),
         maskField("Crop padding",maskCropNI,"Crop size relative to the tracked subject. 1 is tight; 1.5 leaves useful context."),
-        maskField("Audio",maskAudioDD.el,"Preserve + lip-sync keeps the source soundtrack and drives the replacement's mouth from the source speech, for talking-head edits. Preserve (no lip-sync) keeps the soundtrack identical and adds no speech, for music or non-speaking clips. Regenerate asks H3 to compose a new soundtrack for the edited crop."),
-        maskField("Motion ref",motionRefDD.el,"Resolution of the source video used as the movement reference. It only carries motion, so a low value is fast and still tracks the body; raise it if fine details like hands or hair sway drift. Change it any time, the next run uses it.")
+        maskField("Motion ref",maskMotionTypeDD.el,"How the source movement reaches H3. Chroma noise keeps the scene and the subject's luminance (so articulation and motion survive) but scrambles the subject's colors, so the replacement swaps in from the first frame and the original person cannot bleed in. Silhouette paints the subject as a flat white shape, strongest identity removal but weakest motion. Source clip feeds the real footage, most faithful motion but the original person can copy into the start of the clip."),
+        maskField("Audio",maskAudioDD.el,"Preserve + lip-sync keeps the source soundtrack and drives the replacement's mouth from the source speech, for talking-head edits. Preserve (no lip-sync) keeps the soundtrack identical and adds no speech, for music or non-speaking clips. Regenerate asks H3 to compose a new soundtrack for the edited crop.")
       );
       maskArea.appendChild(maskOpts);
       const maskRefsBox=mk("div",{display:"flex",flexDirection:"column",gap:"6px"});maskArea.appendChild(maskRefsBox);
@@ -7132,31 +7133,11 @@ function persist(){
             wf["24"].inputs.masks=[regionMask,0];
             maskRegionId=regionMask;
           }
-          let firstImgId=null;
           S.refImages.forEach((name,idx)=>{
             const id=newId();
             wf[id]={class_type:"LoadImage",inputs:{image:name},_meta:{title:`Replacement Reference ${idx+1}`}};
             wf["6"].inputs[`ref_images.ref_image_${idx}`]=[id,0];
-            if(idx===0) firstImgId=id;
           });
-          // The tracked source crop rides in as ref_video_0 so H3 re-enacts the
-          // original movement instead of inventing new motion inside the mask.
-          // Pin the replacement identity at frame 0 so that reference video's
-          // original face cannot outrank <Picture 1> (same fix as R2V mode).
-          if(firstImgId){
-            const kfId=newId();
-            wf[kfId]={class_type:"H3IdentityAnchor",inputs:{
-              conditioning:["6",0],
-              vae:["3",0],
-              latent:["6",1],
-              frame_count:["18",4],
-              width:["25",0],
-              height:["25",1],
-              anchor:"first",
-              image:[firstImgId,0],
-            },_meta:{title:"Identity Anchor (frame 0)"}};
-            wf["7"].inputs.conditioning=[kfId,0];
-          }
           const maskCrop=_effectiveMaskCropPlan();
           wf["24"].inputs["mode.crop_scale"]=Math.max(1,Math.min(4,Number(S.maskCropScale)||1.5));
           wf["24"].inputs["mode.aspect_ratio"]=0;
@@ -7165,7 +7146,9 @@ function persist(){
           wf["6"].inputs.height=["25",1];
           wf["6"].inputs.length=["18",4];
           const motionRef=newId();
-          wf[motionRef]={class_type:"H3MotionRefScale",inputs:{images:["24",0],short_edge:S.maskMotionRef||256},_meta:{title:"Motion Reference (downscaled)"}};
+          const motionDegrade=S.maskMotionType==="source"?"source":S.maskMotionType;
+          wf[motionRef]={class_type:"H3MotionRefScale",inputs:{images:["24",0],short_edge:256,degrade:motionDegrade},_meta:{title:"Motion Reference (downscaled)"}};
+          if(motionDegrade!=="source") wf[motionRef].inputs.masks=["24",1];
           wf["6"].inputs["ref_videos.ref_video_0"]=[motionRef,0];
           wf["30"].inputs.value=S.maskAudioMode==="regenerate"?1:0;
           wf["33"].inputs.feather=32;

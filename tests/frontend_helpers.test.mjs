@@ -930,16 +930,16 @@ test("bundle wires the Mask mode, brush editor, and runtime preflight", () => {
   );
 });
 
-test("bundle feeds the tracked source crop to H3 as a motion reference", () => {
+test("bundle wires a degraded motion reference into Mask without a frame-0 pin", () => {
   const bundle = readFileSync(bundlePath, "utf8");
-  assert.ok(bundle.includes("ref_videos.ref_video_0"), "Mask must wire the source crop as a ref_video motion reference");
-  assert.ok(
-    bundle.includes("instead of inventing new motion"),
-    "the motion-reference wiring must be documented as a motion fix",
-  );
-  assert.ok(bundle.includes('wf["7"].inputs.conditioning=[kfId,0]'), "the mask identity anchor must rewire the guider");
-  assert.ok(bundle.includes('class_type:"H3IdentityAnchor"'), "Mask must pin the replacement identity at frame 0");
-  assert.ok(bundle.includes("frame_count:[\"18\",4]"), "the mask identity anchor must use the prepared frame count");
+  assert.ok(bundle.includes('class_type:"H3MotionRefScale"'), "Mask must build the source crop motion reference");
+  assert.ok(bundle.includes('["ref_videos.ref_video_0"]'), "Mask must feed the source crop to H3 as a motion reference");
+  assert.ok(bundle.includes('degrade:motionDegrade'), "the motion ref must carry its identity-degrade mode");
+  assert.ok(bundle.includes('wf[motionRef].inputs.masks=["24",1]'), "degraded motion refs must mask the tracked subject out of the footage");
+  assert.ok(bundle.includes("maskMotionType"), "the motion ref must expose a source/silhouette/chroma choice");
+  assert.ok(bundle.includes("Chroma noise"), "the Mask card must offer the chroma-noise motion ref");
+  assert.ok(!bundle.includes("S.maskMotionRef"), "the old motion-ref resolution setting must be gone");
+  assert.ok(!bundle.includes("frame_count:[\"18\",4]"), "Mask must not pin the replacement identity at a keyframe");
 });
 
 test("bundle makes uploads stale-safe and part of the workflow build barrier", () => {

@@ -2,6 +2,12 @@
 
 Newest first.
 
+## Unreleased
+
+ - Mask Inpaint fixes. The first frame no longer freezes on a still of the reference image, and whole-character swaps now hold across the whole clip instead of reverting to the source person.
+
+ - Mask mode has a new Motion ref picker: Chroma noise (default), Silhouette and Source clip. Chroma noise feeds the source movement to H3 while hiding the original character's colors, so the swap starts from the first frame. If the replacement still does not stick, try Silhouette. If the motion is not faithful enough, try Source clip.
+
 ## 0.18.0 (2026-08-30)
 
  - New Spectrum accelerator. A chip in the Quality row turns on Spectrum Apply MiniMax H3 from ComfyUI-Spectrum-MiniMax-H3 (https://github.com/xmarre/ComfyUI-Spectrum-MiniMax-H3). Needs the pack installed.

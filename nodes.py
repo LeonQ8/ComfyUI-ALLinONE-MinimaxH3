@@ -2364,11 +2364,23 @@ def _motion_ref_dims(width, height, short_edge=256):
 
 
 class H3MotionRefScale:
-    """Downscale the tracked source crop used as the H3 motion reference.
+    """Build the H3 motion reference from the tracked source crop.
 
     The ref video only supplies movement, never identity, so it can be small
-    without hurting the replacement. Keeping it on the 32 grid means the H3
-    node's own canvas logic leaves it at the reduced size."""
+    without hurting the replacement. The degrade mode picks how the tracked
+    subject is hidden from the footage that rides into the H3 conditioning so
+    the original person cannot copy itself into the regenerated region:
+
+    - source: the real crop passes through (most faithful motion, but the
+      original identity can bleed into the start of an edit).
+    - silhouette: the subject is painted as a plain white shape over the real
+      scene, leaving only coarse pose.
+    - chroma: the subject's color is replaced with blocky noise while its
+      luminance is kept, so articulation and shading survive but the original
+      face, skin and clothing colors are gone.
+
+    Keeping the video on the 32 grid means the H3 node's own canvas logic
+    leaves it at the reduced size."""
 
     @classmethod
     def INPUT_TYPES(cls):
@@ -2376,20 +2388,40 @@ class H3MotionRefScale:
             "required": {
                 "images": ("IMAGE",),
                 "short_edge": ("INT", {"default": 256, "min": 32, "max": 768, "step": 32}),
-            }
+                "degrade": (["source", "silhouette", "chroma"], {"default": "chroma"}),
+            },
+            "optional": {
+                "masks": ("MASK",),
+            },
         }
 
     RETURN_TYPES = ("IMAGE",)
     FUNCTION = "scale"
     CATEGORY = "One Node"
 
-    def scale(self, images, short_edge=256):
+    def scale(self, images, short_edge=256, degrade="source", masks=None):
+        import torch
         import torch.nn.functional as F
         b, h, w, c = images.shape
+        frames = images
+        if degrade != "source" and masks is not None and masks.shape[0] >= b and masks.shape[-2:] == (h, w):
+            m = masks[:b].clamp(0.0, 1.0)[..., None]
+            if degrade == "silhouette":
+                shape = images.new_full((b, h, w, c), 1.0)
+            else:
+                wts = images.new_tensor([0.299, 0.587, 0.114]).view(1, 1, 1, c)
+                y = (images * wts).sum(-1, keepdim=True)
+                block = 8
+                gen = torch.Generator(device=images.device).manual_seed(1013)
+                tint = torch.rand(b, (h + block - 1) // block, (w + block - 1) // block, c,
+                                  device=images.device, dtype=images.dtype, generator=gen) * 1.6 - 0.8
+                tint = F.interpolate(tint.movedim(-1, 1), size=(h, w), mode="bilinear", align_corners=False).movedim(1, -1)
+                shape = (y * 0.85 + 0.5 * tint).clamp(0.0, 1.0)
+            frames = images * (1 - m) + shape * m
         dims = _motion_ref_dims(w, h, short_edge)
         if dims["width"] == w and dims["height"] == h:
-            return (images,)
-        s = images.movedim(-1, 1)
+            return (frames,)
+        s = frames.movedim(-1, 1)
         s = F.interpolate(s, size=(dims["height"], dims["width"]), mode="bilinear", align_corners=False)
         return (s.movedim(1, -1),)
 

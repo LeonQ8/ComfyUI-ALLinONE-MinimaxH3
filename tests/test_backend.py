@@ -238,17 +238,23 @@ class TestConfig(_NodesTestBase):
             self.assertNotIn("speaks", prompt, "presets must not bake in lip-sync; the Audio mode owns it")
             self.assertNotIn("mouth", prompt, "presets must not bake in lip-sync; the Audio mode owns it")
 
-    def test_mask_prompt_uses_the_source_crop_as_a_motion_reference(self):
+    def test_mask_prompt_transfers_motion_without_the_source_person(self):
         cfg = self.nodes._load_builtin_config()
         mask = cfg.get("prompt_templates", {}).get("mask", {})
-        self.assertIn("<Video 1>", mask.get("wrap", ""), "the mask template must label the source crop as a motion reference")
-        self.assertIn("movement and performance come from <Video 1>", mask.get("wrap", ""), "identity and motion must be split between the ref image and the ref video")
-        self.assertIn("weak_reference", mask.get("wrap", ""), "the ref video must be a motion-only reference, never the identity")
+        wrap = mask.get("wrap", "")
+        self.assertIn("movements, gestures and performance come from <Video 1>", wrap,
+                      "the mask template must take the replacement identity from <Picture 1> and the motion from <Video 1>")
+        self.assertIn("attribute_transfer", wrap,
+                      "the source clip motion must be transferred to the replacement, not kept with its person")
+        self.assertNotIn("weak_reference", wrap, "the source clip is a motion source, not a vague reference")
+        self.assertIn("removed and never appears", wrap,
+                      "the template must state the source person is replaced")
         for preset in mask.get("presets", []):
             prompt = preset.get("prompt", "")
             self.assertIn("<Video 1>", prompt)
-            self.assertIn("the face of the person in <Video 1> never appears", prompt,
-                          "the source dancer's face must not leak into the replacement")
+            self.assertIn("attribute_transfer", prompt)
+            self.assertIn("never appear", prompt)
+            self.assertNotIn("weak_reference", prompt)
 
     def test_user_overrides_builtin(self):
         user = self.user_dir()
@@ -1482,6 +1488,44 @@ class TestMotionRefScale(_NodesTestBase):
     def test_bad_input_falls_back_safely(self):
         dims = self.nodes._motion_ref_dims(0, 0, 256)
         self.assertEqual(dims, {"width": 256, "height": 256})
+
+    @unittest.skipUnless(_HAS_TORCH, "torch not available")
+    def test_silhouette_paints_the_subject_white_over_the_real_scene(self):
+        node = self.nodes.H3MotionRefScale()
+        images = torch.rand(2, 16, 32, 3)
+        masks = torch.zeros(2, 16, 32)
+        masks[0, 6:12, 10:22] = 1.0
+        out = node.scale(images, 256, "silhouette", masks)[0]
+        self.assertEqual(out.shape, (2, 16, 32, 3))
+        inside = masks[0] > 0.5
+        self.assertTrue(torch.allclose(out[0, inside], torch.ones_like(out[0, inside])),
+                        "the tracked region must be painted white so identity cannot leak")
+        outside = masks[0] <= 0.5
+        self.assertTrue(torch.equal(out[0, outside], images[0, outside]),
+                        "the scene outside the subject must stay untouched")
+
+    @unittest.skipUnless(_HAS_TORCH, "torch not available")
+    def test_chroma_noise_degrades_the_subject_only(self):
+        node = self.nodes.H3MotionRefScale()
+        images = torch.rand(2, 16, 32, 3)
+        masks = torch.zeros(2, 16, 32)
+        masks[0, 6:12, 10:22] = 1.0
+        out = node.scale(images, 256, "chroma", masks)[0]
+        self.assertEqual(out.shape, (2, 16, 32, 3))
+        inside = masks[0] > 0.5
+        self.assertFalse(torch.allclose(out[0, inside], images[0, inside]),
+                         "the tracked region color must be scrambled")
+        outside = masks[0] <= 0.5
+        self.assertTrue(torch.equal(out[0, outside], images[0, outside]),
+                        "the scene outside the subject must stay untouched")
+
+    @unittest.skipUnless(_HAS_TORCH, "torch not available")
+    def test_source_degrade_passes_footage_through(self):
+        node = self.nodes.H3MotionRefScale()
+        images = torch.rand(2, 16, 32, 3)
+        masks = torch.zeros(2, 16, 32)
+        out = node.scale(images, 256, "source", masks)[0]
+        self.assertTrue(torch.equal(out, images), "source mode must not alter the footage")
 
 
 class TestMaskPreviewProgress(_NodesTestBase):
