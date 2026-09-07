@@ -2,7 +2,7 @@
 
 Newest first.
 
-## Unreleased
+## 0.19.0 (2026-09-07)
 
  - Mask Inpaint fixes. The first frame no longer freezes on a still of the reference image, and whole-character swaps now hold across the whole clip instead of reverting to the source person.
 
