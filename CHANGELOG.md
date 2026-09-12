@@ -2,6 +2,10 @@
 
 Newest first.
 
+## 0.20.0 (2026-09-12)
+
+ - The Sol quality chip now uses ComfyUI core's Model Sparse Attention node (block sparse, sol-attn method) instead of the older Triton SolAttnPatch. It needs ComfyUI 0.35.0 or newer.
+
 ## 0.19.0 (2026-09-07)
 
  - Mask Inpaint fixes. The first frame no longer freezes on a still of the reference image, and whole-character swaps now hold across the whole clip instead of reverting to the source person.
