@@ -262,7 +262,7 @@ export const QUALITY_PRESET_FLAGS = {
 export const QUALITY_PRESET_ORDER = ["speed", "balanced", "high", "native", "draft"];
 
 // Comfy Kitchen attention replaces the whole attention function, same as
-// SageAttention, so the two can never run together. SolAttn layers on top of
+// SageAttention, so the two can never run together. Block sparse Sol-Attn layers on top of
 // either of them. H3 SLA attention is itself a sparse-attention engine, so it
 // is exclusive with Sol and Sage; turning it on drops both. Kitchen can pair
 // with SLA (Kitchen is a general attention backend, SLA sits on top as the
