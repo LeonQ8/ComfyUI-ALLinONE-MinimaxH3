@@ -5296,7 +5296,7 @@ function persist(){
       const qualRow=mk("div",{display:"flex",flexDirection:"column",gap:"3px"});
       const qualCapRow=mk("div",{display:"flex",alignItems:"center",gap:"4px"});
       const qualCap=mk("div",{fontSize:"10px",color:C.text});tx(qualCap,"Quality");
-      qualCapRow.append(qualCap,infoIcon("The sampling pipeline, not the pixel size. Use the chips below to switch each accelerator on or off - Quality follows, and any manual mix shows as Custom.\nTurbo: Turbo LoRA + 6-step distilled sampler. Fastest, visibly lower quality - needs the Turbo LoRA set in Settings.\nSpeed: SolAttn sparse attention only. Fastest normal pipeline, tiny quality tradeoff.\nBalanced: SolAttn sparse attention only.\nHigh Quality: full SageAttention only - slowest, maximum fidelity.\nKitchen: ComfyUI's built-in Comfy Kitchen attention (pip install comfy-kitchen) - can run alone or with SolAttn, never with SageAttention.\nSLA Draft: H3 SLA Attention (ComfyUI-PlagueKind-Nodes) + Kitchen + a turbo LoRA, defaults to er_sde/beta at 6 steps. Fastest for prompt-tweak drafts, weaker prompt adherence - drafts only, not final quality. Sampler, scheduler and steps are only defaults: you can change them freely and the run uses your choice.\nSpectrum: step-skipping acceleration (ComfyUI-Spectrum-MiniMax-H3). Approximate, stacks with every chip above and with Turbo. Best with res_multistep, er_sde, euler or the turbo sampler; other samplers fall back to native automatically. Compare same seed on/off.\nNative: core ComfyUI H3 pipeline, no accelerators - needs no extra packs."));
+      qualCapRow.append(qualCap,infoIcon("The sampling pipeline, not the pixel size. Use the chips below to switch each accelerator on or off - Quality follows, and any manual mix shows as Custom.\nTurbo: Turbo LoRA + 6-step distilled sampler. Fastest, visibly lower quality - needs the Turbo LoRA set in Settings.\nSpeed: block sparse Sol-Attn only. Fastest normal pipeline, tiny quality tradeoff.\nBalanced: block sparse Sol-Attn only.\nHigh Quality: full SageAttention only - slowest, maximum fidelity.\nKitchen: ComfyUI's built-in Comfy Kitchen attention (pip install comfy-kitchen) - can run alone or with block sparse Sol-Attn, never with SageAttention.\nSLA Draft: H3 SLA Attention (ComfyUI-PlagueKind-Nodes) + Kitchen + a turbo LoRA, defaults to er_sde/beta at 6 steps. Fastest for prompt-tweak drafts, weaker prompt adherence - drafts only, not final quality. Sampler, scheduler and steps are only defaults: you can change them freely and the run uses your choice.\nSpectrum: step-skipping acceleration (ComfyUI-Spectrum-MiniMax-H3). Approximate, stacks with every chip above and with Turbo. Best with res_multistep, er_sde, euler or the turbo sampler; other samplers fall back to native automatically. Compare same seed on/off.\nNative: core ComfyUI H3 pipeline, no accelerators - needs no extra packs."));
       const qualDD=DD(["Turbo (Speed LoRA)","Speed","Balanced","High Quality","Native","SLA Draft","Custom"],_QL[S.quality]||"Custom",v=>{
         const key=Object.keys(_QL).find(k=>_QL[k]===v)||"custom";
         if(key!=="custom"){
@@ -5352,8 +5352,9 @@ function persist(){
           const r=await fetch("/object_info/ModelAttentionBackend");
           const d=await r.json();
           const n=d.ModelAttentionBackend;
-          const combo=(n&&n.input&&n.input.required&&n.input.required.attention)?n.input.required.attention[0]:[];
-          _kitchenAvail=Array.isArray(combo)&&combo.includes("comfy kitchen attention");
+          const att=(n&&n.input&&n.input.required&&n.input.required.attention)?n.input.required.attention:[];
+          const combo=Array.isArray(att[0])?att[0]:(Array.isArray(att[1])?att[1]:(att[1]&&Array.isArray(att[1].options)?att[1].options:[]));
+          _kitchenAvail=combo.includes("comfy kitchen attention");
         }catch(e){ _kitchenAvail=false; }
         _syncOptChips();
       };
@@ -5379,7 +5380,7 @@ function persist(){
       };
       _checkSpectrumAvail();
       optRow.append(
-        _mkOptChip("optSol","SolAttn",{excl:["optSla"]}),
+        _mkOptChip("optSol","Block Sparse",{excl:["optSla"]}),
         _mkOptChip("optSage","SageAttn",{excl:["optKitchen","optSla"]}),
         _mkOptChip("optKitchen","Kitchen",{
           excl:["optSage"],
@@ -6682,11 +6683,11 @@ function persist(){
           useSla=f.sla;
           const insSol=()=>{
             const sol=newId();
-            wf[sol]={class_type:"SolAttnPatch",inputs:{
-              model:modelSrc,tau:1.3,start_percent:0.2,end_percent:0.9,min_tokens:4096,
-              int8_qk:true,sink_conditioning:"exact_kv_and_rows",morton:false,
-              morton_curve:"2d_frame",int8_pv:true,verbose:true,use_tma:false,dense_blocks:"",
-            },_meta:{title:"Sol-Attn"}};
+            wf[sol]={class_type:"BlockSparseAttention",inputs:{
+              model:modelSrc,selection:"sol-attn","selection.tau":1.3,
+              start_percent:0.2,end_percent:1.0,dense_blocks:"",min_tokens:12288,
+              extra_tokens:256,sink_conditioning:"exact_kv_and_rows",verbose:true,
+            },_meta:{title:"Sol-Attn (Block Sparse)"}};
             modelSrc=[sol,0];
           };
           const insSage=()=>{
@@ -6708,9 +6709,9 @@ function persist(){
             // Sol + Sage together: follow the tested ordering (sage -> sol)
             insSage();insSol();
           } else {
-            // Preset combos keep their exact historical order (sol -> sage)
-            if(useSol) insSol();
+            // Preset combos: dense backend first, block-sparse stacked on top
             if(useSage) insSage();
+            if(useSol) insSol();
           }
           wf["9"].inputs.steps=S.steps;
         }
@@ -7233,11 +7234,11 @@ function persist(){
           useSla=f.sla;
           const insSol=()=>{
             const sol=newId();
-            wf[sol]={class_type:"SolAttnPatch",inputs:{
-              model:modelSrc,tau:1.3,start_percent:0.2,end_percent:0.9,min_tokens:4096,
-              int8_qk:true,sink_conditioning:"exact_kv_and_rows",morton:false,
-              morton_curve:"2d_frame",int8_pv:true,verbose:true,use_tma:false,dense_blocks:"",
-            },_meta:{title:"Sol-Attn"}};
+            wf[sol]={class_type:"BlockSparseAttention",inputs:{
+              model:modelSrc,selection:"sol-attn","selection.tau":1.3,
+              start_percent:0.2,end_percent:1.0,dense_blocks:"",min_tokens:12288,
+              extra_tokens:256,sink_conditioning:"exact_kv_and_rows",verbose:true,
+            },_meta:{title:"Sol-Attn (Block Sparse)"}};
             modelSrc=[sol,0];
           };
           const insSage=()=>{
@@ -7257,8 +7258,8 @@ function persist(){
           } else if(useSage&&useSol){
             insSage();insSol();
           } else {
-            if(useSol) insSol();
             if(useSage) insSage();
+            if(useSol) insSol();
           }
         }
         wf["s:5"].inputs.model=modelSrc;

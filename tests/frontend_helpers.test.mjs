@@ -710,6 +710,20 @@ test("bundle wires the SLA chip, availability probe, and SLA Draft chain", () =>
   assert.ok(bundle.includes('_QL={balanced:"Balanced"'), "the quality label map must carry the draft label");
 });
 
+test("bundle builds Sol through core Block Sparse Attention", () => {
+  const bundle = readFileSync(bundlePath, "utf8");
+  assert.ok(bundle.includes('class_type:"BlockSparseAttention"'), "the Sol chip must use the core block sparse node");
+  assert.ok(bundle.includes('selection:"sol-attn"'), "the block sparse node must run the sol-attn method");
+  assert.ok(bundle.includes('"selection.tau":1.3'), "the sol-attn method must wire its tau sub-input");
+  assert.ok(bundle.includes("min_tokens:12288"), "the block sparse node must use the core token threshold");
+  assert.ok(bundle.includes("extra_tokens:256"), "the block sparse node must use the core extra-token default");
+  assert.ok(!bundle.includes("SolAttnPatch"), "the deprecated Triton SolAttn node must be gone");
+  assert.ok(bundle.includes('_mkOptChip("optSol","Block Sparse"'), "the quality chip must be labelled Block Sparse");
+  const denseFirst = bundle.match(/if\(useSage\) insSage\(\);\s+if\(useSol\) insSol\(\);/g) || [];
+  assert.equal(denseFirst.length, 2, "both builders must stack block sparse on the dense backend");
+  assert.ok(bundle.includes('_kitchenAvail=combo.includes("comfy kitchen attention")'), "the Kitchen probe must read the COMBO options list");
+});
+
 test("spectrumNodeInputs ships the upstream defaults", () => {
   const n = spectrumNodeInputs();
   assert.equal(n.enabled, true);
