@@ -737,6 +737,22 @@ export function modeSamplerScheduler(mode, stored) {
   ];
 }
 
+// H3 Memory Optimization inputs from H3-Optimizations 0.2.44. Keep every
+// serialized compatibility slot so API workflows match the public node schema.
+export function h3MemoryOptimizationNodeInputs(overrides) {
+  return {
+    fused_qkv: "auto",
+    mlp_memory: "auto",
+    chunk_rows: 4096,
+    preserve_precision: true,
+    precision_mode: "Auto",
+    qkv_streaming_mode: "Auto",
+    embedding_memory_mode: "Auto",
+    kitchen_v_memory_mode: "Standard",
+    ...(overrides || {}),
+  };
+}
+
 // Spectrum Apply MiniMax H3 input values. The node is an approximate
 // step-skipping model patch (forecasts the post-transformer hidden state and
 // skips H3 transformer blocks), so it stacks with every attention chip and is

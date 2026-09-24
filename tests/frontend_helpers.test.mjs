@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { aspect, sizeOf, sameSize, mapMaskPoint, orientRes, fitResolutionToAspect, planMaskCrop, maskTrackingPlan, resolveFitPrimary, imgProfileShort, imgAspectName, viewQuery, thumbQuery, isImageItem, inputFileExists, h3SamCheckpoints, clampImageMP, planImageCanvas, planImageCanvasForRatio, planUpscaleTarget, IMG_MAX_MP, IMG_MIN_MP, IMG_ASPECT_RATIOS, resolveQualityFlags, matchQualityPreset, QUALITY_PRESET_FLAGS, planExtend, queuePromptPayload, settleQueuedOutput, maskSpeechSyncPrompt, cropFrameIndex, cropBoxAt, cropReportText, lumaToAlpha, maskDetectionHint, maskRunErrorHint, clampTimecode, compareGridColumns, compareGridRows, compareWindow, syncTargets, formatTimecode, makeCompareSlots, charsheetPanelIndices, CHARSHEET_LENGTH, promptTextFromOutput, promptLinkAncestors, modeSamplerScheduler, spectrumNodeInputs } from "../web/h3_helpers.mjs";
+import { aspect, sizeOf, sameSize, mapMaskPoint, orientRes, fitResolutionToAspect, planMaskCrop, maskTrackingPlan, resolveFitPrimary, imgProfileShort, imgAspectName, viewQuery, thumbQuery, isImageItem, inputFileExists, h3SamCheckpoints, clampImageMP, planImageCanvas, planImageCanvasForRatio, planUpscaleTarget, IMG_MAX_MP, IMG_MIN_MP, IMG_ASPECT_RATIOS, resolveQualityFlags, matchQualityPreset, QUALITY_PRESET_FLAGS, planExtend, queuePromptPayload, settleQueuedOutput, maskSpeechSyncPrompt, cropFrameIndex, cropBoxAt, cropReportText, lumaToAlpha, maskDetectionHint, maskRunErrorHint, clampTimecode, compareGridColumns, compareGridRows, compareWindow, syncTargets, formatTimecode, makeCompareSlots, charsheetPanelIndices, CHARSHEET_LENGTH, promptTextFromOutput, promptLinkAncestors, modeSamplerScheduler, h3MemoryOptimizationNodeInputs, spectrumNodeInputs } from "../web/h3_helpers.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, "..");
@@ -719,9 +719,35 @@ test("bundle builds Sol through core Block Sparse Attention", () => {
   assert.ok(bundle.includes("extra_tokens:256"), "the block sparse node must use the core extra-token default");
   assert.ok(!bundle.includes("SolAttnPatch"), "the deprecated Triton SolAttn node must be gone");
   assert.ok(bundle.includes('_mkOptChip("optSol","Block Sparse"'), "the quality chip must be labelled Block Sparse");
-  const denseFirst = bundle.match(/if\(useSage\) insSage\(\);\s+if\(useSol\) insSol\(\);/g) || [];
-  assert.equal(denseFirst.length, 2, "both builders must stack block sparse on the dense backend");
+  const sparseAfterMemory = bundle.match(/if\(useH3Memory\) insH3Memory\(\);\s+if\(useSol\) insSol\(\);/g) || [];
+  assert.equal(sparseAfterMemory.length, 2, "both builders must stack block sparse after H3 memory and the dense backend");
   assert.ok(bundle.includes('_kitchenAvail=combo.includes("comfy kitchen attention")'), "the Kitchen probe must read the COMBO options list");
+});
+
+test("h3MemoryOptimizationNodeInputs ships the local 0.2.44 defaults", () => {
+  assert.deepEqual(h3MemoryOptimizationNodeInputs(), {
+    fused_qkv: "auto",
+    mlp_memory: "auto",
+    chunk_rows: 4096,
+    preserve_precision: true,
+    precision_mode: "Auto",
+    qkv_streaming_mode: "Auto",
+    embedding_memory_mode: "Auto",
+    kitchen_v_memory_mode: "Standard",
+  });
+});
+
+test("bundle wires independent H3 Memory Opt after Kitchen and before Block Sparse", () => {
+  const bundle = readFileSync(bundlePath, "utf8");
+  assert.ok(bundle.includes('_mkOptChip("optH3Memory","H3 Memory Opt"'), "the optimization row must expose the independent chip");
+  assert.ok(bundle.includes("/h3one/h3_memory_opt_status"), "the chip must probe the optional pack");
+  assert.ok(bundle.includes('class_type:"H3MemoryOptimization"'), "the MODEL chain must insert the local node id");
+  assert.ok(!bundle.includes('class_type:"H3SparseAttention"'), "H3 Memory Opt must not inject H3 Sparse Attention");
+  assert.ok(bundle.includes("saved.optH3Memory===true"), "new and unsaved workflows must default the chip to off");
+  assert.ok(bundle.includes("S.optH3Memory&&_h3MemoryAvail===true"), "a missing pack must never produce an invalid workflow node");
+  assert.ok(!bundle.includes('_mkOptChip("optH3Memory","H3 Memory Opt",{excl:'), "H3 memory must not force any attention toggle");
+  const kitchenMemoryOrder = bundle.match(/insKitchen\(\);\s+\} else if\(useSage\) insSage\(\);\s+if\(useH3Memory\) insH3Memory\(\);/g) || [];
+  assert.equal(kitchenMemoryOrder.length, 2, "plain and chain builders must place H3 memory after Kitchen");
 });
 
 test("spectrumNodeInputs ships the upstream defaults", () => {

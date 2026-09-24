@@ -634,6 +634,42 @@ class TestSlaStatus(_NodesTestBase):
         self.assertTrue(resp.kwargs["data"]["found"])
 
 
+class TestH3MemoryOptStatus(_NodesTestBase):
+    """The H3 memory chip must fail closed when its optional pack is absent."""
+
+    def _fake_nodes_module(self, mappings):
+        nodes = types.ModuleType("nodes")
+        nodes.NODE_CLASS_MAPPINGS = mappings
+        sys.modules["nodes"] = nodes
+        self._added_nodes_module = True
+
+    def tearDown(self):
+        super().tearDown()
+        if getattr(self, "_added_nodes_module", False):
+            sys.modules.pop("nodes", None)
+
+    def test_reports_false_when_pack_absent(self):
+        self.assertFalse(self.nodes._h3_memory_opt_installed())
+
+    def test_reports_false_when_class_not_registered(self):
+        self._fake_nodes_module({"SomeOtherNode": object})
+        self.assertFalse(self.nodes._h3_memory_opt_installed())
+
+    def test_reports_true_when_registered(self):
+        self._fake_nodes_module({"H3MemoryOptimization": object})
+        self.assertTrue(self.nodes._h3_memory_opt_installed())
+
+    def test_route_returns_found_flag(self):
+        resp = _run(self.nodes.get_h3_memory_opt_status(_FakeRequest({})))
+        self.assertTrue(resp.kwargs["data"]["ok"])
+        self.assertFalse(resp.kwargs["data"]["found"])
+
+    def test_route_reflects_registered_class(self):
+        self._fake_nodes_module({"H3MemoryOptimization": object})
+        resp = _run(self.nodes.get_h3_memory_opt_status(_FakeRequest({})))
+        self.assertTrue(resp.kwargs["data"]["found"])
+
+
 class TestSpectrumStatus(_NodesTestBase):
     """The Spectrum availability check must be safe without
     ComfyUI-Spectrum-MiniMax-H3 and reflect the pack once it registers

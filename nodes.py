@@ -676,6 +676,20 @@ async def get_sla_status(request):
     return web.json_response({"ok": True, "found": _sla_installed()})
 
 
+def _h3_memory_opt_installed():
+    """True when H3-Optimizations registered H3MemoryOptimization."""
+    try:
+        from nodes import NODE_CLASS_MAPPINGS
+        return bool(NODE_CLASS_MAPPINGS) and "H3MemoryOptimization" in NODE_CLASS_MAPPINGS
+    except Exception:
+        return False
+
+
+@PromptServer.instance.routes.get("/h3one/h3_memory_opt_status")
+async def get_h3_memory_opt_status(request):
+    return web.json_response({"ok": True, "found": _h3_memory_opt_installed()})
+
+
 def _spectrum_installed():
     """True when ComfyUI-Spectrum-MiniMax-H3 is loaded and registered the
     SpectrumApplyMiniMaxH3 node.
