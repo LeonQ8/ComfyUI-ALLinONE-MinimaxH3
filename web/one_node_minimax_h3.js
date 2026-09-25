@@ -3,6 +3,8 @@ import { api } from "../../scripts/api.js";
 import { h3TextEncoderItems } from "./h3_model_features.js";
 import { createOutputControls, normalizeOutputSettings, outputFrameLabel, patchOutputVideo } from "./h3_output_features.js";
 import { attachOutputContextMenu } from "./h3_output_context.js";
+import { createLoraPicker, showLoraInfo } from "./h3_lora_picker.js";
+import { createLoraStacks } from "./h3_lora_stacks.js";
 
 const ACCENT_DEFAULT = "#c0a996";
 const SUPPORT_URL = "https://ko-fi.com/leonq8";
@@ -829,6 +831,192 @@ function MiniToggle(checked,onChange,label){
 }
 
 let _activeDDClose=null;
+
+// LoRA picker list math, mirrored from web/h3_helpers.mjs (kept in sync) so the
+// bundle can rank/group/filter without importing the .mjs helper module. The
+// h3_lora_picker.js browser module receives these through its helpers option.
+function loraNorm(label){ return String(label==null?"":label).replace(/\\/g,"/").toLowerCase(); }
+function loraLabelParts(label){
+  const full=String(label==null?"":label).replace(/\\/g,"/");
+  const i=full.lastIndexOf("/");
+  const name=i>=0?full.slice(i+1):full;
+  const dir=i>=0?full.slice(0,i):"";
+  const stem=name.replace(/\.(safetensors|ckpt|pt|pth|gguf)$/i,"");
+  return {name,stem,dir,full};
+}
+function loraQueryTokens(query){ return String(query||"").trim().toLowerCase().split(/\s+/).filter(Boolean); }
+function loraMatchScore(label,tokens){
+  if(!tokens||!tokens.length) return 0;
+  const parts=loraLabelParts(label);
+  const stem=parts.stem.toLowerCase(), dir=parts.dir.toLowerCase(), full=parts.full.toLowerCase();
+  let score=0;
+  for(const t of tokens){
+    if(!full.includes(t)) return -1;
+    if(stem.includes(t)) score+=4; else if(dir.includes(t)) score+=1;
+    if(stem.startsWith(t)) score+=3;
+  }
+  return score;
+}
+function loraInDir(label,dirPath){
+  const path=loraNorm(dirPath).replace(/^\/+|\/+$/g,"");
+  if(!path) return true;
+  const dir=loraLabelParts(label).dir.toLowerCase();
+  return dir===path||dir.startsWith(path+"/");
+}
+function loraFolders(items,prefix){
+  const base=loraNorm(prefix).replace(/^\/+|\/+$/g,"");
+  const counts=new Map();
+  for(const item of (Array.isArray(items)?items:[])){
+    const dir=loraLabelParts(item).dir;
+    const low=dir.toLowerCase();
+    let rel=low;
+    if(base){
+      if(low===base) continue;
+      if(!low.startsWith(base+"/")) continue;
+      rel=low.slice(base.length+1);
+    }
+    const childLow=rel.split("/")[0];
+    if(!childLow) continue;
+    if(!counts.has(childLow)){
+      const segments=dir.split("/");
+      const childName=base?segments[base.split("/").length]:segments[0];
+      counts.set(childLow,{name:childName||childLow,count:0});
+    }
+    counts.get(childLow).count+=1;
+  }
+  return Array.from(counts.values()).sort((a,b)=>a.name.localeCompare(b.name)).map(f=>({name:f.name,count:f.count}));
+}
+function loraFilterRank(items,query,opts){
+  const list=Array.isArray(items)?items.slice():[];
+  const favorites=(opts&&opts.favorites)||[];
+  const recents=(opts&&opts.recents)||[];
+  const favIdx=new Map(favorites.map((s,i)=>[loraNorm(s),i]));
+  const recIdx=new Map(recents.map((s,i)=>[loraNorm(s),i]));
+  const bonus=(item)=>{ const key=loraNorm(item); return (favIdx.has(key)?10000-favIdx.get(key):0)+(recIdx.has(key)?100-recIdx.get(key):0); };
+  const tokens=loraQueryTokens(query);
+  const scored=[];
+  list.forEach((item,i)=>{
+    const m=loraMatchScore(item,tokens);
+    if(m<0) return;
+    scored.push({item,i,s:m+bonus(item)});
+  });
+  scored.sort((a,b)=>(b.s-a.s)||(a.i-b.i));
+  return scored.map(x=>x.item);
+}
+function loraLooksH3(label){ return /(^|[\\/_.\-\s])(h3|minimax)([\\/_.\-\s]|$)/i.test(String(label==null?"":label)); }
+function loraScopes(items,opts){
+  const list=Array.isArray(items)?items:[];
+  const favorites=(opts&&opts.favorites)||[];
+  const recents=(opts&&opts.recents)||[];
+  const favSet=new Set(favorites.map(loraNorm));
+  const recSet=new Set(recents.map(loraNorm));
+  const out=[{id:"all",label:"All",count:list.length}];
+  const h3Items=list.filter(loraLooksH3);
+  // The H3 chip is redundant when one folder already holds exactly the H3 set
+  // (for example everything under "MiniMax H3"), so the folder chip wins.
+  const covered=loraFolders(list,"").some(f=>{
+    const inFolder=list.filter(x=>loraInDir(x,f.name));
+    return inFolder.length===h3Items.length&&h3Items.every(x=>loraInDir(x,f.name));
+  });
+  if(h3Items.length&&h3Items.length<list.length&&!covered) out.push({id:"h3",label:"H3 only",count:h3Items.length});
+  const favn=list.filter(x=>favSet.has(loraNorm(x))).length;
+  if(favn) out.push({id:"fav",label:"Favorites",count:favn});
+  const recn=list.filter(x=>recSet.has(loraNorm(x))).length;
+  if(recn) out.push({id:"recent",label:"Recent",count:recn});
+  return out;
+}
+function loraScopeMatch(label,scope,opts){
+  const s=String(scope||"all");
+  if(s==="all") return true;
+  if(s==="h3") return loraLooksH3(label);
+  const favorites=(opts&&opts.favorites)||[];
+  const recents=(opts&&opts.recents)||[];
+  if(s==="fav") return favorites.some(x=>loraNorm(x)===loraNorm(label));
+  if(s==="recent") return recents.some(x=>loraNorm(x)===loraNorm(label));
+  if(s.startsWith("dir:")) return loraInDir(label,s.slice(4));
+  return true;
+}
+function loraStackNames(stacks){
+  if(!stacks||typeof stacks!=="object") return [];
+  return Object.keys(stacks).sort((a,b)=>a.localeCompare(b));
+}
+function loraStackSafeName(name){
+  const clean=String(name||"").trim().slice(0,60);
+  if(!clean||clean.toLowerCase()==="__proto__") return null;
+  return clean;
+}
+function loraStackFindName(stacks,name){
+  const clean=loraStackSafeName(name);
+  if(!clean||!stacks||typeof stacks!=="object") return null;
+  const low=clean.toLowerCase();
+  return Object.keys(stacks).find(k=>String(k).toLowerCase()===low)||null;
+}
+function loraStackRowsWithMissing(rows,items){
+  const list=Array.isArray(items)?items:[];
+  const have=new Set(list.map(loraNorm));
+  const kept=[], missing=[];
+  for(const r of (Array.isArray(rows)?rows:[])){
+    if(!r||typeof r.name!=="string"||!r.name) continue;
+    if(!list.length||have.has(loraNorm(r.name))) kept.push({name:r.name,strength:Number.isFinite(Number(r.strength))?Number(r.strength):1});
+    else missing.push(r.name);
+  }
+  return {rows:kept,missing};
+}
+function loraStackSame(a,b){
+  const key=r=>loraNorm(r.name)+"|"+(Number.isFinite(Number(r.strength))?Math.round(Number(r.strength)*100):100);
+  const rows=arr=>(Array.isArray(arr)?arr:[]).filter(r=>r&&typeof r.name==="string"&&r.name).map(key);
+  const x=rows(a), y=rows(b);
+  if(x.length!==y.length) return false;
+  return x.every((v,i)=>v===y[i]);
+}
+function loraStackSave(stacks,name,loras){
+  const clean=loraStackSafeName(name);
+  const src=stacks&&typeof stacks==="object"?stacks:{};
+  if(!clean) return {...src};
+  const rows=(Array.isArray(loras)?loras:[])
+    .filter(l=>l&&typeof l.name==="string"&&l.name)
+    .slice(0,10)
+    .map(l=>({name:l.name,strength:Number.isFinite(Number(l.strength))?Math.max(-3,Math.min(3,Number(l.strength))):1}));
+  if(!rows.length) return {...src};
+  const out={...src};
+  out[clean]=rows;
+  return out;
+}
+function loraStackLoad(stacks,name){
+  const rows=stacks&&typeof stacks==="object"?stacks[name]:null;
+  if(!Array.isArray(rows)) return null;
+  return rows.filter(r=>r&&typeof r.name==="string"&&r.name).slice(0,10)
+    .map(r=>({name:r.name,strength:Number.isFinite(Number(r.strength))?Number(r.strength):1}));
+}
+// Wraps every query-token hit in a highlighted span, so the matched part of a
+// long LoRA label stays visible while filtering.
+function _hlLabel(mk,el,text,tokens,accent){
+  el.textContent="";
+  const low=String(text).toLowerCase();
+  const hits=[];
+  for(const t of (tokens||[])){
+    if(!t) continue;
+    let from=0, idx=low.indexOf(t,from);
+    while(idx!==-1){ hits.push([idx,idx+t.length]); from=idx+t.length; idx=low.indexOf(t,from); }
+  }
+  if(!hits.length){ el.textContent=text; return; }
+  hits.sort((a,b)=>a[0]-b[0]);
+  const merged=[];
+  for(const h of hits){
+    const last=merged[merged.length-1];
+    if(last&&h[0]<=last[1]) last[1]=Math.max(last[1],h[1]);
+    else merged.push([h[0],h[1]]);
+  }
+  let pos=0;
+  for(const [s,e] of merged){
+    if(s>pos) el.appendChild(document.createTextNode(text.slice(pos,s)));
+    const mark=mk("span",{color:accent,fontWeight:"700"});
+    mark.textContent=text.slice(s,e);
+    el.appendChild(mark);
+    pos=e;
+  }
+  if(pos<text.length) el.appendChild(document.createTextNode(text.slice(pos)));
+}
 function DD(items,selected,onChange){
   let val=selected;
   const _lblOf=it=>{ if(it&&typeof it==="object") return it.label!=null?it.label:""; return it==null?"":it; };
@@ -839,42 +1027,64 @@ function DD(items,selected,onChange){
     justifyContent:"space-between",cursor:"pointer",boxSizing:"border-box",
     transition:"border-color .15s",userSelect:"none",overflow:"hidden"});
   const _setTitle=v=>{ const t=_lblOf(v); trig.title=t; trigTxt.title=t; };
+  const _trigLabel=v=>{ const p=loraLabelParts(_lblOf(v)); return p.dir?p.stem:_lblOf(v); };
   const trigTxt=mk("span",{fontSize:"11px",color:C.text,overflow:"hidden",
     textOverflow:"ellipsis",whiteSpace:"nowrap",flex:"1",minWidth:"0"});
-  tx(trigTxt,_lblOf(val)); trigTxt.style.color=_lblOf(val)?C.lime:C.muted; _setTitle(val);
+  tx(trigTxt,_trigLabel(val)); trigTxt.style.color=_lblOf(val)?C.lime:C.muted; _setTitle(val);
   const arr=mk("span",{fontSize:"8px",color:C.muted,marginLeft:"5px",flexShrink:"0",transition:"transform .18s"});
   tx(arr,"v");
   trig.append(trigTxt,arr);
   const panel=mk("div",{display:"none",position:"fixed",background:C.bg1,
-    border:`1px solid ${C.borderH}`,borderRadius:"8px",zIndex:"999999",
+    border:`1px solid ${C.borderH}`,borderRadius:"8px",zIndex:"2147482000",
     flexDirection:"column",boxShadow:"0 8px 28px rgba(0,0,0,.9)",
     overflow:"hidden",minWidth:"140px",maxWidth:"400px"});
   const srch=mk("input",{background:C.bg2,border:"none",borderBottom:`1px solid ${C.border}`,
-      padding:"7px 10px",color:C.text,fontSize:"11px",outline:"none",
+      padding:"9px 12px",color:C.text,fontSize:"13px",outline:"none",
       width:"100%",boxSizing:"border-box"},{type:"text",placeholder:"Type to filter..."});
-  const list=mk("div",{overflowY:"auto",maxHeight:"200px"});
-  const _norm=(s)=>(s||"").replace(/\\/g,"/").toLowerCase();
+  const list=mk("div",{overflowY:"auto",maxHeight:"230px"});
+  const foot=mk("div",{fontSize:"10px",color:C.dim,padding:"6px 12px",borderTop:`1px solid ${C.border}`,flexShrink:"0"});
+  let _rows=[], _hi=-1;
+  const _norm=(s)=>{ if(s&&typeof s==="object") s=s.label!=null?s.label:(s.value!=null?s.value:""); return String(s||"").replace(/\\/g,"/").replace(/\.safetensors$/i,"").toLowerCase(); };
   const render=q=>{
     list.innerHTML="";
-    items.filter(i=>{ const l=_lblOf(i).toLowerCase(); return !q||l.includes(q.toLowerCase()); }).forEach(item=>{
+    _rows=[];_hi=-1;
+    const tokens=loraQueryTokens(q);
+    const ranked=loraFilterRank(items,q,{});
+    ranked.forEach(item=>{
       const lbl=_lblOf(item);
       const isSel=_norm(lbl)===_norm(_lblOf(val));
-      const r=mk("div",{padding:"7px 12px",fontSize:"11px",cursor:"pointer",
+      const parts=loraLabelParts(lbl);
+      const r=mk("div",{padding:"7px 12px",fontSize:"12px",cursor:"pointer",
         color:isSel?C.lime:C.text,background:isSel?C.bg2:"transparent",
-        whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",transition:"background .1s"});
-      tx(r,lbl);
-      r.title=(item&&typeof item==="object"&&item.title)?item.title:lbl;
-      r.onmouseenter=()=>r.style.background=C.bg3;
-      r.onmouseleave=()=>r.style.background=isSel?C.bg2:"transparent";
-      r.onclick=()=>{val=item;tx(trigTxt,lbl);trigTxt.style.color=lbl?C.lime:C.muted;_setTitle(item);close();onChange(_valOf(item));};
+        display:"flex",flexDirection:"column",gap:"2px",transition:"background .1s"});
+      const top=mk("div",{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"});
+      if(tokens.length) _hlLabel(mk,top,parts.stem,tokens,C.lime);
+      else tx(top,parts.stem);
+      r.appendChild(top);
+      if(parts.dir){
+        const sub=mk("div",{fontSize:"10px",color:C.dim,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"});
+        tx(sub,parts.dir);
+        r.appendChild(sub);
+      }
+      r.title=(item&&typeof item==="object"&&(item.title||item.tip))?(item.title||item.tip):lbl;
+      r.onmouseenter=()=>{ if(_rows.indexOf(r)!==_hi) r.style.background=C.bg3; };
+      r.onmouseleave=()=>{ if(_rows.indexOf(r)!==_hi) r.style.background=isSel?C.bg2:"transparent"; };
+      r.onclick=()=>{val=item;tx(trigTxt,_trigLabel(item));trigTxt.style.color=lbl?C.lime:C.muted;_setTitle(item);close();onChange(_valOf(item));};
       list.appendChild(r);
+      _rows.push(r);
     });
+    if(!_rows.length){
+      const empty=mk("div",{padding:"10px 12px",fontSize:"10px",color:C.dim});
+      tx(empty,"No matches.");
+      list.appendChild(empty);
+    }
+    foot.textContent=ranked.length+" / "+items.length;
   };
   const reposition=(anchorRect)=>{
     const rect=anchorRect||trig.getBoundingClientRect();
     panel.style.left=rect.left+"px";
     panel.style.width=Math.max(rect.width,140)+"px";
-    const ph=Math.min(items.length*28+44,220);
+    const ph=Math.min(items.length*38+48,250);
     let top;
     if(anchorRect){
       top=rect.bottom+4;
@@ -884,33 +1094,65 @@ function DD(items,selected,onChange){
     }
     panel.style.top=top+"px";
   };
+  // The panel is fixed-position, so a canvas pan or node drag would leave it
+  // floating in place. Track the trigger while open; chip-opened panels (explicit
+  // anchor rect) close when the canvas view moves instead.
+  const _viewKey=()=>{ try{ const ds=app&&app.canvas&&app.canvas.ds; return ds?(ds.scale+":"+Math.round(ds.offset[0])+":"+Math.round(ds.offset[1])):""; }catch(e){ return ""; } };
+  let _followRaf=0,_openView="",_anchorRect=null;
+  const _follow=()=>{
+    if(panel.style.display!=="flex") return;
+    if(_anchorRect){
+      if(_viewKey()!==_openView){ close(); return; }
+    } else {
+      if(!trig.isConnected){ close(); return; }
+      reposition();
+    }
+    _followRaf=requestAnimationFrame(_follow);
+  };
   const open=(anchorRect)=>{
     if(_activeDDClose&&_activeDDClose!==close) _activeDDClose();
     _activeDDClose=close;
     document.body.appendChild(panel);panel.style.display="flex";
+    _anchorRect=anchorRect||null;_openView=_viewKey();
     reposition(anchorRect);arr.style.transform="rotate(180deg)";
     trig.style.borderColor=C.lime;showDimmer();
     srch.value="";srch.focus();render("");
+    if(_followRaf)cancelAnimationFrame(_followRaf);
+    _followRaf=requestAnimationFrame(_follow);
   };
   const close=()=>{
     panel.style.display="none";
+    if(_followRaf){cancelAnimationFrame(_followRaf);_followRaf=0;}
     if(panel.parentNode)panel.parentNode.removeChild(panel);
     arr.style.transform="";trig.style.borderColor=C.border;hideDimmer();
     if(_activeDDClose===close) _activeDDClose=null;
   };
   srch.oninput=()=>render(srch.value);
+  srch.onkeydown=e=>{
+    if(e.key==="Escape"){ e.preventDefault(); close(); return; }
+    if(e.key==="ArrowDown"||e.key==="ArrowUp"){
+      e.preventDefault();
+      if(!_rows.length) return;
+      _hi=_hi<0?(e.key==="ArrowDown"?0:_rows.length-1):(_hi+(e.key==="ArrowDown"?1:-1)+_rows.length)%_rows.length;
+      _rows.forEach((r,i)=>{ r.style.background=i===_hi?C.bg3:""; });
+      try{ _rows[_hi].scrollIntoView({block:"nearest"}); }catch(err){}
+      return;
+    }
+    if(e.key==="Enter"){ e.preventDefault(); const r=_rows[_hi>=0?_hi:0]; if(r) r.click(); }
+  };
   trig.onclick=e=>{e.stopPropagation();panel.style.display==="flex"?close():open();};
   document.addEventListener("click",e=>{if(!wrap.contains(e.target)&&!panel.contains(e.target))close();});
   trig.onmouseenter=()=>{if(panel.style.display!=="flex")trig.style.background=C.bg2;};
   trig.onmouseleave=()=>{if(panel.style.display!=="flex")trig.style.background=C.bg3;};
   panel.appendChild(srch);
   panel.appendChild(list);
+  panel.appendChild(foot);
   wrap.appendChild(trig);
   render("");
   return{
     el:wrap,get value(){return val;},
-    set(v){val=v;const l=_lblOf(v);tx(trigTxt,l);trigTxt.style.color=l?C.lime:C.muted;_setTitle(v);render("");},
-    updateItems(ni){items=ni;if(!ni.some(i=>_norm(i)===_norm(val))){val=ni[0]||val;tx(trigTxt,val);trigTxt.style.color=val?C.lime:C.muted;_setTitle(val);onChange(val);}render(srch.value||"");},
+    set(v){val=v;const l=_lblOf(v);tx(trigTxt,_trigLabel(v));trigTxt.style.color=l?C.lime:C.muted;_setTitle(v);render("");},
+    updateItems(ni){items=ni;if(!ni.some(i=>_norm(i)===_norm(val))){val=ni[0]||val;tx(trigTxt,_trigLabel(val));trigTxt.style.color=val?C.lime:C.muted;_setTitle(val);onChange(val);}render(srch.value||"");},
     open(anchorRect){open(anchorRect);},
   };
 }
@@ -2020,6 +2262,9 @@ app.registerExtension({
           randomizeSeed:   saved.randomizeSeed!==undefined?saved.randomizeSeed:true,
           batch:           saved.batch||1,
           loras:          (()=>{ const arr=Array.isArray(saved.loras)?saved.loras:[]; const named=arr.filter(l=>l&&l.name); return named.concat([{name:"",strength:1,enabled:false}]); })(),
+          loraFav:        (Array.isArray(saved.loraFav)?saved.loraFav:[]).filter(s=>typeof s==="string"&&s).slice(0,300),
+          loraRecent:     (Array.isArray(saved.loraRecent)?saved.loraRecent:[]).filter(s=>typeof s==="string"&&s).slice(0,12),
+          loraStacks:     (()=>{ const st=(saved.loraStacks&&typeof saved.loraStacks==="object"&&!Array.isArray(saved.loraStacks))?saved.loraStacks:{}; const out={}; Object.keys(st).slice(0,50).forEach(k=>{ if(!Array.isArray(st[k])) return; const rows=st[k].filter(l=>l&&typeof l.name==="string"&&l.name).slice(0,10).map(l=>({name:l.name,strength:Number.isFinite(Number(l.strength))?Number(l.strength):1})); if(rows.length) out[String(k).slice(0,60)]=rows; }); return out; })(),
           firstFrame:      saved.firstFrame||null,
           lastFrame:       saved.lastFrame||null,
           firstFrameSize:  (saved.firstFrameSize&&saved.firstFrameSize.width>0&&saved.firstFrameSize.height>0)?{width:Number(saved.firstFrameSize.width),height:Number(saved.firstFrameSize.height)}:null,
@@ -2127,7 +2372,7 @@ function persist(){
         saveState({
           mode:S.mode,prompt:S.prompt,resolution:S.resolution,duration:S.duration,
           steps:S.steps,quality:S.quality,optSol:S.optSol,optSage:S.optSage,optKitchen:S.optKitchen,optSla:S.optSla,optH3Memory:S.optH3Memory,optSpectrum:S.optSpectrum,samplerName:S.samplerName,schedulerName:S.schedulerName,randomizeSeed:S.randomizeSeed,seed:S.seed,batch:S.batch,
-          loras:S.loras,chainClips:S.chainClips.map(c=>({prompt:c.prompt,duration:c.duration})),
+          loras:S.loras,loraFav:S.loraFav,loraRecent:S.loraRecent,loraStacks:S.loraStacks,chainClips:S.chainClips.map(c=>({prompt:c.prompt,duration:c.duration})),
           firstFrame:S.firstFrame,lastFrame:S.lastFrame,
           firstFrameSize:S.firstFrameSize,lastFrameSize:S.lastFrameSize,
           firstFrameOrientation:S.firstFrameOrientation,lastFrameOrientation:S.lastFrameOrientation,
@@ -2500,7 +2745,7 @@ function persist(){
       settBtnRow.append(settRefresh,settClose);
       settHdr.append(settTitle,settBtnRow);
 
-      let _M={checkpoints:[],diffusion:[],text_encoders:[],vaes:[],loras:[]};
+      let _M={checkpoints:[],diffusion:[],text_encoders:[],vaes:[],loras:[],loraTxt:new Set()};
       const modelDDs={};
       const _mkModelRow=(key,label,items=[],onChange)=>{
         const w=mk("div",{marginBottom:"12px"});
@@ -5554,6 +5799,30 @@ function persist(){
         });
       };
 
+      // -- LoRA picker helpers -------------------------------------------------
+      const _loraHasTxt=(name)=>_M.loraTxt&&_M.loraTxt.has(loraNorm(name));
+      const _loraFavToggle=(name)=>{
+        const key=loraNorm(name);
+        const exists=S.loraFav.some(f=>loraNorm(f)===key);
+        S.loraFav=exists?S.loraFav.filter(f=>loraNorm(f)!==key):S.loraFav.concat([name]).slice(-300);
+        persist();
+        return S.loraFav;
+      };
+      const _loraPushRecent=(name)=>{
+        const key=loraNorm(name);
+        S.loraRecent=[name].concat(S.loraRecent.filter(f=>loraNorm(f)!==key)).slice(0,12);
+        persist();
+        return S.loraRecent;
+      };
+      const _loraLoadInfo=async(name)=>{
+        try{
+          const r=await _fetchTimed("/h3one/lora_info?name="+encodeURIComponent(name),{},10000);
+          const d=await r.json();
+          return (d&&d.ok&&d.found)?String(d.text||""):"";
+        }catch(e){ return ""; }
+      };
+      const _showLoraInfoFor=(name)=>showLoraInfo({name,mk,tx,theme:C,loadInfo:_loraLoadInfo});
+
       // -- LoRA slots (Advanced) ----------------------------------------------
       const loraArea=mk("div",{}, {className:"h3-card"});
       const loraHdr=mk("div",{display:"flex",alignItems:"center",justifyContent:"space-between",cursor:"pointer",userSelect:"none"});
@@ -5584,7 +5853,28 @@ function persist(){
         persist();
         _renderLoras();
       };
+      const stackWrap=mk("div",{display:"flex",flexDirection:"column",gap:"5px",marginTop:"4px"});
+      const stackHdr=mk("div",{display:"flex",alignItems:"center",gap:"6px",cursor:"pointer",userSelect:"none"});
+      const stackCap=mk("span",{fontSize:"9px",fontWeight:"700",letterSpacing:".1em",textTransform:"uppercase",color:C.muted});
+      tx(stackCap,"Stacks");
+      const stackCount=mk("span",{fontSize:"9px",color:C.dim,marginLeft:"auto",marginRight:"2px"});
+      const stackChev=mk("span",{color:C.dim,fontSize:"10px",flexShrink:"0"});
+      tx(stackChev,"▾");
+      stackHdr.append(stackCap,stackCount,stackChev);
+      const stacksUi=createLoraStacks({
+        mk,tx,theme:C,DD,
+        helpers:{loraStackNames,loraStackFindName,loraStackSafeName,loraStackSame,loraStackRowsWithMissing,loraStackSave,loraStackLoad},
+        stacks:()=>S.loraStacks,
+        setStacks:v=>{ S.loraStacks=v; persist(); },
+        loras:()=>S.loras,
+        items:()=>_M.loras,
+        apply:rows=>{ S.loras=rows.concat([{name:"",strength:1,enabled:false}]); persist(); _renderLoras(); },
+        onCount:n=>tx(stackCount,n?(n===1?"1 saved":n+" saved"):""),
+      });
+      _applyFold("stacks",stackHdr,stacksUi.el,stackChev);
+      stackWrap.append(stackHdr,stacksUi.el);
       loraBody.appendChild(addLoraBtn);
+      loraBody.appendChild(stackWrap);
       loraArea.append(loraHdr,loraBody);
       const loraRows=[];
       const _renderLoras=()=>{
@@ -5592,12 +5882,24 @@ function persist(){
         loraRows.length=0;
         S.loras.forEach((lr,idx)=>{
           const row=mk("div",{display:"flex",alignItems:"center",gap:"6px"});
-          const dd=DD(_M.loras.length?_M.loras:["none"],lr.name||"none",v=>{
-            const wasEmpty=!lr.name;
-            lr.name=v==="none"?"":v;
-            if(wasEmpty&&lr.name) lr.enabled=true;
-            persist();
-            _renderLoras();
+          const dd=createLoraPicker({
+            mk,tx,theme:C,
+            items:_M.loras,
+            value:lr.name||"",
+            favorites:S.loraFav,
+            recents:S.loraRecent,
+            hasTxt:_loraHasTxt,
+            loadInfo:_loraLoadInfo,
+            helpers:{loraLabelParts,loraFilterRank,loraQueryTokens,loraScopes,loraScopeMatch,loraFolders,loraInDir},
+            onChange:v=>{
+              const wasEmpty=!lr.name;
+              lr.name=v||"";
+              if(wasEmpty&&lr.name) lr.enabled=true;
+              persist();
+              _renderLoras();
+            },
+            onToggleFavorite:_loraFavToggle,
+            pushRecent:_loraPushRecent,
           });
           const stNI=NI("",lr.strength,-3,3,0.05,v=>{lr.strength=Math.round(v*100)/100;persist();},"52px");
           const tgl=MiniToggle(lr.enabled!==false,v=>{
@@ -5612,9 +5914,22 @@ function persist(){
             persist();
             _renderLoras();
           };
+          const favOn=lr.name&&S.loraFav.some(f=>loraNorm(f)===loraNorm(lr.name));
+          const star=mk("button",{width:"22px",height:"22px",flexShrink:"0",border:"none",background:"transparent",cursor:"pointer",padding:"0",fontSize:"12px",lineHeight:"22px",outline:"none",color:favOn?C.lime:C.dim},{type:"button",title:favOn?"Remove from favorites":"Add to favorites"});
+          tx(star,favOn?"\u2605":"\u2606");
+          star.style.display=lr.name?"":"none";
+          star.onclick=e=>{ e.stopPropagation(); if(!lr.name) return; _loraFavToggle(lr.name); _renderLoras(); };
+          const infoBtn=(lr.name&&_loraHasTxt(lr.name))?(()=>{
+            const ib=mk("button",{width:"22px",height:"22px",flexShrink:"0",borderRadius:"50%",border:`1px solid ${C.borderH}`,background:"transparent",color:C.muted,fontSize:"9px",fontWeight:"700",cursor:"help",padding:"0",fontStyle:"italic",fontFamily:"Georgia, serif",outline:"none"},{type:"button",title:"Show the saved info note for this LoRA"});
+            tx(ib,"i");
+            ib.onclick=e=>{ e.stopPropagation(); _showLoraInfoFor(lr.name); };
+            return ib;
+          })():null;
           if(!lr.name && S.loras.length<=1) rm.style.display="none";
           if(lr.name&&lr.enabled===false){ dd.el.style.opacity=".45"; stNI.style.opacity=".45"; }
-          row.append(dd.el,stNI,tgl.el,rm);
+          row.append(dd.el,star);
+          if(infoBtn) row.appendChild(infoBtn);
+          row.append(stNI,tgl.el,rm);
           loraRowsWrap.appendChild(row);
           loraRows.push(row);
         });
@@ -7479,7 +7794,7 @@ function persist(){
         try{
           const r=await fetch("/h3one/models");
           const d=await r.json();
-          _M={checkpoints:d.checkpoints||[],diffusion:d.diffusion_models||[],text_encoders:d.text_encoders||[],vaes:d.vaes||[],loras:d.loras||[]};
+          _M={checkpoints:d.checkpoints||[],diffusion:d.diffusion_models||[],text_encoders:d.text_encoders||[],vaes:d.vaes||[],loras:d.loras||[],loraTxt:new Set((d.lora_txt||[]).map(loraNorm))};
           const has=(arr,v)=>arr.some(m=>(m||"").toLowerCase()===(v||"").toLowerCase());
           const clipItems=h3TextEncoderItems(_M.text_encoders);
           const samItems=h3SamCheckpoints(_M.checkpoints);
@@ -7522,7 +7837,7 @@ function persist(){
       const _prefillCharSheetLora=async()=>{
         if(S.speedLora) return;
         if(!_M.loras||!_M.loras.length){
-          try{ const r=await fetch("/h3one/models"); const d=await r.json(); _M.loras=d.loras||[]; }catch(e){ return; }
+          try{ const r=await fetch("/h3one/models"); const d=await r.json(); _M.loras=d.loras||[]; _M.loraTxt=new Set((d.lora_txt||[]).map(loraNorm)); }catch(e){ return; }
         }
         const target="minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors";
         const found=(_M.loras||[]).find(n=>String(n).replace(/\\/g,"/").split("/").pop()===target);

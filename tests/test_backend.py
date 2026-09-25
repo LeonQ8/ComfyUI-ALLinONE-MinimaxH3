@@ -2282,5 +2282,125 @@ class TestModesAndTemplates(_NodesTestBase):
         self.assertIn("charsheet4.json", self.nodes._ALLOWED_TEMPLATES)
 
 
+class TestLoraTxt(_NodesTestBase):
+    """Same-stem `.txt` sidecars are the LoRA info notes the picker shows."""
+
+    def _write_lora(self, rel, note=None):
+        path = self.tmp / "models" / "loras" / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"")
+        if note is not None:
+            path.with_suffix(".txt").write_text(note, encoding="utf-8")
+        return path
+
+    def test_scan_finds_loras_with_same_stem_txt(self):
+        self._write_lora("a.safetensors", "note a")
+        self._write_lora("b.safetensors")
+        (self.tmp / "models" / "loras" / "readme.txt").write_text("not a sidecar")
+        self.assertEqual(self.nodes._scan_lora_txt(), ["a.safetensors"])
+
+    def test_scan_handles_nested_folders_and_mixed_extensions(self):
+        self._write_lora(os.path.join("MiniMax H3", "speed.safetensors"), "note")
+        self._write_lora(os.path.join("Wan", "style.ckpt"), "note")
+        self.assertEqual(
+            self.nodes._scan_lora_txt(),
+            [
+                os.path.join("MiniMax H3", "speed.safetensors"),
+                os.path.join("Wan", "style.ckpt"),
+            ],
+        )
+
+    def test_scan_ignores_loras_without_a_note(self):
+        self._write_lora("plain.safetensors")
+        self.assertEqual(self.nodes._scan_lora_txt(), [])
+
+    def test_txt_path_rejects_traversal_and_missing_files(self):
+        self._write_lora("a.safetensors", "x")
+        self.assertIsNone(self.nodes._lora_txt_path("..\\..\\secret.txt"))
+        self.assertIsNone(self.nodes._lora_txt_path(""))
+        self.assertIsNone(self.nodes._lora_txt_path("missing.safetensors"))
+
+    def test_read_returns_note_and_none_without_one(self):
+        self._write_lora("a.safetensors", "recommended prompt: hello")
+        self._write_lora("b.safetensors")
+        self.assertEqual(self.nodes._read_lora_txt("a.safetensors"), "recommended prompt: hello")
+        self.assertIsNone(self.nodes._read_lora_txt("b.safetensors"))
+
+    def test_read_truncates_long_notes(self):
+        self._write_lora("long.safetensors", "x" * 50)
+        text = self.nodes._read_lora_txt("long.safetensors", limit=10)
+        self.assertTrue(text.startswith("x" * 10))
+        self.assertIn("[truncated]", text)
+
+    def test_read_decodes_cp1252_notes(self):
+        path = self._write_lora("enc.safetensors")
+        path.with_suffix(".txt").write_bytes("caf\xe9 note".encode("cp1252"))
+        self.assertEqual(self.nodes._read_lora_txt("enc.safetensors"), "caf\xe9 note")
+
+    def test_models_route_includes_lora_txt(self):
+        self._write_lora("a.safetensors", "note")
+        response = _run(self.nodes.get_models(None))
+        self.assertEqual(response.kwargs["data"]["lora_txt"], ["a.safetensors"])
+
+    def test_lora_info_route_returns_text(self):
+        self._write_lora("a.safetensors", "recommended prompt")
+        response = _run(self.nodes.get_lora_info(_FakeRequest(None, {"name": "a.safetensors"})))
+        data = response.kwargs["data"]
+        self.assertTrue(data["ok"])
+        self.assertTrue(data["found"])
+        self.assertEqual(data["text"], "recommended prompt")
+
+    def test_lora_info_route_reports_missing_note(self):
+        self._write_lora("b.safetensors")
+        response = _run(self.nodes.get_lora_info(_FakeRequest(None, {"name": "b.safetensors"})))
+        data = response.kwargs["data"]
+        self.assertTrue(data["ok"])
+        self.assertFalse(data["found"])
+        self.assertEqual(data["text"], "")
+
+    def _write_note(self, rel_model, rel_note, text="note"):
+        path = self.tmp / "models" / "loras" / rel_model
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"")
+        note = self.tmp / "models" / "loras" / rel_note
+        note.parent.mkdir(parents=True, exist_ok=True)
+        note.write_text(text, encoding="utf-8")
+
+    def test_named_note_is_used_in_a_single_lora_folder(self):
+        self._write_note(
+            os.path.join("MiniMax H3", "bljb", "H3 blowjob.safetensors"),
+            os.path.join("MiniMax H3", "bljb", "Example Prompt.txt"),
+            "recommended: hello",
+        )
+        name = os.path.join("MiniMax H3", "bljb", "H3 blowjob.safetensors")
+        self.assertEqual(self.nodes._read_lora_txt(name), "recommended: hello")
+        self.assertIn(name, self.nodes._scan_lora_txt())
+
+    def test_exact_name_beats_a_named_note(self):
+        self._write_note("a.safetensors", "a.txt", "exact")
+        self._write_note("a.safetensors", "Prompt.txt", "named")
+        self.assertEqual(self.nodes._read_lora_txt("a.safetensors"), "exact")
+
+    def test_prompt_beats_usage_and_readme(self):
+        self._write_note("b.safetensors", "Prompt.txt", "prompt text")
+        self._write_note("b.safetensors", "Usage.txt", "usage text")
+        self._write_note("b.safetensors", "README.txt", "readme text")
+        self.assertEqual(self.nodes._read_lora_txt("b.safetensors"), "prompt text")
+
+    def test_shared_folder_named_note_is_not_guessed(self):
+        self._write_note("c.safetensors", "Prompt.txt", "shared")
+        (self.tmp / "models" / "loras" / "d.safetensors").write_bytes(b"")
+        self.assertIsNone(self.nodes._read_lora_txt("c.safetensors"))
+        self.assertIsNone(self.nodes._read_lora_txt("d.safetensors"))
+        self.assertEqual(self.nodes._scan_lora_txt(), [])
+
+    def test_single_arbitrary_txt_needs_an_unambiguous_folder(self):
+        self._write_note("e.safetensors", "rules.txt", "only note")
+        (self.tmp / "models" / "loras" / "f.safetensors").write_bytes(b"")
+        self.assertIsNone(self.nodes._read_lora_txt("e.safetensors"))
+        os.remove(self.tmp / "models" / "loras" / "f.safetensors")
+        self.assertEqual(self.nodes._read_lora_txt("e.safetensors"), "only note")
+
+
 if __name__ == "__main__":
     unittest.main()

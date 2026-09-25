@@ -4,17 +4,19 @@
 
 import { readdirSync, readFileSync } from "node:fs";
 import { resolve, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { aspect, sizeOf, sameSize, mapMaskPoint, orientRes, fitResolutionToAspect, planMaskCrop, maskTrackingPlan, resolveFitPrimary, imgProfileShort, imgAspectName, viewQuery, thumbQuery, isImageItem, inputFileExists, h3SamCheckpoints, clampImageMP, planImageCanvas, planImageCanvasForRatio, planUpscaleTarget, IMG_MAX_MP, IMG_MIN_MP, IMG_ASPECT_RATIOS, resolveQualityFlags, matchQualityPreset, QUALITY_PRESET_FLAGS, planExtend, queuePromptPayload, settleQueuedOutput, maskSpeechSyncPrompt, cropFrameIndex, cropBoxAt, cropReportText, lumaToAlpha, maskDetectionHint, maskRunErrorHint, clampTimecode, compareGridColumns, compareGridRows, compareWindow, syncTargets, formatTimecode, makeCompareSlots, charsheetPanelIndices, CHARSHEET_LENGTH, promptTextFromOutput, promptLinkAncestors, modeSamplerScheduler, h3MemoryOptimizationNodeInputs, spectrumNodeInputs } from "../web/h3_helpers.mjs";
+import { aspect, sizeOf, sameSize, mapMaskPoint, orientRes, fitResolutionToAspect, planMaskCrop, maskTrackingPlan, resolveFitPrimary, imgProfileShort, imgAspectName, viewQuery, thumbQuery, isImageItem, inputFileExists, h3SamCheckpoints, clampImageMP, planImageCanvas, planImageCanvasForRatio, planUpscaleTarget, IMG_MAX_MP, IMG_MIN_MP, IMG_ASPECT_RATIOS, resolveQualityFlags, matchQualityPreset, QUALITY_PRESET_FLAGS, planExtend, queuePromptPayload, settleQueuedOutput, maskSpeechSyncPrompt, cropFrameIndex, cropBoxAt, cropReportText, lumaToAlpha, maskDetectionHint, maskRunErrorHint, clampTimecode, compareGridColumns, compareGridRows, compareWindow, syncTargets, formatTimecode, makeCompareSlots, charsheetPanelIndices, CHARSHEET_LENGTH, promptTextFromOutput, promptLinkAncestors, modeSamplerScheduler, h3MemoryOptimizationNodeInputs, spectrumNodeInputs, loraNorm, loraLabelParts, loraQueryTokens, loraMatchScore, loraFolders, loraInDir, loraFilterRank, loraLooksH3, loraScopes, loraScopeMatch, loraStackNames, loraStackSafeName, loraStackFindName, loraStackRowsWithMissing, loraStackSame, loraStackSave, loraStackLoad } from "../web/h3_helpers.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, "..");
 const webDir = resolve(root, "web");
 const bundlePath = resolve(webDir, "one_node_minimax_h3.js");
 const helpersPath = resolve(webDir, "h3_helpers.mjs");
+const loraPickerPath = resolve(webDir, "h3_lora_picker.js");
+const loraStacksPath = resolve(webDir, "h3_lora_stacks.js");
 
 test("web directory contains the bundle", () => {
   const files = readdirSync(webDir);
@@ -1937,3 +1939,231 @@ test("bundle isolates sampler and scheduler per mode", () => {
   assert.ok(bundle.includes("schedDD.set(S.schedulerName)"), "the restored scheduler must refresh the visible dropdown");
   assert.ok(bundle.includes(':["res_multistep","simple"]'), "untouched modes must default to the H3-native pipeline");
 });
+
+// -- LoRA picker helpers -----------------------------------------------------
+
+test("loraLabelParts splits a nested label into name and folder", () => {
+  const win = loraLabelParts("MiniMax H3\\Speed Loras\\Kijai\\minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors");
+  assert.equal(win.name, "minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors");
+  assert.equal(win.stem, "minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16");
+  assert.equal(win.dir, "MiniMax H3/Speed Loras/Kijai");
+  const fwd = loraLabelParts("Wan/SpeedBoost/style.ckpt");
+  assert.equal(fwd.dir, "Wan/SpeedBoost");
+  assert.equal(fwd.stem, "style");
+  const bare = loraLabelParts("solo.safetensors");
+  assert.equal(bare.dir, "");
+  assert.equal(bare.stem, "solo");
+});
+
+test("loraNorm normalizes slashes and case for sidecar matching", () => {
+  assert.equal(loraNorm("MiniMax H3\\A\\B.safetensors"), "minimax h3/a/b.safetensors");
+  assert.equal(loraNorm(null), "");
+});
+
+test("loraMatchScore needs every token and ranks filename hits first", () => {
+  const tokens = loraQueryTokens("ref2v 4step");
+  const fileHit = loraMatchScore("MiniMax H3\\Speed\\minimax_h3_ref2v_turbo_4step_v0.1.safetensors", tokens);
+  const dirHit = loraMatchScore("MiniMax H3\\ref2v 4step\\whatever.safetensors", tokens);
+  assert.ok(fileHit > dirHit, "filename matches must outrank folder matches");
+  assert.equal(loraMatchScore("Wan\\noise.safetensors", tokens), -1, "a missing token rejects the item");
+  assert.equal(loraMatchScore("anything", []), 0, "no tokens means no filtering");
+});
+
+test("loraFilterRank is order independent and pins favorites then recents", () => {
+  const items = [
+    "MiniMax H3\\tests\\alpha.safetensors",
+    "MiniMax H3\\Speed Loras\\minimax_h3_ref2v_turbo_4step.safetensors",
+    "Wan\\ref2v\\4step_wan.safetensors",
+  ];
+  const ranked = loraFilterRank(items, "4step ref2v", {});
+  assert.equal(ranked.length, 2, "only matching items survive (order-independent tokens)");
+  assert.equal(ranked[0], "MiniMax H3\\Speed Loras\\minimax_h3_ref2v_turbo_4step.safetensors");
+  const fav = loraFilterRank(items, "", { favorites: ["Wan\\ref2v\\4step_wan.safetensors"] });
+  assert.equal(fav[0], "Wan\\ref2v\\4step_wan.safetensors", "favorites pin to the top");
+  const rec = loraFilterRank(items, "", { recents: ["MiniMax H3\\tests\\alpha.safetensors"] });
+  assert.equal(rec[0], "MiniMax H3\\tests\\alpha.safetensors", "recents come before the rest");
+});
+
+test("loraLooksH3 detects H3/Minimax paths only", () => {
+  assert.equal(loraLooksH3("MiniMax H3\\style.safetensors"), true);
+  assert.equal(loraLooksH3("minimax_h3_turbo_4step.safetensors"), true);
+  assert.equal(loraLooksH3("MiniMax-H3-Ref2VA-Acc-8Step.safetensors"), true);
+  assert.equal(loraLooksH3("Wan\\SpeedBoost\\lightx2v.safetensors"), false);
+  assert.equal(loraLooksH3("h3one.safetensors"), false);
+});
+
+test("loraFolders lists child folders with counts at any depth", () => {
+  const items = [
+    "MiniMax H3\\Speed Loras\\a.safetensors",
+    "MiniMax H3\\Speed Loras\\Kijai\\b.safetensors",
+    "MiniMax H3\\other\\c.safetensors",
+    "MiniMax H3\\direct.safetensors",
+    "Wan\\d.safetensors",
+  ];
+  const names = (arr) => arr.map((f) => f.name + "=" + f.count).sort();
+  assert.deepEqual(names(loraFolders(items, "")), ["MiniMax H3=4", "Wan=1"].sort());
+  assert.deepEqual(names(loraFolders(items, "MiniMax H3")), ["other=1", "Speed Loras=2"].sort());
+  assert.deepEqual(names(loraFolders(items, "MiniMax H3/Speed Loras")), ["Kijai=1"]);
+  assert.deepEqual(loraFolders(items, "MiniMax H3/Speed Loras/Kijai"), []);
+  assert.deepEqual(loraFolders(items, "Wan"), []);
+});
+
+test("loraInDir matches a folder and its subfolders only", () => {
+  assert.equal(loraInDir("Wan\\sub\\a.safetensors", "Wan"), true);
+  assert.equal(loraInDir("Wan\\a.safetensors", "Wan/Sub"), false);
+  assert.equal(loraInDir("Wan2\\a.safetensors", "Wan"), false, "folder boundary must be respected");
+  assert.equal(loraInDir("Wan\\sub\\a.safetensors", "wan/SUB"), true);
+  assert.equal(loraInDir("root.safetensors", ""), true);
+});
+
+test("loraScopes keeps base chips and hides a redundant H3 chip", () => {
+  const items = [
+    "MiniMax H3\\a.safetensors",
+    "MiniMax H3\\b.safetensors",
+    "Wan\\c.safetensors",
+  ];
+  const scopes = loraScopes(items, { favorites: ["Wan\\c.safetensors"], recents: ["MiniMax H3\\a.safetensors"] });
+  const byId = Object.fromEntries(scopes.map((s) => [s.id, s.count]));
+  assert.equal(byId.all, 3);
+  assert.equal(byId.fav, 1);
+  assert.equal(byId.recent, 1);
+  assert.equal(scopes.find((s) => s.id === "h3"), undefined, "the MiniMax H3 folder already holds exactly the H3 set");
+  const mixed = loraScopes(["MiniMax H3\\a.safetensors", "h3_turbo.safetensors", "Wan\\c.safetensors"], {});
+  assert.equal(mixed.find((s) => s.id === "h3").count, 2, "an H3 file outside the folder keeps the chip");
+  const noDirs = loraScopes(["minimax_h3_a.safetensors", "wan_b.safetensors"], {});
+  assert.equal(noDirs.find((s) => s.id === "h3").count, 1);
+});
+
+test("loraScopeMatch filters by h3, folder, favorite and recent", () => {
+  const opts = { favorites: ["Wan\\c.safetensors"], recents: ["MiniMax H3\\a.safetensors"] };
+  assert.equal(loraScopeMatch("Wan\\c.safetensors", "all", opts), true);
+  assert.equal(loraScopeMatch("Wan\\c.safetensors", "h3", opts), false);
+  assert.equal(loraScopeMatch("MiniMax H3\\a.safetensors", "h3", opts), true);
+  assert.equal(loraScopeMatch("Wan\\c.safetensors", "dir:Wan", opts), true);
+  assert.equal(loraScopeMatch("Wan\\sub\\c.safetensors", "dir:Wan", opts), true);
+  assert.equal(loraScopeMatch("MiniMax H3\\a.safetensors", "dir:Wan", opts), false);
+  assert.equal(loraScopeMatch("Wan\\sub\\c.safetensors", "dir:Wan/Sub", opts), true);
+  assert.equal(loraScopeMatch("Wan\\c.safetensors", "dir:Wan/Sub", opts), false);
+  assert.equal(loraScopeMatch("Wan2\\c.safetensors", "dir:Wan", opts), false);
+  assert.equal(loraScopeMatch("Wan\\c.safetensors", "fav", opts), true);
+  assert.equal(loraScopeMatch("MiniMax H3\\a.safetensors", "recent", opts), true);
+  assert.equal(loraScopeMatch("MiniMax H3\\b.safetensors", "recent", opts), false);
+});
+
+test("lora stack helpers save, list and load named sets", () => {
+  const loras = [
+    { name: "MiniMax H3\\Speed Loras\\turbo.safetensors", strength: 0.8 },
+    { name: "Wan\\style.safetensors", strength: 1.2 },
+    { name: "", strength: 1 },
+  ];
+  const stacks = loraStackSave({}, "My speed", loras);
+  assert.deepEqual(loraStackNames(stacks), ["My speed"]);
+  const loaded = loraStackLoad(stacks, "My speed");
+  assert.equal(loaded.length, 2, "empty rows are dropped");
+  assert.equal(loaded[0].name, "MiniMax H3\\Speed Loras\\turbo.safetensors");
+  assert.equal(loaded[0].strength, 0.8);
+  assert.equal(loraStackLoad(stacks, "missing"), null);
+  assert.equal(Object.keys(loraStackSave(stacks, "", loras)).length, 1, "a blank name is rejected");
+  assert.equal(Object.keys(loraStackSave(stacks, "empty", [])).length, 1, "an empty set is rejected");
+});
+
+test("loraStackSafeName trims, caps and rejects prototype keys", () => {
+  assert.equal(loraStackSafeName("  Space  "), "Space");
+  assert.equal(loraStackSafeName(""), null);
+  assert.equal(loraStackSafeName("   "), null);
+  assert.equal(loraStackSafeName("__proto__"), null);
+  assert.equal(loraStackSafeName("x".repeat(80)).length, 60);
+  const evil = loraStackSave({}, "__proto__", [{ name: "a.safetensors", strength: 1 }]);
+  assert.equal(Object.keys(evil).length, 0, "the prototype key must never become a stack");
+  assert.equal({}.polluted, undefined);
+});
+
+test("loraStackFindName matches an existing stack case insensitively", () => {
+  const stacks = loraStackSave({}, "My Speed", [{ name: "a.safetensors", strength: 1 }]);
+  assert.equal(loraStackFindName(stacks, "my speed"), "My Speed");
+  assert.equal(loraStackFindName(stacks, " MY SPEED "), "My Speed");
+  assert.equal(loraStackFindName(stacks, "other"), null);
+  assert.equal(loraStackFindName(null, "x"), null);
+});
+
+test("loraStackRowsWithMissing drops absent LoRAs and keeps rows when the list is unknown", () => {
+  const rows = [
+    { name: "MiniMax H3\\a.safetensors", strength: 0.8 },
+    { name: "Wan\\gone.safetensors", strength: 1 },
+  ];
+  const installed = ["minimax h3/a.safetensors", "MiniMax H3\\b.safetensors"];
+  const check = loraStackRowsWithMissing(rows, installed);
+  assert.deepEqual(check.rows.map((r) => r.name), ["MiniMax H3\\a.safetensors"]);
+  assert.deepEqual(check.missing, ["Wan\\gone.safetensors"]);
+  assert.equal(loraStackRowsWithMissing(rows, []).missing.length, 0, "an unknown model list must not hide rows");
+  assert.equal(loraStackRowsWithMissing(rows, ["MiniMax H3\\b.safetensors"]).rows.length, 0);
+});
+
+test("loraStackSame compares normalized names and strengths in order", () => {
+  const a = [
+    { name: "A\\x.safetensors", strength: 1 },
+    { name: "B\\y.safetensors", strength: 0.5 },
+  ];
+  assert.equal(loraStackSame(a, [{ name: "a/x.safetensors", strength: 1 }, { name: "B\\y.safetensors", strength: 0.5 }]), true);
+  assert.equal(loraStackSame(a, [{ name: "A\\x.safetensors", strength: 0.9 }, { name: "B\\y.safetensors", strength: 0.5 }]), false);
+  assert.equal(loraStackSame(a, [{ name: "B\\y.safetensors", strength: 0.5 }, { name: "A\\x.safetensors", strength: 1 }]), false, "row order matters");
+  assert.equal(loraStackSame([], []), true);
+});
+
+test("lora picker module exists and the bundle wires it", async () => {
+  const files = readdirSync(webDir);
+  assert.ok(files.includes("h3_lora_picker.js"), "expected the picker module next to the bundle");
+  const mod = await import(pathToFileURL(loraPickerPath).href);
+  assert.equal(typeof mod.createLoraPicker, "function", "the module must export createLoraPicker");
+  assert.equal(typeof mod.showLoraInfo, "function", "the module must export showLoraInfo");
+  const bundle = readFileSync(bundlePath, "utf8");
+  assert.ok(bundle.includes('from "./h3_lora_picker.js"'), "the bundle must import the picker module");
+  assert.ok(bundle.includes("createLoraPicker({"), "the LoRA rows must use the picker");
+  assert.ok(bundle.includes("showLoraInfo({"), "the row info badge must open the note modal");
+  assert.ok(bundle.includes("/h3one/lora_info"), "the note text must come from the backend route");
+  assert.ok(bundle.includes("loraFav:S.loraFav,loraRecent:S.loraRecent,loraStacks:S.loraStacks"), "favorites, recents and stacks must persist");
+  assert.ok(bundle.includes("function loraFilterRank("), "the bundle must mirror loraFilterRank");
+  assert.ok(bundle.includes("function loraScopeMatch("), "the bundle must mirror loraScopeMatch");
+  assert.ok(bundle.includes("function loraInDir("), "the bundle must mirror loraInDir");
+  assert.ok(bundle.includes("loraFolders,loraInDir}"), "the picker must receive the folder helpers");
+  const pickerSrc = readFileSync(loraPickerPath, "utf8");
+  assert.ok(pickerSrc.includes("loraFolders(items"), "the picker must build folder chips");
+  assert.ok(pickerSrc.includes("\\u2039 Up"), "folder drill-down needs an up chip");
+  assert.ok(pickerSrc.includes("function _copyText"), "copy needs a fallback for blocked clipboard access");
+  assert.ok(pickerSrc.includes("Copy failed"), "a failed copy must say so");
+  assert.ok(pickerSrc.includes('tx(copyBtn, "Copy")'), "the note modal must offer Copy");
+  assert.ok(bundle.includes("function loraLabelParts("), "the bundle must mirror loraLabelParts");
+  assert.ok(bundle.includes("function loraStackSave("), "the bundle must mirror loraStackSave");
+  assert.ok(bundle.includes("function _hlLabel("), "the bundle must highlight filter matches");
+  assert.ok(bundle.includes('from "./h3_lora_stacks.js"'), "the bundle must import the stack manager");
+  assert.ok(bundle.includes("createLoraStacks({"), "the Advanced card must use the stack manager");
+  assert.ok(bundle.includes('_applyFold("stacks"'), "the stacks section must fold");
+  assert.ok(bundle.includes("function loraStackSafeName("), "the bundle must mirror loraStackSafeName");
+  assert.ok(bundle.includes("function loraStackRowsWithMissing("), "the bundle must mirror loraStackRowsWithMissing");
+  assert.ok(bundle.includes("_showLoraInfoFor"), "the LoRA row must offer the info note");
+  assert.ok(bundle.includes("_loraHasTxt"), "rows must badge only LoRAs with a saved note");
+  const helpers = readFileSync(helpersPath, "utf8");
+  assert.ok(helpers.includes("export function loraFilterRank"), "h3_helpers must export loraFilterRank");
+  assert.ok(helpers.includes("export function loraScopeMatch"), "h3_helpers must export loraScopeMatch");
+  assert.ok(helpers.includes("export function loraStackLoad"), "h3_helpers must export loraStackLoad");
+});
+
+test("lora stack manager is wired and never touches files or routes", async () => {
+  const files = readdirSync(webDir);
+  assert.ok(files.includes("h3_lora_stacks.js"), "expected the stack manager next to the bundle");
+  const mod = await import(pathToFileURL(loraStacksPath).href);
+  assert.equal(typeof mod.createLoraStacks, "function", "the module must export createLoraStacks");
+  assert.equal(typeof mod.showStackConfirm, "function", "the module must export showStackConfirm");
+  const src = readFileSync(loraStacksPath, "utf8");
+  assert.ok(!src.includes("fetch("), "the stack manager must never call a backend route");
+  assert.ok(!src.includes("FormData") && !src.includes("XMLHttpRequest"), "stacks are frontend state only");
+  assert.ok(src.includes("Delete the saved stack"), "delete must ask for confirmation");
+  assert.ok(src.includes("already exists. Replace"), "a duplicate stack name must ask before replacing");
+  assert.ok(src.includes("No saved stacks yet"), "the empty state must explain how to create the first stack");
+  assert.ok(src.includes("+ Save as new"), "creating a stack must be its own explicit action");
+  assert.ok(src.includes("Stack limit reached"), "the saved stack count must be capped with a clear message");
+  const bundle = readFileSync(bundlePath, "utf8");
+  assert.ok(bundle.includes("stacksUi=createLoraStacks({"), "the bundle must receive the stack manager element");
+  assert.ok(bundle.includes("loraStackRowsWithMissing"), "loading a stack must skip missing LoRAs");
+});
+
