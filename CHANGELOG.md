@@ -2,6 +2,10 @@
 
 Newest first.
 
+## 0.21.0 (2026-09-25)
+
+ - New optional H3 Memory Opt chip under Quality. It adds the H3 Memory Optimization node from the H3-Optimizations pack (https://github.com/Zironic/H3-Optimizations) to the model chain, which lowers H3's peak VRAM. The pack is optional, the chip is off by default, and it can run alone or together with Kitchen and Block Sparse. Contributed by @Olrik-WP.
+
 ## 0.20.0 (2026-09-12)
 
  - The Sol quality chip now uses ComfyUI core's Model Sparse Attention node (block sparse, sol-attn method) instead of the older Triton SolAttnPatch. It needs ComfyUI 0.35.0 or newer.

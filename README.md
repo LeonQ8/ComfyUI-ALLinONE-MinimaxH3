@@ -60,6 +60,8 @@ T2V, I2V and R2V run on ComfyUI core alone. Everything else you might need, ever
 
 The optional **SLA Draft** quality preset is a fast prompt-tweak mode that needs the [ComfyUI-PlagueKind-Nodes](https://github.com/PlagueKind/ComfyUI-PlagueKind-Nodes) pack. It is off by default.
 
+The optional **H3 Memory Opt** chip (off by default) needs the [H3-Optimizations](https://github.com/Zironic/H3-Optimizations) pack and lowers H3's peak VRAM use.
+
 ## Installation
 
 ```bash
@@ -88,6 +90,7 @@ Before opening a pull request, please read [CONTRIBUTING.md](CONTRIBUTING.md).
 - Image mode: [ComfyUI-MiniMax-H3-Studio](https://github.com/thaakeno/ComfyUI-MiniMax-H3-Studio) by thaakeno
 - Mask mode crop and latent-mask nodes: [MaskVidExperiments](https://github.com/drozbay/MaskVidExperiments) by drozbay
 - Character Sheet mode: [H3 Character Sheet Generator](https://huggingface.co/PoopMan333/H3_Character_Sheet_Generator) by PoopMan333
+- H3 Memory Opt chip: [@Olrik-WP](https://github.com/Olrik-WP)
 
 ## Support
 
