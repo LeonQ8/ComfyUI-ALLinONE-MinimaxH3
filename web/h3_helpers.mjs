@@ -780,3 +780,209 @@ export function spectrumNodeInputs(overrides) {
     ...(overrides || {}),
   };
 }
+
+// --- LoRA picker -----------------------------------------------------------
+// LoRA lists get long and deeply nested (e.g. "MiniMax H3\Speed Loras\Kijai\
+// Ref2v\..."), so the picker splits each label into a name line + folder line,
+// ranks multi-token matches, and lets favorites / recents / folder scopes pin
+// entries. A same-stem `.txt` beside a LoRA is its info note (served by
+// nodes.py at /h3one/lora_info) and is matched by normalized name here.
+
+export function loraNorm(label) {
+  return String(label == null ? "" : label).replace(/\\/g, "/").toLowerCase();
+}
+
+export function loraLabelParts(label) {
+  const full = String(label == null ? "" : label).replace(/\\/g, "/");
+  const i = full.lastIndexOf("/");
+  const name = i >= 0 ? full.slice(i + 1) : full;
+  const dir = i >= 0 ? full.slice(0, i) : "";
+  const stem = name.replace(/\.(safetensors|ckpt|pt|pth|gguf)$/i, "");
+  return { name, stem, dir, full };
+}
+
+export function loraQueryTokens(query) {
+  return String(query || "").trim().toLowerCase().split(/\s+/).filter(Boolean);
+}
+
+export function loraMatchScore(label, tokens) {
+  if (!tokens || !tokens.length) return 0;
+  const parts = loraLabelParts(label);
+  const stem = parts.stem.toLowerCase();
+  const dir = parts.dir.toLowerCase();
+  const full = parts.full.toLowerCase();
+  let score = 0;
+  for (const t of tokens) {
+    if (!full.includes(t)) return -1;
+    if (stem.includes(t)) score += 4;
+    else if (dir.includes(t)) score += 1;
+    if (stem.startsWith(t)) score += 3;
+  }
+  return score;
+}
+
+export function loraInDir(label, dirPath) {
+  const path = loraNorm(dirPath).replace(/^\/+|\/+$/g, "");
+  if (!path) return true;
+  const dir = loraLabelParts(label).dir.toLowerCase();
+  return dir === path || dir.startsWith(path + "/");
+}
+
+export function loraFolders(items, prefix) {
+  const base = loraNorm(prefix).replace(/^\/+|\/+$/g, "");
+  const counts = new Map();
+  for (const item of Array.isArray(items) ? items : []) {
+    const dir = loraLabelParts(item).dir;
+    const low = dir.toLowerCase();
+    let rel = low;
+    if (base) {
+      if (low === base) continue;
+      if (!low.startsWith(base + "/")) continue;
+      rel = low.slice(base.length + 1);
+    }
+    const childLow = rel.split("/")[0];
+    if (!childLow) continue;
+    if (!counts.has(childLow)) {
+      const segments = dir.split("/");
+      const childName = base ? segments[base.split("/").length] : segments[0];
+      counts.set(childLow, { name: childName || childLow, count: 0 });
+    }
+    counts.get(childLow).count += 1;
+  }
+  return Array.from(counts.values())
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .map((f) => ({ name: f.name, count: f.count }));
+}
+
+export function loraFilterRank(items, query, opts) {
+  const list = Array.isArray(items) ? items.slice() : [];
+  const favorites = (opts && opts.favorites) || [];
+  const recents = (opts && opts.recents) || [];
+  const favIdx = new Map(favorites.map((s, i) => [loraNorm(s), i]));
+  const recIdx = new Map(recents.map((s, i) => [loraNorm(s), i]));
+  const bonus = (item) => {
+    const key = loraNorm(item);
+    const f = favIdx.has(key) ? 10000 - favIdx.get(key) : 0;
+    const r = recIdx.has(key) ? 100 - recIdx.get(key) : 0;
+    return f + r;
+  };
+  const tokens = loraQueryTokens(query);
+  const scored = [];
+  list.forEach((item, i) => {
+    const m = loraMatchScore(item, tokens);
+    if (m < 0) return;
+    scored.push({ item, i, s: m + bonus(item) });
+  });
+  scored.sort((a, b) => (b.s - a.s) || (a.i - b.i));
+  return scored.map((x) => x.item);
+}
+
+export function loraLooksH3(label) {
+  const s = String(label == null ? "" : label);
+  return /(^|[\\/_.\-\s])(h3|minimax)([\\/_.\-\s]|$)/i.test(s);
+}
+
+export function loraScopes(items, opts) {
+  const list = Array.isArray(items) ? items : [];
+  const favorites = (opts && opts.favorites) || [];
+  const recents = (opts && opts.recents) || [];
+  const favSet = new Set(favorites.map(loraNorm));
+  const recSet = new Set(recents.map(loraNorm));
+  const out = [{ id: "all", label: "All", count: list.length }];
+  const h3Items = list.filter(loraLooksH3);
+  // The H3 chip is redundant when one folder already holds exactly the H3 set
+  // (for example everything under "MiniMax H3"), so the folder chip wins.
+  const covered = loraFolders(list, "").some((f) => {
+    const inFolder = list.filter((x) => loraInDir(x, f.name));
+    return inFolder.length === h3Items.length && h3Items.every((x) => loraInDir(x, f.name));
+  });
+  if (h3Items.length && h3Items.length < list.length && !covered) {
+    out.push({ id: "h3", label: "H3 only", count: h3Items.length });
+  }
+  const favn = list.filter((x) => favSet.has(loraNorm(x))).length;
+  if (favn) out.push({ id: "fav", label: "Favorites", count: favn });
+  const recn = list.filter((x) => recSet.has(loraNorm(x))).length;
+  if (recn) out.push({ id: "recent", label: "Recent", count: recn });
+  return out;
+}
+
+export function loraScopeMatch(label, scope, opts) {
+  const s = String(scope || "all");
+  if (s === "all") return true;
+  if (s === "h3") return loraLooksH3(label);
+  const favorites = (opts && opts.favorites) || [];
+  const recents = (opts && opts.recents) || [];
+  if (s === "fav") return favorites.some((x) => loraNorm(x) === loraNorm(label));
+  if (s === "recent") return recents.some((x) => loraNorm(x) === loraNorm(label));
+  if (s.startsWith("dir:")) return loraInDir(label, s.slice(4));
+  return true;
+}
+
+export function loraStackNames(stacks) {
+  if (!stacks || typeof stacks !== "object") return [];
+  return Object.keys(stacks).sort((a, b) => a.localeCompare(b));
+}
+
+export function loraStackSafeName(name) {
+  const clean = String(name || "").trim().slice(0, 60);
+  if (!clean || clean.toLowerCase() === "__proto__") return null;
+  return clean;
+}
+
+export function loraStackFindName(stacks, name) {
+  const clean = loraStackSafeName(name);
+  if (!clean || !stacks || typeof stacks !== "object") return null;
+  const low = clean.toLowerCase();
+  return Object.keys(stacks).find((k) => String(k).toLowerCase() === low) || null;
+}
+
+export function loraStackRowsWithMissing(rows, items) {
+  const list = Array.isArray(items) ? items : [];
+  const have = new Set(list.map(loraNorm));
+  const kept = [];
+  const missing = [];
+  for (const r of Array.isArray(rows) ? rows : []) {
+    if (!r || typeof r.name !== "string" || !r.name) continue;
+    if (!list.length || have.has(loraNorm(r.name))) {
+      kept.push({ name: r.name, strength: Number.isFinite(Number(r.strength)) ? Number(r.strength) : 1 });
+    } else {
+      missing.push(r.name);
+    }
+  }
+  return { rows: kept, missing };
+}
+
+export function loraStackSame(a, b) {
+  const key = (r) => loraNorm(r.name) + "|" + (Number.isFinite(Number(r.strength)) ? Math.round(Number(r.strength) * 100) : 100);
+  const rows = (arr) => (Array.isArray(arr) ? arr : []).filter((r) => r && typeof r.name === "string" && r.name).map(key);
+  const x = rows(a);
+  const y = rows(b);
+  if (x.length !== y.length) return false;
+  return x.every((v, i) => v === y[i]);
+}
+
+export function loraStackSave(stacks, name, loras) {
+  const clean = loraStackSafeName(name);
+  const src = stacks && typeof stacks === "object" ? stacks : {};
+  if (!clean) return { ...src };
+  const rows = (Array.isArray(loras) ? loras : [])
+    .filter((l) => l && typeof l.name === "string" && l.name)
+    .slice(0, 10)
+    .map((l) => ({
+      name: l.name,
+      strength: Number.isFinite(Number(l.strength)) ? Math.max(-3, Math.min(3, Number(l.strength))) : 1,
+    }));
+  if (!rows.length) return { ...src };
+  const out = { ...src };
+  out[clean] = rows;
+  return out;
+}
+
+export function loraStackLoad(stacks, name) {
+  const rows = stacks && typeof stacks === "object" ? stacks[name] : null;
+  if (!Array.isArray(rows)) return null;
+  return rows
+    .filter((r) => r && typeof r.name === "string" && r.name)
+    .slice(0, 10)
+    .map((r) => ({ name: r.name, strength: Number.isFinite(Number(r.strength)) ? Number(r.strength) : 1 }));
+}

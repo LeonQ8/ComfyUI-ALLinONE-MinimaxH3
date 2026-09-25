@@ -278,6 +278,23 @@ async def lora_triggers(request):
     return web.json_response({"ok": False, "error": "file not found", "triggers": []})
 
 
+@PromptServer.instance.routes.get("/h3one/lora_info")
+async def get_lora_info(request):
+    """Recommended prompt / notes saved as `<lora name>.txt` beside the LoRA.
+
+    Returns found=False (not an error) when the LoRA has no note, so the UI can
+    simply hide the info affordance."""
+    import asyncio
+
+    name = ""
+    try:
+        name = request.query.get("name", "")
+    except Exception:
+        name = ""
+    text = await asyncio.to_thread(_read_lora_txt, name)
+    return web.json_response({"ok": True, "found": text is not None, "text": text or ""})
+
+
 # ---------------------------------------------------------------------------
 # Path helpers
 # ---------------------------------------------------------------------------
@@ -374,6 +391,148 @@ def _scan(folder_key, extensions=None):
                     seen.add(key)
                     found.append(rel)
     return sorted(found)
+
+
+_MODEL_EXTS = (".safetensors", ".ckpt", ".pt", ".pth", ".gguf")
+# Common note filenames people put beside a LoRA (case-insensitive, without the
+# .txt), checked in this priority order.
+_LORA_NOTE_NAMES = (
+    "prompt", "example prompt", "example prompts", "prompts",
+    "usage", "how to use", "notes", "note", "info", "information",
+    "trigger words", "triggers", "trigger", "readme",
+)
+
+
+def _lora_note_in_dir(dir_path, model_filename):
+    """Pick the note .txt that belongs to one LoRA inside its own directory.
+
+    Preference: a file named exactly like the LoRA (`name.txt`), then a common
+    note name (`Prompt.txt`, `Usage.txt`, `Example Prompt.txt`, ...), then the
+    only .txt in a folder that holds just this one LoRA. Folders with several
+    LoRAs only honor exact-name notes, so a shared note is never guessed onto
+    the wrong LoRA."""
+    try:
+        entries = [e.name for e in os.scandir(dir_path) if e.is_file()]
+    except Exception:
+        return None
+    txts = [f for f in entries if f.lower().endswith(".txt") and not f.startswith(".")]
+    if not txts:
+        return None
+    stem = os.path.splitext(model_filename)[0].lower()
+    for t in txts:
+        if os.path.splitext(t)[0].lower() == stem:
+            return t
+    models = [f for f in entries if f.lower().endswith(_MODEL_EXTS)]
+    if len(models) != 1:
+        return None
+    rank = {n: i for i, n in enumerate(_LORA_NOTE_NAMES)}
+    named = sorted(
+        (t for t in txts if os.path.splitext(t)[0].lower() in rank),
+        key=lambda t: rank[os.path.splitext(t)[0].lower()],
+    )
+    if named:
+        return named[0]
+    return txts[0] if len(txts) == 1 else None
+
+
+def _scan_lora_txt():
+    """LoRAs that have an info note (.txt) beside them.
+
+    The note is the exact-name file (`lora.txt`) or a common note name in a
+    folder holding just that one LoRA. The picker badges these and can show the
+    note text, so users can keep a recommended prompt or settings beside the
+    LoRA file itself."""
+    try:
+        bases = folder_paths.get_folder_paths("loras")
+    except Exception:
+        return []
+    found = []
+    seen = set()
+    for base in bases:
+        if not os.path.isdir(base):
+            continue
+        for root, _dirs, files in os.walk(base, followlinks=True):
+            if not any(f.lower().endswith(".txt") for f in files):
+                continue
+            models = [f for f in files if f.lower().endswith(_MODEL_EXTS)]
+            if not models:
+                continue
+            for fn in models:
+                if _lora_note_in_dir(root, fn) is None:
+                    continue
+                rel = os.path.relpath(os.path.join(root, fn), base)
+                key = rel.replace("\\", "/").lower()
+                if key in seen:
+                    continue
+                seen.add(key)
+                found.append(rel)
+    return sorted(found)
+
+
+def _lora_txt_path(lora_name):
+    """Resolved note path for one LoRA, or None when there is none."""
+    rel = str(lora_name or "").replace("\\", os.sep).replace("/", os.sep)
+    parts = [p for p in rel.split(os.sep) if p and p != "."]
+    if not parts or any(p == ".." for p in parts):
+        return None
+    try:
+        bases = folder_paths.get_folder_paths("loras")
+    except Exception:
+        return None
+    for base in bases:
+        try:
+            base_res = Path(base).resolve()
+        except Exception:
+            continue
+        model_stem = os.path.splitext(os.path.join(str(base_res), *parts))[0]
+        model_file = None
+        for e in _MODEL_EXTS:
+            if os.path.isfile(model_stem + e):
+                model_file = os.path.basename(model_stem + e)
+                break
+        if model_file is None:
+            continue
+        note_name = _lora_note_in_dir(os.path.dirname(model_stem), model_file)
+        if not note_name:
+            continue
+        try:
+            note = (Path(os.path.dirname(model_stem)) / note_name).resolve()
+            note.relative_to(base_res)
+        except Exception:
+            continue
+        if note.is_file():
+            return str(note)
+    return None
+
+
+_LORA_TXT_LIMIT = 200000
+
+
+def _read_lora_txt(lora_name, limit=None):
+    """Text of the LoRA's sidecar note, or None when there is no note."""
+    cap = int(limit) if limit else _LORA_TXT_LIMIT
+    path = _lora_txt_path(lora_name)
+    if not path:
+        return None
+    try:
+        with open(path, "rb") as fh:
+            raw = fh.read(cap + 1)
+    except Exception:
+        return None
+    truncated = len(raw) > cap
+    raw = raw[:cap]
+    text = None
+    for enc in ("utf-8-sig", "cp1252"):
+        try:
+            text = raw.decode(enc)
+            break
+        except Exception:
+            continue
+    if text is None:
+        text = raw.decode("utf-8", errors="replace")
+    if truncated:
+        text = text.rstrip() + "\n\n[truncated]"
+    return text
 
 
 def _scan_output_videos():
@@ -547,6 +706,7 @@ async def get_models(request):
         "text_encoders": _scan("text_encoders"),
         "vaes": _scan("vae"),
         "loras": _scan("loras"),
+        "lora_txt": _scan_lora_txt(),
     })
 
 

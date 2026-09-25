@@ -2,6 +2,14 @@
 
 Newest first.
 
+## 0.22.0 (2026-09-25)
+
+ - The LoRA list in Advanced is now a searchable picker showing each LoRA name with its folder, multi-word search with highlighting, All / H3 only / Favorites / Recent / folder chips and stars. Other dropdowns show the folder under the name too.
+
+ - Stacks save the current LoRA set under a name and reload it in one click.
+
+ - LoRAs can show a saved info note: put a text file named exactly like the LoRA beside it. When its folder holds only that LoRA, any note file works (common names like Prompt, Usage or README are preferred). The " i " button opens it.
+
 ## 0.21.0 (2026-09-25)
 
  - New optional H3 Memory Opt chip under Quality. It adds the H3 Memory Optimization node from the H3-Optimizations pack (https://github.com/Zironic/H3-Optimizations) to the model chain, which lowers H3's peak VRAM. The pack is optional, the chip is off by default, and it can run alone or together with Kitchen and Block Sparse. Contributed by @Olrik-WP.
