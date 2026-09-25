@@ -28,6 +28,7 @@ These are the commit SHAs the node was developed against. You don't need to pin 
 | ComfyUI-MiniMax-H3-Studio | [GitHub](https://github.com/thaakeno/ComfyUI-MiniMax-H3-Studio) | `99a868e` | Image mode |
 | MaskVidExperiments | [GitHub](https://github.com/drozbay/MaskVidExperiments) | `d98cc89` (0.2.0) | Mask mode |
 | ComfyUI-PlagueKind-Nodes | [GitHub](https://github.com/PlagueKind/ComfyUI-PlagueKind-Nodes) | `6ca3037` | SLA Draft preset (SLA chip) |
+| H3-Optimizations | [GitHub](https://github.com/Zironic/H3-Optimizations) | `8627749` (0.2.45) | H3 Memory Opt chip |
 
 ## SLA Draft preset
 

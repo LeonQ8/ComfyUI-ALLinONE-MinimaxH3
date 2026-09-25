@@ -374,6 +374,22 @@ function spectrumNodeInputs(overrides){
   };
 }
 
+// H3 Memory Optimization inputs from H3-Optimizations 0.2.44. Mirrored in
+// h3_helpers.mjs for direct unit testing.
+function h3MemoryOptimizationNodeInputs(overrides){
+  return {
+    fused_qkv:"auto",
+    mlp_memory:"auto",
+    chunk_rows:4096,
+    preserve_precision:true,
+    precision_mode:"Auto",
+    qkv_streaming_mode:"Auto",
+    embedding_memory_mode:"Auto",
+    kitchen_v_memory_mode:"Standard",
+    ...(overrides||{}),
+  };
+}
+
 function imgProfileShort(key){
   if(!key||key==="custom") return "Custom";
   const k=String(key);
@@ -1996,6 +2012,7 @@ app.registerExtension({
           optSage:         (saved.quality==="custom")?(saved.optSage!==undefined?saved.optSage:false):_qf.sage,
           optKitchen:      (saved.quality==="custom")?(saved.optKitchen!==undefined?saved.optKitchen:false):_qf.kitchen,
           optSla:          (saved.quality==="custom")?(saved.optSla!==undefined?saved.optSla:false):_qf.sla,
+          optH3Memory:     saved.optH3Memory===true,
           optSpectrum:     saved.optSpectrum===true,
           samplerName:     saved.samplerName||"res_multistep",
           schedulerName:   saved.schedulerName||"simple",
@@ -2105,11 +2122,11 @@ function persist(){
         // quality/resolution/loras survive workflow-tab switches (they used to be
         // captured only when switching mode tabs, so a stale snapshot overwrote
         // the just-changed value on rebuild).
-        S.modeSettings[S.mode]={prompt:S.prompt,steps:S.steps,quality:S.quality,resolution:S.resolution,duration:S.duration,loras:JSON.parse(JSON.stringify(S.loras||[])),optSol:S.optSol,optSage:S.optSage,optKitchen:S.optKitchen,optSla:S.optSla,optSpectrum:S.optSpectrum,samplerName:S.samplerName,schedulerName:S.schedulerName};
+        S.modeSettings[S.mode]={prompt:S.prompt,steps:S.steps,quality:S.quality,resolution:S.resolution,duration:S.duration,loras:JSON.parse(JSON.stringify(S.loras||[])),optSol:S.optSol,optSage:S.optSage,optKitchen:S.optKitchen,optSla:S.optSla,optH3Memory:S.optH3Memory,optSpectrum:S.optSpectrum,samplerName:S.samplerName,schedulerName:S.schedulerName};
         if(_updRecipeFn){ try{ _updRecipeFn(); }catch(e){} }
         saveState({
           mode:S.mode,prompt:S.prompt,resolution:S.resolution,duration:S.duration,
-          steps:S.steps,quality:S.quality,optSol:S.optSol,optSage:S.optSage,optKitchen:S.optKitchen,optSla:S.optSla,optSpectrum:S.optSpectrum,samplerName:S.samplerName,schedulerName:S.schedulerName,randomizeSeed:S.randomizeSeed,seed:S.seed,batch:S.batch,
+          steps:S.steps,quality:S.quality,optSol:S.optSol,optSage:S.optSage,optKitchen:S.optKitchen,optSla:S.optSla,optH3Memory:S.optH3Memory,optSpectrum:S.optSpectrum,samplerName:S.samplerName,schedulerName:S.schedulerName,randomizeSeed:S.randomizeSeed,seed:S.seed,batch:S.batch,
           loras:S.loras,chainClips:S.chainClips.map(c=>({prompt:c.prompt,duration:c.duration})),
           firstFrame:S.firstFrame,lastFrame:S.lastFrame,
           firstFrameSize:S.firstFrameSize,lastFrameSize:S.lastFrameSize,
@@ -5369,6 +5386,16 @@ function persist(){
         _syncOptChips();
       };
       _checkSlaAvail();
+      let _h3MemoryAvail=null;
+      const _checkH3MemoryAvail=async()=>{
+        try{
+          const r=await fetch("/h3one/h3_memory_opt_status");
+          const d=await r.json();
+          _h3MemoryAvail=!!(d&&d.found);
+        }catch(e){ _h3MemoryAvail=false; }
+        _syncOptChips();
+      };
+      _checkH3MemoryAvail();
       let _spectrumAvail=null;
       const _checkSpectrumAvail=async()=>{
         try{
@@ -5391,6 +5418,10 @@ function persist(){
           excl:["optSol","optSage"],
           disabled:()=>_slaAvail===false,
           disabledTip:"H3 SLA Attention is not available - install ComfyUI-PlagueKind-Nodes and restart ComfyUI.",
+        }),
+        _mkOptChip("optH3Memory","H3 Memory Opt",{
+          disabled:()=>_h3MemoryAvail!==true,
+          disabledTip:"H3 Memory Optimization is not available - install H3-Optimizations and restart ComfyUI.",
         }),
         _mkOptChip("optSpectrum","Spectrum",{
           disabled:()=>_spectrumAvail===false,
@@ -5438,7 +5469,7 @@ function persist(){
         S.modeSettings[S.mode]={
           prompt:S.prompt,steps:S.steps,quality:S.quality,resolution:S.resolution,duration:S.duration,
           loras:JSON.parse(JSON.stringify(S.loras)),
-          optSol:S.optSol,optSage:S.optSage,optKitchen:S.optKitchen,optSla:S.optSla,optSpectrum:S.optSpectrum,
+          optSol:S.optSol,optSage:S.optSage,optKitchen:S.optKitchen,optSla:S.optSla,optH3Memory:S.optH3Memory,optSpectrum:S.optSpectrum,
           samplerName:S.samplerName,schedulerName:S.schedulerName,
         };
       };
@@ -5464,6 +5495,8 @@ function persist(){
           qualDD.set(_QL[ms.quality]||"Custom");
         }
         if(ms.optSpectrum!==undefined) S.optSpectrum=ms.optSpectrum;
+        S.optH3Memory=ms.optH3Memory===true;
+        _syncOptChips();
         if(typeof _syncLiveToggle==="function") _syncLiveToggle();
         if(ms.resolution!==undefined){ S.resolution=ms.resolution; resDD.set(ms.resolution); _updResCustom(); }
         if(ms.duration!==undefined){ S.duration=S.mode==="mask"?Math.min(15,ms.duration):ms.duration; durNI._inp.value=String(S.duration); _updateFramesLabel(); }
@@ -5500,7 +5533,7 @@ function persist(){
           S.fps=24;
           S.resolution="864x480 (0.4MP Speed)";
           S.quality="native";
-          S.optSol=false;S.optSage=false;S.optKitchen=false;S.optSla=false;S.optSpectrum=false;
+          S.optSol=false;S.optSage=false;S.optKitchen=false;S.optSla=false;S.optH3Memory=false;S.optSpectrum=false;
           if(samplerDD) samplerDD.set("euler");
           if(schedDD) schedDD.set("linear_quadratic");
           if(stepsNI) stepsNI._inp.value="25";
@@ -6664,6 +6697,12 @@ function persist(){
           wf[id]={class_type:"LoraLoaderModelOnly",inputs:{model:modelSrc,lora_name:lr.name,strength_model:lr.strength},_meta:{title:"LoRA"}};
           modelSrc=[id,0];
         });
+        const useH3Memory=S.optH3Memory&&_h3MemoryAvail===true;
+        const insH3Memory=()=>{
+          const memory=newId();
+          wf[memory]={class_type:"H3MemoryOptimization",inputs:{model:modelSrc,...h3MemoryOptimizationNodeInputs()},_meta:{title:"H3 Memory Optimization"}};
+          modelSrc=[memory,0];
+        };
         const q=S.quality;
         let useSla=false;
         if(q==="turbo"){
@@ -6673,6 +6712,7 @@ function persist(){
             wf[tl]={class_type:"MiniMaxH3TurboLoRA",inputs:{model:modelSrc,lora_name:S.speedLora,strength:1,low_vram:false},_meta:{title:"Turbo LoRA"}};
             modelSrc=[tl,0];
           }
+          if(useH3Memory) insH3Memory();
           const ts=newId();
           wf[ts]={class_type:"MiniMaxH3TurboSampler",inputs:{},_meta:{title:"Turbo Sampler"}};
           wf["10"]=wf[ts];delete wf[ts];
@@ -6700,19 +6740,13 @@ function persist(){
             wf[kitchen]={class_type:"ModelAttentionBackend",inputs:{model:modelSrc,attention:"comfy kitchen attention"},_meta:{title:"Kitchen"}};
             modelSrc=[kitchen,0];
           };
+          // Dense backend first, then H3 memory, then block sparse if requested.
           if(useKitchen){
-            // Kitchen replaces the attention function; Sol layers on top of it.
             if(useSage) insSage(); // defensive - UI never allows this pair
             insKitchen();
-            if(useSol) insSol();
-          } else if(useSage&&useSol){
-            // Sol + Sage together: follow the tested ordering (sage -> sol)
-            insSage();insSol();
-          } else {
-            // Preset combos: dense backend first, block-sparse stacked on top
-            if(useSage) insSage();
-            if(useSol) insSol();
-          }
+          } else if(useSage) insSage();
+          if(useH3Memory) insH3Memory();
+          if(useSol) insSol();
           wf["9"].inputs.steps=S.steps;
         }
         if(hasShift){
@@ -7227,6 +7261,12 @@ function persist(){
           wf[id]={class_type:"LoraLoaderModelOnly",inputs:{model:modelSrc,lora_name:lr.name,strength_model:lr.strength},_meta:{title:"LoRA"}};
           modelSrc=[id,0];
         });
+        const useH3Memory=S.optH3Memory&&_h3MemoryAvail===true;
+        const insH3Memory=()=>{
+          const memory=newId();
+          wf[memory]={class_type:"H3MemoryOptimization",inputs:{model:modelSrc,...h3MemoryOptimizationNodeInputs()},_meta:{title:"H3 Memory Optimization"}};
+          modelSrc=[memory,0];
+        };
         let useSla=false;
         {
           const f=resolveQualityFlags(S.optSol,S.optSage,S.optKitchen,S.optSla);
@@ -7254,13 +7294,9 @@ function persist(){
           if(useKitchen){
             if(useSage) insSage(); // defensive - UI never allows this pair
             insKitchen();
-            if(useSol) insSol();
-          } else if(useSage&&useSol){
-            insSage();insSol();
-          } else {
-            if(useSage) insSage();
-            if(useSol) insSol();
-          }
+          } else if(useSage) insSage();
+          if(useH3Memory) insH3Memory();
+          if(useSol) insSol();
         }
         wf["s:5"].inputs.model=modelSrc;
         if(S.livePreview){

@@ -42,9 +42,11 @@ Official MiniMax H3 files from [Comfy-Org/MiniMax-H3](https://huggingface.co/Com
 | SLA Draft | [ComfyUI-PlagueKind-Nodes](https://github.com/PlagueKind/ComfyUI-PlagueKind-Nodes) + a Turbo LoRA (below) |
 | Native | — (ComfyUI core only) |
 
-Each accelerator also has an on/off chip under the Quality dropdown (Block Sparse / SageAttn / Kitchen / SLA) — flip them for any mix; the preset label switches to **Custom**. Accelerators that are switched off are not even written into the workflow, so their packs don't need to be installed.
+Each accelerator also has an on/off chip under the Quality dropdown (Block Sparse / SageAttn / Kitchen / SLA / H3 Memory Opt) — flip them for any mix; the preset label switches to **Custom**. Accelerators that are switched off are not even written into the workflow, so their packs don't need to be installed.
 
 **Comfy Kitchen** (`pip install comfy-kitchen`, then restart ComfyUI) is ComfyUI's own int8 attention backend. It replaces SageAttention for people who prefer it: the Kitchen chip can run alone or together with Block Sparse, but never with SageAttention. The CUDA wheel needs an NVIDIA driver r580 or newer; without the package the node falls back to PyTorch attention.
+
+**H3 Memory Opt** (the chip under Quality): [H3-Optimizations](https://github.com/Zironic/H3-Optimizations) with ComfyUI 0.33.0 or newer. It chunks parts of H3's model work to lower peak VRAM, and it works alone or next to Kitchen and Block Sparse. It is off by default, and the chip stays disabled with a hint until the pack is installed and ComfyUI restarted.
 
 **SLA Draft**: a fast draft preset for prompt tweaks. It runs H3 SLA Attention from [ComfyUI-PlagueKind-Nodes](https://github.com/PlagueKind/ComfyUI-PlagueKind-Nodes) as the last model patch, on top of Comfy Kitchen, with a turbo LoRA. Picking the preset sets the reference defaults (er_sde sampler, beta scheduler, 6 steps) and recommends the 8-step turbo LoRA at full strength, but sampler, scheduler and steps are never forced: change them anywhere and the run uses your choice. The pack's H3 AdaLN LoRA Fix node is added automatically so dense turbo LoRAs (like the dareties build) apply to the pruned base model. Needs a recent ComfyUI core (comfy_api). The SLA chip is exclusive with Block Sparse and SageAttention and is disabled with a hint until the pack is installed and ComfyUI restarted. This is draft-only quality: prompt adherence is weaker, and multishot clips can reorder actions.
 
