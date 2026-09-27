@@ -2,6 +2,10 @@
 
 Newest first.
 
+## 0.22.1 (2026-09-27)
+
+ - Mask mode stopped starting after MaskVidExperiments 0.2.1, which now requires settings the workflow did not send. The mask workflow now passes them, so generation and the tracking preview work again.
+
 ## 0.22.0 (2026-09-25)
 
  - The LoRA list in Advanced is now a searchable picker showing each LoRA name with its folder, multi-word search with highlighting, All / H3 only / Favorites / Recent / folder chips and stars. Other dropdowns show the folder under the name too.
