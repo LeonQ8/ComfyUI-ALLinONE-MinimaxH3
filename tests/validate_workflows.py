@@ -92,14 +92,20 @@ def validate(name, data):
             raise ValueError(f"{name}: crop budget must scale both directions so any mask shape stays H3-safe")
         if not 0 < data["24"]["inputs"].get("divisible_by", 0) <= 32:
             raise ValueError(f"{name}: crop must stay on the 32px model grid")
+        if data["24"]["inputs"].get("resize_method") != "auto":
+            raise ValueError(f"{name}: crop must pass MaskVidExperiments' resize_method widget")
         if data["27"]["inputs"].get("vae") != ["3", 0]:
             raise ValueError(f"{name}: latent mask must inspect the H3 video VAE")
         if data["27"]["inputs"].get("grow_spatial", 0) > 16:
             raise ValueError(f"{name}: latent mask growth must stay tight so the paste hugs the tracked object")
         if data["27"]["inputs"].get("grow_temporal") != 1:
             raise ValueError(f"{name}: latent mask must not inflate the tracked region across frames")
+        if data["27"]["inputs"].get("grow_temp_mode") != "both":
+            raise ValueError(f"{name}: latent mask growth must stay symmetric")
         if data["33"]["inputs"].get("cropped_masks") != ["39", 0]:
             raise ValueError(f"{name}: uncrop must paste the grown latent-region mask")
+        if data["33"]["inputs"].get("resize_method") != "auto":
+            raise ValueError(f"{name}: uncrop must pass MaskVidExperiments' resize_method widget")
         if data["6"]["inputs"].get("length") != ["18", 4]:
             raise ValueError(f"{name}: conditioning length must follow prepared source frames")
         if data["6"]["inputs"].get("ref_audios.ref_audio_0") != ["18", 1]:
