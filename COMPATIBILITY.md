@@ -6,37 +6,37 @@ This node is developed and tested against a specific stack. When something break
 
 | Component | Version |
 |-----------|---------|
-| ComfyUI | 0.35.1 |
+| ComfyUI | 0.37.0 |
 | Python | 3.12.10 |
 | PyTorch | 2.9.1+cu130 |
 | OS | Windows 10/11 (portable ComfyUI) |
 
 ## Custom node packs
 
-These are the commit SHAs the node was developed against. You don't need to pin them unless something breaks — this table is your fallback.
+These are the pack versions the node was tested against. You don't need to pin them unless something breaks — this table is your fallback.
 
-| Pack | Link | Tested commit | Used by |
-|------|------|---------------|---------|
-| ComfyUI-H3-Motion-Context-MultiRef | [GitHub](https://github.com/seitanism/ComfyUI-H3-Motion-Context-MultiRef) | `87de57b` | Chain / Keyframes / Extend modes |
-| comfyui-vrgamedevgirl | [GitHub](https://github.com/vrgamegirl19/comfyui-vrgamedevgirl) | `3931613` | Audio Drive mode |
-| ComfyUI-VideoHelperSuite | [GitHub](https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite) | `4ee72c0` | Preview without saving (auto-save off) |
-| ComfyUI-SeedVR2_VideoUpscaler | [GitHub](https://github.com/numz/ComfyUI-SeedVR2_VideoUpscaler) | `4490bd1` | Upscale mode (SeedVR2) |
+| Pack | Link | Tested version | Used by |
+|------|------|----------------|---------|
+| ComfyUI-H3-Motion-Context-MultiRef | [GitHub](https://github.com/seitanism/ComfyUI-H3-Motion-Context-MultiRef) | Update 9 | Chain / Keyframes / Extend modes |
+| comfyui-vrgamedevgirl | [GitHub](https://github.com/vrgamegirl19/comfyui-vrgamedevgirl) | 9.1.1 | Audio Drive mode |
+| ComfyUI-VideoHelperSuite | [GitHub](https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite) | 1.7.9 | Preview without saving (auto-save off) |
+| ComfyUI-SeedVR2_VideoUpscaler | [GitHub](https://github.com/numz/ComfyUI-SeedVR2_VideoUpscaler) | 2.5.24 | Upscale mode (SeedVR2) |
 | Nvidia_RTX_Nodes_ComfyUI | [GitHub](https://github.com/Comfy-Org/Nvidia_RTX_Nodes_ComfyUI) | v0.1.3 | Upscale mode (RTX VSR) |
-| ComfyUI-MiniMax-H3-Turbo | [GitHub](https://github.com/Larryvrh/ComfyUI-MiniMax-H3-Turbo) | `4274783` | Turbo preset |
-| comfyui-kjnodes | [GitHub](https://github.com/kijai/ComfyUI-KJNodes) | `3f20054` | High Quality preset (SageAttention) / Live Preview |
-| comfy-kitchen (pip) | [GitHub](https://github.com/Comfy-Org/comfy-kitchen) | 0.2.31 | Kitchen chip (ModelAttentionBackend) |
-| ComfyUI-MiniMax-H3-Studio | [GitHub](https://github.com/thaakeno/ComfyUI-MiniMax-H3-Studio) | `99a868e` | Image mode |
-| MaskVidExperiments | [GitHub](https://github.com/drozbay/MaskVidExperiments) | `d98cc89` (0.2.0) | Mask mode |
-| ComfyUI-PlagueKind-Nodes | [GitHub](https://github.com/PlagueKind/ComfyUI-PlagueKind-Nodes) | `6ca3037` | SLA Draft preset (SLA chip) |
-| H3-Optimizations | [GitHub](https://github.com/Zironic/H3-Optimizations) | `8627749` (0.2.45) | H3 Memory Opt chip |
+| ComfyUI-MiniMax-H3-Turbo | [GitHub](https://github.com/Larryvrh/ComfyUI-MiniMax-H3-Turbo) | 1.2.3 | Turbo preset |
+| comfyui-kjnodes | [GitHub](https://github.com/kijai/ComfyUI-KJNodes) | 1.5.2 | High Quality preset (SageAttention) / Live Preview |
+| comfy-kitchen (pip) | [GitHub](https://github.com/Comfy-Org/comfy-kitchen) | 0.2.35 | Kitchen chip (ModelAttentionBackend) |
+| ComfyUI-MiniMax-H3-Studio | [GitHub](https://github.com/thaakeno/ComfyUI-MiniMax-H3-Studio) | 0.1.0-alpha.20 | Image mode |
+| MaskVidExperiments | [GitHub](https://github.com/drozbay/MaskVidExperiments) | 0.2.1 | Mask mode |
+| ComfyUI-PlagueKind-Nodes | [GitHub](https://github.com/PlagueKind/ComfyUI-PlagueKind-Nodes) | 1.5.6 | SLA Draft preset (SLA chip) |
+| H3-Optimizations | [GitHub](https://github.com/Zironic/H3-Optimizations) | 0.2.45 | H3 Memory Opt chip |
 
 ## SLA Draft preset
 
-The SLA Draft quality preset pairs H3 SLA Attention from ComfyUI-PlagueKind-Nodes with Comfy Kitchen and a turbo LoRA. It defaults to the reference recipe (er_sde sampler, beta scheduler, 6 steps, 8-step turbo LoRA at full strength) but only as defaults: sampler, scheduler and steps are never forced at build time, so the user's own choice always wins. SLA must be the last model patch, wired directly into the guider and scheduler, so the preset never combines SLA with Block Sparse or SageAttention. The pack needs a recent ComfyUI core (comfy_api), and the SLA kernel falls back to dense attention on any failure. Tested on the commit `6ca3037` of the pack.
+The SLA Draft quality preset pairs H3 SLA Attention from ComfyUI-PlagueKind-Nodes with Comfy Kitchen and a turbo LoRA. It defaults to the reference recipe (er_sde sampler, beta scheduler, 6 steps, 8-step turbo LoRA at full strength) but only as defaults: sampler, scheduler and steps are never forced at build time, so the user's own choice always wins. SLA must be the last model patch, wired directly into the guider and scheduler, so the preset never combines SLA with Block Sparse or SageAttention. The pack needs a recent ComfyUI core (comfy_api), and the SLA kernel falls back to dense attention on any failure. Tested on version 1.5.6 of the pack.
 
 ## Known issues on newer ComfyUI cores
 
-If your ComfyUI is newer than the tested pin and H3 breaks, update ComfyUI to the latest first — most of these are already fixed upstream.
+If your ComfyUI is newer than the tested version and H3 breaks, update ComfyUI to the latest first — most of these are already fixed upstream.
 
 ### `ComfyUI-MiniMaxH3-Cache` only conflicts with Chain and Extend
 

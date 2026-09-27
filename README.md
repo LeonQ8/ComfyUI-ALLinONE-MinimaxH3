@@ -73,7 +73,7 @@ Restart ComfyUI, then double-click the canvas and search for **ALL in ONE MiniMa
 
 ## Compatibility
 
-I develop and test against a pinned stack (ComfyUI version, custom node commits, model files). It's all listed in **[COMPATIBILITY.md](COMPATIBILITY.md)**, if a render fails after you updated something, start there.
+I develop and test against a pinned stack (ComfyUI version, custom node versions, model files). It's all listed in **[COMPATIBILITY.md](COMPATIBILITY.md)**, if a render fails after you updated something, start there.
 
 ## Contributing
 
