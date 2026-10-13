@@ -6,7 +6,7 @@ This node is developed and tested against a specific stack. When something break
 
 | Component | Version |
 |-----------|---------|
-| ComfyUI | 0.37.0 |
+| ComfyUI | 0.39.2 |
 | Python | 3.12.10 |
 | PyTorch | 2.9.1+cu130 |
 | OS | Windows 10/11 (portable ComfyUI) |
@@ -18,13 +18,13 @@ These are the pack versions the node was tested against. You don't need to pin t
 | Pack | Link | Tested version | Used by |
 |------|------|----------------|---------|
 | ComfyUI-H3-Motion-Context-MultiRef | [GitHub](https://github.com/seitanism/ComfyUI-H3-Motion-Context-MultiRef) | Update 9 | Chain / Keyframes / Extend modes |
-| comfyui-vrgamedevgirl | [GitHub](https://github.com/vrgamegirl19/comfyui-vrgamedevgirl) | 9.1.1 | Audio Drive mode |
+| comfyui-vrgamedevgirl | [GitHub](https://github.com/vrgamegirl19/comfyui-vrgamedevgirl) | 9.2.0 | Audio Drive mode |
 | ComfyUI-VideoHelperSuite | [GitHub](https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite) | 1.7.9 | Preview without saving (auto-save off) |
 | ComfyUI-SeedVR2_VideoUpscaler | [GitHub](https://github.com/numz/ComfyUI-SeedVR2_VideoUpscaler) | 2.5.24 | Upscale mode (SeedVR2) |
-| Nvidia_RTX_Nodes_ComfyUI | [GitHub](https://github.com/Comfy-Org/Nvidia_RTX_Nodes_ComfyUI) | v0.1.3 | Upscale mode (RTX VSR) |
+| Nvidia_RTX_Nodes_ComfyUI | [GitHub](https://github.com/Comfy-Org/Nvidia_RTX_Nodes_ComfyUI) | 0.2.1 | Upscale mode (RTX VSR) |
 | ComfyUI-MiniMax-H3-Turbo | [GitHub](https://github.com/Larryvrh/ComfyUI-MiniMax-H3-Turbo) | 1.2.3 | Turbo preset |
 | comfyui-kjnodes | [GitHub](https://github.com/kijai/ComfyUI-KJNodes) | 1.5.2 | High Quality preset (SageAttention) / Live Preview |
-| comfy-kitchen (pip) | [GitHub](https://github.com/Comfy-Org/comfy-kitchen) | 0.2.35 | Kitchen chip (ModelAttentionBackend) |
+| comfy-kitchen (pip) | [GitHub](https://github.com/Comfy-Org/comfy-kitchen) | 0.2.37 | Kitchen chip (ModelAttentionBackend) |
 | ComfyUI-MiniMax-H3-Studio | [GitHub](https://github.com/thaakeno/ComfyUI-MiniMax-H3-Studio) | 0.1.0-alpha.20 | Image mode |
 | MaskVidExperiments | [GitHub](https://github.com/drozbay/MaskVidExperiments) | 0.2.1 | Mask mode |
 | ComfyUI-PlagueKind-Nodes | [GitHub](https://github.com/PlagueKind/ComfyUI-PlagueKind-Nodes) | 1.5.6 | SLA Draft preset (SLA chip) |

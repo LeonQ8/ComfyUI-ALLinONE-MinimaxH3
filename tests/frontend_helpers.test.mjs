@@ -8,7 +8,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { aspect, sizeOf, sameSize, mapMaskPoint, orientRes, fitResolutionToAspect, planMaskCrop, maskTrackingPlan, resolveFitPrimary, imgProfileShort, imgAspectName, viewQuery, thumbQuery, isImageItem, inputFileExists, h3SamCheckpoints, clampImageMP, planImageCanvas, planImageCanvasForRatio, planUpscaleTarget, IMG_MAX_MP, IMG_MIN_MP, IMG_ASPECT_RATIOS, resolveQualityFlags, matchQualityPreset, QUALITY_PRESET_FLAGS, planExtend, queuePromptPayload, settleQueuedOutput, maskSpeechSyncPrompt, cropFrameIndex, cropBoxAt, cropReportText, lumaToAlpha, maskDetectionHint, maskRunErrorHint, clampTimecode, compareGridColumns, compareGridRows, compareWindow, syncTargets, formatTimecode, makeCompareSlots, charsheetPanelIndices, CHARSHEET_LENGTH, promptTextFromOutput, promptLinkAncestors, modeSamplerScheduler, h3MemoryOptimizationNodeInputs, spectrumNodeInputs, loraNorm, loraLabelParts, loraQueryTokens, loraMatchScore, loraFolders, loraInDir, loraFilterRank, loraLooksH3, loraScopes, loraScopeMatch, loraStackNames, loraStackSafeName, loraStackFindName, loraStackRowsWithMissing, loraStackSame, loraStackSave, loraStackLoad } from "../web/h3_helpers.mjs";
+import { aspect, sizeOf, sameSize, mapMaskPoint, orientRes, fitResolutionToAspect, planMaskCrop, maskTrackingPlan, resolveFitPrimary, imgProfileShort, imgAspectName, viewQuery, thumbQuery, isImageItem, inputFileExists, h3SamCheckpoints, clampImageMP, planImageCanvas, planImageCanvasForRatio, planUpscaleTarget, IMG_MAX_MP, IMG_MIN_MP, IMG_ASPECT_RATIOS, resolveQualityFlags, matchQualityPreset, QUALITY_PRESET_FLAGS, planExtend, queuePromptPayload, settleQueuedOutput, maskSpeechSyncPrompt, cropFrameIndex, cropBoxAt, cropReportText, lumaToAlpha, maskDetectionHint, maskRunErrorHint, clampTimecode, compareGridColumns, compareGridRows, compareWindow, syncTargets, formatTimecode, makeCompareSlots, charsheetPanelIndices, CHARSHEET_LENGTH, promptTextFromOutput, promptLinkAncestors, modeSamplerScheduler, h3MemoryOptimizationNodeInputs, spectrumNodeInputs, loraNorm, loraLabelParts, loraQueryTokens, loraMatchScore, loraFolders, loraInDir, loraFilterRank, loraLooksH3, loraScopes, loraScopeMatch, loraStackNames, loraStackSafeName, loraStackFindName, loraStackRowsWithMissing, loraStackSame, loraStackSave, loraStackLoad, knownMode } from "../web/h3_helpers.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, "..");
@@ -2167,3 +2167,21 @@ test("lora stack manager is wired and never touches files or routes", async () =
   assert.ok(bundle.includes("loraStackRowsWithMissing"), "loading a stack must skip missing LoRAs");
 });
 
+
+test("knownMode falls back to T2V for an unknown mode", () => {
+  const keys = ["t2v", "i2v", "mask"];
+  assert.equal(knownMode("mask", keys), "mask");
+  assert.equal(knownMode("old_mode", keys), "t2v");
+  assert.equal(knownMode(undefined, keys), "t2v");
+  assert.equal(knownMode("i2v", null), "t2v");
+  const bundle = readFileSync(bundlePath, "utf8");
+  assert.ok(bundle.includes("mode:            knownMode(saved.mode,MODES.map(m=>m.key)),"), "restored state must drop unknown modes");
+});
+
+test("bundle node menu returns its own items and fits new nodes once shown", () => {
+  const bundle = readFileSync(bundlePath, "utf8");
+  assert.ok(/getExtraMenuOptions=function\(\)\{\s+return \[\{/.test(bundle), "the menu hook must return a new list, never push into the canvas argument");
+  assert.ok(!bundle.includes("canvasOptions"), "the old canvas-as-options signature must be gone");
+  assert.ok(bundle.includes("this._h3_configured=true;"), "loading a saved workflow must keep its stored node size");
+  assert.ok(bundle.includes("setTimeout(()=>_fitWhenShown(200),0);"), "a new node must fit once its UI is attached");
+});

@@ -2,6 +2,16 @@
 
 Newest first.
 
+## 0.22.2 (2026-10-13)
+
+ - Tested on ComfyUI 0.39.2.
+
+ - Chain works with H3 Motion Context Update 9, and RTX upscale works with Nvidia RTX nodes 0.2.
+
+ - A newly added node opened squashed on the newer ComfyUI frontend. It now sizes itself to fit its content once it shows up.
+
+ - Selecting the node filled the browser console with menu errors. The right click menu now works without them.
+
 ## 0.22.1 (2026-09-27)
 
  - Mask mode stopped starting after MaskVidExperiments 0.2.1, which now requires settings the workflow did not send. The mask workflow now passes them, so generation and the tracking preview work again.
