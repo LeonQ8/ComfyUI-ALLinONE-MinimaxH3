@@ -986,3 +986,7 @@ export function loraStackLoad(stacks, name) {
     .slice(0, 10)
     .map((r) => ({ name: r.name, strength: Number.isFinite(Number(r.strength)) ? Number(r.strength) : 1 }));
 }
+
+export function knownMode(mode, keys) {
+  return Array.isArray(keys) && keys.includes(mode) ? mode : "t2v";
+}

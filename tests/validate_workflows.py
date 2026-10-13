@@ -144,6 +144,13 @@ def validate(name, data):
         for (node_id, input_name), expected in latent_links.items():
             if data[node_id]["inputs"].get(input_name) != expected:
                 raise ValueError(f"{name}: node {node_id} {input_name} breaks the Mask latent path")
+    if name == "chain_section.json":
+        if data["sec:mc"]["inputs"].get("target_start") != 0:
+            raise ValueError(f"{name}: Motion Context needs target_start 0 for head-context chaining")
+    if name == "upscale_rtx.json":
+        rtx = data["3"]["inputs"]
+        if rtx.get("strength") != 1.0 or rtx.get("image_encoding") != "8-bit RGB":
+            raise ValueError(f"{name}: RTX Video Super Resolution needs strength 1.0 and 8-bit RGB encoding")
     if name in ("charsheet.json", "charsheet4.json"):
         _validate_charsheet(name, data)
     return node_count, link_count

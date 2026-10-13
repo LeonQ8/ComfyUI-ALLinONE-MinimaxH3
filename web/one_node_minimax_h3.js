@@ -55,6 +55,10 @@ const MODES = [
   { key:"image",       label:"Image" },
 ];
 
+function knownMode(mode,keys){
+  return Array.isArray(keys)&&keys.includes(mode)?mode:"t2v";
+}
+
 const MODE_HINTS = {
   t2v:"Text to Video - generate a video from a text prompt only. No images or audio needed.",
   i2v:"Image to Video - animate from a first frame, converge to a last frame, or morph between both.",
@@ -2224,13 +2228,17 @@ app.registerExtension({
       if(this._h3_syncRadius) this._h3_syncRadius();
     };
 
-    nodeType.prototype.getExtraMenuOptions=function(canvasOptions){
-      const opts=canvasOptions||[];
-      opts.push({
+    nodeType.prototype.getExtraMenuOptions=function(){
+      return [{
         content:"Reset node size",
         callback:()=>{ if(this._h3_fitToContent) this._h3_fitToContent(); },
-      });
-      return opts;
+      }];
+    };
+
+    const _onConfigure=nodeType.prototype.onConfigure;
+    nodeType.prototype.onConfigure=function(info){
+      this._h3_configured=true;
+      return _onConfigure?.apply(this,arguments);
     };
 
     nodeType.prototype._buildUI=function(){
@@ -2244,7 +2252,7 @@ app.registerExtension({
         const _sq=(saved.quality==="custom"||(saved.quality&&_QF[saved.quality]))?saved.quality:"balanced";
         const _qf=_QF[_sq]||{sol:false,sage:false,kitchen:false,sla:false};
         self._h3_S={
-          mode:            saved.mode||"t2v",
+          mode:            knownMode(saved.mode,MODES.map(m=>m.key)),
           prompt:          saved.prompt!==undefined?saved.prompt:"",
           resolution:      saved.resolution!==undefined?saved.resolution:"960x544 (0.5MP Balanced)",
           duration:        saved.duration!==undefined?saved.duration:5,
@@ -8037,6 +8045,16 @@ function persist(){
         computeSize(){const sh=(typeof LiteGraph!=="undefined"&&LiteGraph.NODE_SLOT_HEIGHT)||20;const nh=self._h3_naturalH||NODE_H;return[NODE_W,nh+sh*3];},
       });
       _fitToContent();
+      const _fitWhenShown=(tries)=>{
+        if(self._h3_configured||_inFullscreen) return;
+        if(!root.isConnected||!_measureNaturalHeight()){
+          if(tries>0) setTimeout(()=>_fitWhenShown(tries-1),50);
+          return;
+        }
+        _fitToContent();
+        self.setDirtyCanvas?.(true,true);
+      };
+      setTimeout(()=>_fitWhenShown(200),0);
 
       if(!_isVueNodes()){
         requestAnimationFrame(()=>{
