@@ -77,9 +77,10 @@ New to ComfyUI? The installer sets up a separate ComfyUI with this node and ever
 
 It is in beta. Please [report any issues](https://github.com/LeonQ8/ComfyUI-ALLinONE-MinimaxH3/issues) you run into. We may support more cards based on your reports.
 
-1. Make an empty folder and put [install.bat](https://raw.githubusercontent.com/LeonQ8/ComfyUI-ALLinONE-MinimaxH3/main/installer/install.bat) in it.
-2. Run install.bat. It downloads Python, ComfyUI and the node packs (about 6 GB).
-3. Start ComfyUI with Run-MiniMax-ALLinONE.bat. Run update.bat to get our latest tested versions.
+1. Download [MiniMax-ALLinONE-Installer.zip](https://github.com/LeonQ8/ComfyUI-ALLinONE-MinimaxH3/releases/download/installer-v1/MiniMax-ALLinONE-Installer.zip). Its SHA-256 is on the [release page](https://github.com/LeonQ8/ComfyUI-ALLinONE-MinimaxH3/releases/tag/installer-v1).
+2. Unzip it into a new, empty folder, for example `C:\MiniMax`. Do not use Program Files.
+3. Double-click `install.bat`. If Windows says it protected your PC, click **More info**, then **Run anyway**. It downloads Python, ComfyUI and the node packs (about 6 GB).
+4. Start ComfyUI with `Run-MiniMax-ALLinONE.bat`. Run `update.bat` to get our latest tested versions.
 
 Models are not included. Download them as listed in [requirements/REQUIREMENTS.md](requirements/REQUIREMENTS.md).
 
