@@ -71,6 +71,22 @@ git clone https://github.com/LeonQ8/ComfyUI-ALLinONE-MinimaxH3.git
 
 Restart ComfyUI, then double-click the canvas and search for **ALL in ONE MiniMaxH3**.
 
+## Optional installer (beta)
+
+New to ComfyUI? The installer sets up a separate ComfyUI with this node and every pack it needs, pinned to the versions we tested. It is for Windows with an NVIDIA RTX 40 card.
+
+It is in beta. Please [report any issues](https://github.com/LeonQ8/ComfyUI-ALLinONE-MinimaxH3/issues) you run into. We may support more cards based on your reports.
+
+1. Make an empty folder and put [install.bat](https://raw.githubusercontent.com/LeonQ8/ComfyUI-ALLinONE-MinimaxH3/main/installer/install.bat) in it.
+2. Run install.bat. It downloads Python, ComfyUI and the node packs (about 6 GB).
+3. Start ComfyUI with Run-MiniMax-ALLinONE.bat. Run update.bat to get our latest tested versions.
+
+Models are not included. Download them as listed in [requirements/REQUIREMENTS.md](requirements/REQUIREMENTS.md).
+
+The exact versions it installs, and how they differ from a manual install, are in [installer/STACK.md](installer/STACK.md).
+
+Prefer your own ComfyUI? Clone this repo into your `custom_nodes` folder as shown above.
+
 ## Compatibility
 
 I develop and test against a pinned stack (ComfyUI version, custom node versions, model files). It's all listed in **[COMPATIBILITY.md](COMPATIBILITY.md)**, if a render fails after you updated something, start there.

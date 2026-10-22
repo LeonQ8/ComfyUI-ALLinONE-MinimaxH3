@@ -1,0 +1,41 @@
+{
+  "schema": 1,
+  "stack_version": "2026.10.22",
+  "supported_gpu": "RTX 40",
+  "installer_repo": "LeonQ8/ComfyUI-ALLinONE-MinimaxH3",
+  "python": {
+    "version": "3.12.10",
+    "url": "https://www.python.org/ftp/python/3.12.10/python-3.12.10-embed-amd64.zip",
+    "sha256": "4acbed6dd1c744b0376e3b1cf57ce906f9dc9e95e68824584c8099a63025a3c3"
+  },
+  "pip_wheel": {
+    "url": "https://files.pythonhosted.org/packages/70/7a/be4bd8bcbb24ea475856dd68159d78b03b2bb53dae369f69c9606b8888f5/pip-26.1-py3-none-any.whl",
+    "sha256": "4e8486d821d814b77319acb7b9e8bf5a4ee7590a643e7cb21029f209be8573c1"
+  },
+  "include_libs": {
+    "url": "https://github.com/woct0rdho/triton-windows/releases/download/v3.0.0-windows.post1/python_3.12.7_include_libs.zip",
+    "sha256": "145cde69c753dd5a78f4525ef1f5cbe0f2642678fdefd9e79e2bbea1a91d80ea"
+  },
+  "comfyui": {"repo": "comfyanonymous/ComfyUI", "commit": "63be2f9b82ad0dac88a7ceaa28a9cf3154125a18"},
+  "nodes": [
+    {"folder": "ComfyUI-ALLinONE-MinimaxH3", "repo": "LeonQ8/ComfyUI-ALLinONE-MinimaxH3", "commit": "a285c458b540757cb001426cccb1b86dd3f64d66"},
+    {"folder": "ComfyUI-H3-Motion-Context-MultiRef", "repo": "seitanism/ComfyUI-H3-Motion-Context-MultiRef", "commit": "361624fb406b63eb6694442eac6c895fc1533a70"},
+    {"folder": "ComfyUI-VideoHelperSuite", "repo": "Kosinkadink/ComfyUI-VideoHelperSuite", "commit": "4d907bee61e92c2e65af3bd6383a4e4d356126d1"},
+    {"folder": "ComfyUI-SeedVR2_VideoUpscaler", "repo": "numz/ComfyUI-SeedVR2_VideoUpscaler", "commit": "4490bd1f482e026674543386bb2a4d176da245b9"},
+    {"folder": "Nvidia_RTX_Nodes_ComfyUI", "repo": "Comfy-Org/Nvidia_RTX_Nodes_ComfyUI", "commit": "168d35e0c140d91f6a799debc4588a54e1609124"},
+    {"folder": "ComfyUI-MiniMax-H3-Turbo", "repo": "Larryvrh/ComfyUI-MiniMax-H3-Turbo", "commit": "4274783a23afcfdbea3b4876cb79effd6c510785"},
+    {"folder": "ComfyUI-KJNodes", "repo": "kijai/ComfyUI-KJNodes", "commit": "f4bae1f9960e5d643573a2ecf7abd56453a21821"},
+    {"folder": "ComfyUI-MiniMax-H3-Studio", "repo": "LeonQ8/ComfyUI-MiniMax-H3-Studio", "commit": "29da5a3d7ac17d8e2833bbe5268c606406473f9d"},
+    {"folder": "MaskVidExperiments", "repo": "drozbay/MaskVidExperiments", "commit": "c32ed8c17e6fe892a174ebf25fe98b1317de97fb"},
+    {"folder": "ComfyUI-PlagueKind-Nodes", "repo": "PlagueKind/ComfyUI-PlagueKind-Nodes", "commit": "d58d006a4ea32c25c06499f2ff104f0852a045a6"},
+    {"folder": "H3-Optimizations", "repo": "Zironic/H3-Optimizations", "commit": "c6bc3cfc58c18c3a6220aeea09116e1eebd91669"},
+    {"folder": "ComfyUI-Spectrum-MiniMax-H3", "repo": "xmarre/ComfyUI-Spectrum-MiniMax-H3", "commit": "806fe498d574a726fecb8818917f00a4b993fd77"},
+    {"folder": "comfyui-vrgamedevgirl", "repo": "vrgamegirl19/comfyui-vrgamedevgirl", "commit": "7f826048ce90e83b7f58a79f508510922f48b693"}
+  ],
+  "skip_requirements": ["llama-cpp-python"],
+  "pip": [
+    {"name": "PyTorch 2.9.1 for CUDA 13.0", "phase": "before", "args": ["torch==2.9.1+cu130", "torchvision==0.24.1+cu130", "torchaudio==2.9.1+cu130", "--index-url", "https://download.pytorch.org/whl/cu130"]},
+    {"name": "SageAttention 2.2.0", "phase": "after", "args": ["sageattention @ https://github.com/woct0rdho/SageAttention/releases/download/v2.2.0-windows.post4/sageattention-2.2.0+cu130torch2.9.0andhigher.post4-cp39-abi3-win_amd64.whl#sha256=f7261c53a1d46202059daff6b8feac5ee806274d47e3e7fb7abf8c5f6d410c92"]},
+    {"name": "Triton 3.5.1", "phase": "after", "args": ["triton-windows==3.5.1.post24"]}
+  ]
+}

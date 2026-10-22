@@ -2,6 +2,8 @@
 
 This node is developed and tested against a specific stack. When something breaks after an update, it's almost always because ComfyUI or one of the node packs moved — not because of this node. This file exists so you can match the tested stack exactly.
 
+The optional Windows installer pins its own stack, listed in [installer/STACK.md](installer/STACK.md).
+
 ## Tested environment
 
 | Component | Version |

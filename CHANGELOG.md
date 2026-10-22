@@ -2,6 +2,10 @@
 
 Newest first.
 
+## Unreleased
+
+ - New optional Windows installer (beta) that sets up a separate ComfyUI with this node and every pack it needs at the versions we tested. It supports NVIDIA RTX 40 cards for now. Please report any problems, and we may support more cards based on your reports.
+
 ## 0.22.2 (2026-10-13)
 
  - Tested on ComfyUI 0.39.2.
