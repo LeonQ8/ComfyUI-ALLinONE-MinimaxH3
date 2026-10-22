@@ -10,9 +10,10 @@ the bottom). We may support more cards in the future based on your reports.
 
 INSTALL
 
-1. Put install.bat in a new, empty folder, for example C:\MiniMax.
+1. Unzip the installer into a new, empty folder, for example C:\MiniMax.
    Do not use Program Files or a folder that needs admin rights.
 2. Double-click install.bat.
+   If Windows says it protected your PC, click More info, then Run anyway.
    It downloads about 6 GB. This can take 20 minutes or more.
 3. Wait until it says "Install finished", then press any key.
 
