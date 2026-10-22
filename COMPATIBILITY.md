@@ -40,6 +40,8 @@ The SLA Draft quality preset pairs H3 SLA Attention from ComfyUI-PlagueKind-Node
 
 If your ComfyUI is newer than the tested version and H3 breaks, update ComfyUI to the latest first — most of these are already fixed upstream.
 
+One exception: Image mode fails on ComfyUI 0.40 and newer until the H3 Studio decode fix ([PR #73](https://github.com/thaakeno/ComfyUI-MiniMax-H3-Studio/pull/73)) is released. For Image mode, stay on ComfyUI 0.39.2 or use the optional installer, which includes the fix.
+
 ### `ComfyUI-MiniMaxH3-Cache` only conflicts with Chain and Extend
 
 The H3 Cache accelerator was removed from this node because the pack has not been updated for newer ComfyUI cores. Its startup patch replaces `MiniMaxH3Model._forward` with a signature that drops the native `denoise_mask` / `audio_denoise_mask` arguments and the `cond_audio` segment, which ComfyUI-H3-Motion-Context-MultiRef Update 6 probes and refuses to run without. Upstream [PR #6](https://github.com/lihaoyun6/ComfyUI-MiniMaxH3-Cache/pull/6) only removes a `time_shift_slope` call and does not restore those signatures, so the conflict would not go away by updating.

@@ -41,10 +41,10 @@ Stack version: **2026.10.22**
 
 ## Differences from a manual install
 
-A manual install follows [COMPATIBILITY.md](../COMPATIBILITY.md). The installer differs in three places:
+A manual install follows [COMPATIBILITY.md](../COMPATIBILITY.md), which uses ComfyUI 0.39.2. The installer uses ComfyUI 0.42.1 and the pack versions listed above, plus these changes:
 
 - ComfyUI-MiniMax-H3-Studio comes from the LeonQ8 fork: upstream alpha.20 plus the decode fix from thaakeno/ComfyUI-MiniMax-H3-Studio PR #73, needed on ComfyUI 0.40 and newer.
-- transformers is 5.10.4 instead of 5.8.1. Older versions crash on import when SeedVR2 is installed.
+- transformers is pinned to 5.10.4. Some older versions, such as 5.8.1, crash on import when SeedVR2 is installed.
 - llama-cpp-python is not installed. Only the vrgamedevgirl LLM prompt nodes use it, and it has no prebuilt Windows wheel on PyPI.
 
 ## What the installer does
